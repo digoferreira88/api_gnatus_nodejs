@@ -49,12 +49,35 @@ module.exports = (app) => ({
       const setConcluidas = new Set(aulasConcluidas.map(p => p.aula_id));
       const aulasComProgresso = aulas.map(a => ({ ...a, concluida: setConcluidas.has(a.id) }));
 
+      // Quiz info (se existir)
+      const qzRows = await Pg.connectAndQuery(
+        `SELECT id, titulo, descricao, nota_minima, tentativas_max
+           FROM tab_uni_quiz WHERE curso_id = @id AND ativo = true`, { id }
+      );
+      let quiz = null;
+      if (qzRows.length) {
+        quiz = qzRows[0];
+        if (matricula) {
+          const aprov = await Pg.connectAndQuery(`
+            SELECT MAX(nota) AS melhor_nota,
+                   COUNT(*) FILTER (WHERE finalizada_em IS NOT NULL) AS tentativas_feitas,
+                   COUNT(*) FILTER (WHERE aprovado = true) > 0 AS aprovado
+              FROM tab_uni_tentativa WHERE matricula_id = @mid AND quiz_id = @qid`,
+            { mid: matricula.id, qid: quiz.id }
+          );
+          quiz.melhorNota = aprov[0].melhor_nota != null ? Number(aprov[0].melhor_nota) : null;
+          quiz.tentativasFeitas = Number(aprov[0].tentativas_feitas || 0);
+          quiz.aprovado = !!aprov[0].aprovado;
+        }
+      }
+
       return res.json({
         curso: cursoRows[0],
         aulas: aulasComProgresso,
         matricula,
         totalAulas: aulas.length,
-        aulasConcluidas: aulasConcluidas.length
+        aulasConcluidas: aulasConcluidas.length,
+        quiz
       });
     } catch (err) {
       console.error('Erro universidade/curso:', err);

@@ -56,8 +56,29 @@ module.exports = (app) => ({
 
       const total = Number(totObrig[0].total || 0);
       const conc = Number(totConcObrig[0].total || 0);
-      const pct = total === 0 ? 0 : Math.min(100, (conc / total) * 100);
-      const concluiu = total > 0 && conc >= total;
+      const aulasOk = total > 0 && conc >= total;
+
+      // Se o curso tem quiz, conclusao final exige aprovacao
+      const qz = await Pg.connectAndQuery(
+        `SELECT id FROM tab_uni_quiz WHERE curso_id = @cid AND ativo = true`,
+        { cid: cursoId }
+      );
+      const temQuiz = qz.length > 0;
+      let quizAprovado = false;
+      if (temQuiz) {
+        const apr = await Pg.connectAndQuery(`
+          SELECT 1 FROM tab_uni_tentativa
+           WHERE matricula_id = @mid AND quiz_id = @qid AND aprovado = true LIMIT 1`,
+          { mid: matrId, qid: qz[0].id }
+        );
+        quizAprovado = apr.length > 0;
+      }
+
+      // Progresso: se tem quiz, media aulas (50%) + quiz (50%); senao so aulas
+      const pctAulas = total > 0 ? (conc / total) * 100 : (temQuiz ? 0 : 100);
+      const pctQuiz = quizAprovado ? 100 : 0;
+      const pct = temQuiz ? (pctAulas + pctQuiz) / 2 : pctAulas;
+      const concluiu = aulasOk && (!temQuiz || quizAprovado);
 
       await Pg.connectAndQuery(`
         UPDATE tab_uni_matricula
@@ -71,7 +92,9 @@ module.exports = (app) => ({
       return res.json({
         ok: true,
         progresso: Number(pct.toFixed(2)),
-        concluiu
+        concluiu,
+        temQuiz,
+        quizPendente: temQuiz && !quizAprovado && aulasOk
       });
     } catch (err) {
       console.error('Erro universidade/aula/concluir:', err);
