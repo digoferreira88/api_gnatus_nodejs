@@ -2,6 +2,7 @@
 module.exports = app => ({
   verb: 'post',
   route: '/permissoes/toggle',
+  middlewares: [require('../../middlewares/requirePerm')(app)([1026])],  // 1026 = Gerenciamento Permissoes
   handler: async (req, res) => {
     const { Pg } = app.services;
     const { ID_USER, ID_PERMISSAO, MATRICULA, ASSIGNED } = req.body;

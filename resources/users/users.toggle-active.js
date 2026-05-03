@@ -1,6 +1,7 @@
 module.exports = (app) => ({
   verb: 'post',
   route: '/:id/toggle-active',
+  middlewares: [require('../../middlewares/requirePerm')(app)([1028])],  // 1028 = Gestao Usuarios
 
   handler: async (req, res) => {
     const { Pg } = app.services;

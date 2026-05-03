@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 module.exports = (app) => ({
   verb: 'post',
   route: '/create',
+  middlewares: [require('../../middlewares/requirePerm')(app)([1028])],  // 1028 = Gestao Usuarios
 
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;

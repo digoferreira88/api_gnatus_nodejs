@@ -4,6 +4,7 @@ const trim = (v) => String(v || '').trim();
 module.exports = (app) => ({
   verb: 'delete',
   route: '/bordero/nf/:nfe',
+  middlewares: [require('../../middlewares/requirePerm')(app)([12001, 12002])],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

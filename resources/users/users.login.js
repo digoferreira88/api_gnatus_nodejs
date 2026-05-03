@@ -1,59 +1,58 @@
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
+
+// Rate limit: 5 tentativas por IP a cada 15 min. Mais que suficiente pra uso
+// legitimo (humano) e bloqueia brute force.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Muitas tentativas. Tente novamente em 15 minutos.' }
+});
 
 module.exports = (app) => ({
   verb: "post",
   route: "/login",
   anonymous: true,
+  middlewares: [loginLimiter],
 
   handler: async (req, res) => {
     const { Pg, Jwt } = app.services;
 
-    let { email, senha } = req.body;
-
-    const tableName = "tab_intranet_usr"; 
-    const fields = ["ID", "NOME", "EMAIL", "SENHA", "ATIVO"]; 
+    const { email, senha } = req.body || {};
+    if (!email || !senha) {
+      // Mensagem unica pra nao revelar se email existe
+      return res.status(401).json({ message: 'E-mail ou senha invalidos.' });
+    }
 
     try {
-      const user = await getUserByEmail(Pg, tableName, fields, email);
-      
-      if (!user)
-        return res.status(400).json({ message: "Usuário não encontrado" });
-      
-      const senhaHash = bcrypt.compareSync(senha, user.SENHA);
-      
-      if (!senhaHash)
-        return res.status(400).json({ message: "Senha inválida" });
-      
+      const user = await getUserByEmail(Pg, email);
+
+      // Mesma mensagem em ambos os casos pra evitar user enumeration
+      if (!user) {
+        // Custo constante: faz hash dummy pra nao vazar timing-side-channel
+        bcrypt.compareSync(senha, '$2a$10$abcdefghijklmnopqrstuv.WXYZ0123456789abcdef');
+        return res.status(401).json({ message: 'E-mail ou senha invalidos.' });
+      }
+
+      const ok = bcrypt.compareSync(senha, user.SENHA);
+      if (!ok) return res.status(401).json({ message: 'E-mail ou senha invalidos.' });
+
       const token = Jwt.generate({ id: user.ID, type: 'usuario' });
-      
-      
-      return res.json({ token }); // Apenas retorna o token
+      return res.json({ token });
     } catch (error) {
-      console.error("Erro ao realizar a autenticação:", error);
-      return res
-        .status(500)
-        .json({ message: "Erro ao realizar a autenticação" });
+      console.error("Erro ao realizar a autenticacao:", error.message);
+      return res.status(500).json({ message: "Erro interno ao autenticar." });
     }
   },
 });
 
-
-// Função para obter um usuário pelo email
-async function getUserByEmail(Pg, tableName, fields, email) {
-
-  const query = `SELECT ${fields.join(
-    ", "
-  )} FROM ${tableName} WHERE EMAIL = @email AND ativo = true`;
-
-  try {
-    const [user] = await Pg.connectAndQuery(query, { email });
-    //console.log(user)
-    // if (!user) {
-    //   throw new Error("Usuário não encontrado");
-    // }
-    //console.log(user)
-    return user;
-  } catch (error) {
-    throw error;
-  }
+async function getUserByEmail(Pg, email) {
+  const query = `
+    SELECT ID, NOME, EMAIL, SENHA, ATIVO
+      FROM tab_intranet_usr
+     WHERE EMAIL = @email AND ativo = true`;
+  const [user] = await Pg.connectAndQuery(query, { email });
+  return user;
 }

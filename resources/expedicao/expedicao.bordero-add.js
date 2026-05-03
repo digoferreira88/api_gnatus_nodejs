@@ -6,6 +6,7 @@ const toN  = (v) => Number(v || 0);
 module.exports = (app) => ({
   verb: 'post',
   route: '/bordero',
+  middlewares: [require('../../middlewares/requirePerm')(app)([12001, 12002])],
 
   handler: async (req, res) => {
     const { Protheus, Pg } = app.services;

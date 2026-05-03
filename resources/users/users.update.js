@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 module.exports = (app) => ({
   verb: 'post',
   route: '/:id/update',
+  // 1028 = Gestao Usuarios. allowSelf permite usuario editar o proprio cadastro.
+  middlewares: [require('../../middlewares/requirePerm')(app)([1028], { allowSelf: 'id' })],
 
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;

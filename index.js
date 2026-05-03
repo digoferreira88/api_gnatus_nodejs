@@ -12,7 +12,22 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors());
+// CORS — whitelist por env (CSV). Em dev libera localhost:5173 por padrao.
+const CORS_ORIGINS = (process.env.CORS_ORIGINS ||
+  'http://localhost:5173,http://localhost:3000,https://intranew.gnatus.com.br'
+).split(',').map(s => s.trim()).filter(Boolean);
+app.use(cors({
+  origin: (origin, cb) => {
+    // Sem origin (curl, server-to-server) liberamos. Browser sempre manda Origin.
+    if (!origin) return cb(null, true);
+    if (CORS_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS: origem nao permitida (${origin})`));
+  },
+  credentials: false,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
+}));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: false, limit: '50mb' }));
 

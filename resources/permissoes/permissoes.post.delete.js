@@ -1,6 +1,7 @@
 module.exports = app => ({
   verb: "post",
   route: "/delete/:ID",
+  middlewares: [require('../../middlewares/requirePerm')(app)([1026])],  // 1026 = Gerenciamento Permissoes
 
  handler: async (req, res) => {
     const { Pg } = app.services;
