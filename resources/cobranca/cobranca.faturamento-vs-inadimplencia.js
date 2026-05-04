@@ -28,7 +28,7 @@ module.exports = (app) => ({
   route: '/faturamento-vs-inadimplencia',
 
   handler: async (req, res) => {
-    const { Protheus } = app.services;
+    const { Protheus, Pg } = app.services;
 
     const anoAtual = new Date().getFullYear();
     const anoMin = Number(req.query.anoMin) || (anoAtual - 1);
@@ -37,11 +37,53 @@ module.exports = (app) => ({
       return res.status(400).json({ message: 'Parametros anoMin/anoMax invalidos.' });
     }
 
+    const equipe = trim(req.query.equipe);
+
     const inicioStr = `${anoMin}0101`;
     const fimStr    = `${anoMax}1231`;
     const cfopList  = CFOPS_VENDA.map(c => `'${c}'`).join(',');
 
+    // ============== Filtro de equipe (opcional) ==============
+    // Equipe vem do mapeamento BU -> equipe (tab_cobranca_bu_equipe).
+    // Pra filtrar, traduzimos pra lista de BUs e aplicamos no WHERE da SQL.
+    let condBuFat = '', condBuInad = '';
+    const sqlParams = { ini: inicioStr, fim: fimStr };
+
+    if (equipe) {
+      try {
+        const eqRows = await Pg.connectAndQuery(
+          `SELECT bu_codigo FROM tab_cobranca_bu_equipe WHERE equipe = @eq`,
+          { eq: equipe }
+        );
+        const bus = eqRows.map(r => String(r.bu_codigo || '').trim()).filter(Boolean);
+        if (bus.length === 0) {
+          return res.json({
+            periodo: { anoMin, anoMax }, equipe,
+            totais: { faturado: 0, inadimplencia: 0, pctInadimplencia: 0 },
+            serie: [],
+            aviso: `Nenhuma BU mapeada pra equipe "${equipe}".`,
+            geradoEm: new Date().toISOString()
+          });
+        }
+        const inBu = bus.map((_, i) => `@bu${i}`).join(',');
+        bus.forEach((b, i) => { sqlParams[`bu${i}`] = b; });
+        condBuFat  = `AND RTRIM(sc5.C5_ZTIPO) IN (${inBu})`;
+        condBuInad = `AND RTRIM(sc5.C5_ZTIPO) IN (${inBu})`;
+      } catch (e) {
+        console.warn('Falha ao traduzir equipe pra BUs:', e.message);
+      }
+    }
+
     try {
+      // JOINs com SC5 (pedido) so quando ha filtro de equipe, pra evitar custo
+      // desnecessario quando o usuario nao filtrou.
+      const joinSc5Fat  = equipe ? `LEFT JOIN SC5010 sc5 WITH (NOLOCK)
+                                      ON sc5.C5_FILIAL = sd2.D2_FILIAL AND sc5.C5_NUM = sd2.D2_PEDIDO
+                                     AND sc5.D_E_L_E_T_ <> '*'` : '';
+      const joinSc5Inad = equipe ? `LEFT JOIN SC5010 sc5 WITH (NOLOCK)
+                                      ON sc5.C5_FILIAL = se1.E1_FILIAL AND sc5.C5_NUM = se1.E1_PEDIDO
+                                     AND sc5.D_E_L_E_T_ <> '*'` : '';
+
       // 1) Faturamento por mes (NF saida)
       const fatRows = await Protheus.connectAndQuery(`
         SELECT SUBSTRING(sf2.F2_EMISSAO, 1, 6) ymes,
@@ -55,12 +97,14 @@ module.exports = (app) => ({
            AND sd2.D2_LOJA    = sf2.F2_LOJA
            AND sd2.D_E_L_E_T_ <> '*'
            AND sd2.D2_CF IN (${cfopList})
+          ${joinSc5Fat}
          WHERE sf2.D_E_L_E_T_ <> '*'
            AND sf2.F2_FILIAL = '01'
            AND sf2.F2_EMISSAO BETWEEN @ini AND @fim
+           ${condBuFat}
          GROUP BY SUBSTRING(sf2.F2_EMISSAO, 1, 6)
          ORDER BY ymes`,
-        { ini: inicioStr, fim: fimStr }
+        sqlParams
       );
 
       // 2) Inadimplencia por mes de EMISSAO do titulo (titulos nao pagos e VENCIDOS)
@@ -70,15 +114,17 @@ module.exports = (app) => ({
                SUM(se1.E1_SALDO) saldoVencido,
                COUNT(*) qtdTitulos
           FROM SE1010 se1 WITH (NOLOCK)
+          ${joinSc5Inad}
          WHERE se1.D_E_L_E_T_ <> '*'
            AND se1.E1_FILIAL = '01'
            AND se1.E1_SALDO > 0
            AND CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, GETDATE())
            AND se1.E1_EMISSAO BETWEEN @ini AND @fim
            AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+           ${condBuInad}
          GROUP BY SUBSTRING(se1.E1_EMISSAO, 1, 6)
          ORDER BY ymes`,
-        { ini: inicioStr, fim: fimStr }
+        sqlParams
       );
 
       // Junta as duas series por ymes
@@ -121,6 +167,7 @@ module.exports = (app) => ({
 
       return res.json({
         periodo: { anoMin, anoMax },
+        equipe: equipe || null,
         totais: {
           faturado: Number(totFat.toFixed(2)),
           inadimplencia: Number(totInad.toFixed(2)),
