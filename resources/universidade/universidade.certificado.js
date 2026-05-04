@@ -1,10 +1,13 @@
-// Certificado de conclusao do curso. GET /universidade/curso/:id/certificado
-// So gera se a matricula do user logado esta com status='concluido'.
+// Certificado de conclusao do curso. GET /universidade/curso/:id/certificado[?userId=N]
+// - Sem ?userId: certificado do user logado (precisa estar matriculado e concluido).
+// - Com ?userId: instrutor/admin emite pra outro user (so dono do curso ou admin 15003).
 // Retorna HTML printable (browser converte pra PDF via Ctrl+P).
 
 const esc = (s) => String(s || '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const { ehInstrutor, ehAdmin } = require('./_perms');
 
 module.exports = (app) => ({
   verb: 'get',
@@ -18,10 +21,29 @@ module.exports = (app) => ({
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).send('ID invalido.');
 
+    // Quem é o ALVO do certificado: por default eh o user logado.
+    // Se vier ?userId=X, exige perm de instrutor (dono do curso) ou admin.
+    let targetUserId = Number(user.ID);
+    const queryUserId = req.query.userId != null ? Number(req.query.userId) : null;
+    if (queryUserId && queryUserId !== Number(user.ID)) {
+      // Precisa ser instrutor com acesso ao curso ou admin universal
+      const cursoCheck = await Pg.connectAndQuery(
+        `SELECT instrutor_id FROM tab_uni_curso WHERE id = @id`, { id }
+      );
+      if (!cursoCheck.length) return res.status(404).send('Curso nao encontrado.');
+      const isOwner = Number(cursoCheck[0].instrutor_id) === Number(user.ID);
+      const isAdmin = await ehAdmin(Pg, user.ID);
+      const isInstrutor = await ehInstrutor(Pg, user.ID);
+      if (!(isOwner || isAdmin) || !isInstrutor) {
+        return res.status(403).send('Sem permissao para emitir certificado de outro usuario.');
+      }
+      targetUserId = queryUserId;
+    }
+
     try {
       const r = await Pg.connectAndQuery(`
         SELECT c.titulo, c.codigo, c.carga_horaria_h, c.instrutor_nome,
-               m.data_conclusao, m.id AS matricula_id,
+               m.data_conclusao, m.status, m.id AS matricula_id,
                u.nome AS user_nome, u.email AS user_email,
                cat.nome AS categoria_nome
           FROM tab_uni_matricula m
@@ -29,16 +51,16 @@ module.exports = (app) => ({
           INNER JOIN tab_intranet_usr u  ON u.id = m.user_id
           LEFT  JOIN tab_uni_categoria cat ON cat.id = c.categoria_id
          WHERE m.user_id = @uid AND m.curso_id = @id`,
-        { uid: user.ID, id }
+        { uid: targetUserId, id }
       );
-      if (!r.length) return res.status(404).send('Matricula nao encontrada.');
+      if (!r.length) return res.status(404).send('Matricula nao encontrada para este usuario.');
       if (r[0].status === 'cancelado' || !r[0].data_conclusao) {
-        return res.status(409).send('Curso ainda nao foi concluido por voce.');
+        return res.status(409).send('Curso ainda nao foi concluido por este usuario.');
       }
 
       const d = r[0];
       const dataConc = new Date(d.data_conclusao).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
-      const codCert = `UNI-${id}-${d.matricula_id}-${user.ID}`;
+      const codCert = `UNI-${id}-${d.matricula_id}-${targetUserId}`;
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.send(renderCertificado({
