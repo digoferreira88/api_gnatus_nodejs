@@ -418,12 +418,12 @@ module.exports = (app) => ({
         resumoABC[c.classeABC].valor += c.totalEmAberto;
       });
 
-      // KPIs GLOBAIS (sempre toda a carteira) — atendem requisito da diretoria:
-      // % inadimplencia eh sempre calculada sobre o TOTAL em aberto, nao sobre
-      // o recorte filtrado.
-      const indiceInadimplencia = globalEmAberto > 0 ? (globalVencido / globalEmAberto) * 100 : 0;
-      // KPIs FILTRADOS (do recorte) — uteis em algumas tabelas/agregacoes
-      const indiceInadimplenciaFiltrado = totalEmAberto > 0 ? (totalVencido / totalEmAberto) * 100 : 0;
+      // Regra da diretoria:
+      // - "Total em aberto" = SEMPRE fixo (toda a carteira), nao muda com filtros.
+      // - "Vencido / em atraso" = MUDA com filtros (aging, ano, periodo).
+      // - "% Inadimplencia" = vencido_FILTRADO / em_aberto_TOTAL * 100
+      //   (numerador acompanha filtro, denominador eh sempre o total da carteira)
+      const indiceInadimplencia = globalEmAberto > 0 ? (totalVencido / globalEmAberto) * 100 : 0;
 
       return res.json({
         geradoEm: new Date().toISOString(),
@@ -441,21 +441,16 @@ module.exports = (app) => ({
           ano: req.query.ano || null
         },
         kpis: {
-          // Globais (toda a carteira, sempre) — usados nos cards principais
+          // Total em aberto: SEMPRE fixo (toda a carteira)
           totalEmAberto: globalEmAberto,
-          totalVencido: globalVencido,
-          totalAVencer: globalAVencer,
           qtdClientes: globalClientes.size,
-          qtdClientesVencidos: globalClientesVencidos.size,
-          indiceInadimplencia,
-          // Filtrados (apenas o recorte aplicado) — usados em tabelas/grids
-          totalEmAbertoFiltrado: totalEmAberto,
-          totalVencidoFiltrado: totalVencido,
-          totalAVencerFiltrado: totalAVencer,
+          // Vencido + a vencer: respondem aos filtros aplicados (aging/ano/periodo)
+          totalVencido,
+          totalAVencer,
           qtdTitulos: titulos.length,
-          qtdClientesFiltrados: clientesUnicos.size,
-          qtdClientesVencidosFiltrados: clientesVencidos.size,
-          indiceInadimplenciaFiltrado
+          qtdClientesVencidos: clientesVencidos.size,
+          // % inadimplencia = vencido (filtrado) ÷ em aberto (total fixo)
+          indiceInadimplencia
         },
         porAging: porAgingArr,
         porCarteira: porCarteiraArr,
