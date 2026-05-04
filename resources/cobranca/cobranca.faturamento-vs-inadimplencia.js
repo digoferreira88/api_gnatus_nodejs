@@ -44,9 +44,13 @@ module.exports = (app) => ({
     const cfopList  = CFOPS_VENDA.map(c => `'${c}'`).join(',');
 
     // ============== Filtro de equipe (opcional) ==============
-    // Equipe vem do mapeamento BU -> equipe (tab_cobranca_bu_equipe).
-    // Pra filtrar, traduzimos pra lista de BUs e aplicamos no WHERE da SQL.
+    // ATENCAO: tab_cobranca_bu_equipe.bu_codigo na pratica armazena a DESCRICAO
+    // (label) da BU, nao o codigo C5_ZTIPO. Quando a BU nao tem descricao em
+    // SX5, o label fica '<C5_ZTIPO> (Desconhecido)'. Por isso o WHERE precisa
+    // comparar com a descricao calculada via JOIN+SX5, exatamente igual o
+    // dashboard faz pra mapear BU -> equipe.
     let condBuFat = '', condBuInad = '';
+    let joinSx5 = false;
     const sqlParams = { ini: inicioStr, fim: fimStr };
 
     if (equipe) {
@@ -55,8 +59,8 @@ module.exports = (app) => ({
           `SELECT bu_codigo FROM tab_cobranca_bu_equipe WHERE equipe = @eq`,
           { eq: equipe }
         );
-        const bus = eqRows.map(r => String(r.bu_codigo || '').trim()).filter(Boolean);
-        if (bus.length === 0) {
+        const buLabels = eqRows.map(r => String(r.bu_codigo || '').trim()).filter(Boolean);
+        if (buLabels.length === 0) {
           return res.json({
             periodo: { anoMin, anoMax }, equipe,
             totais: { faturado: 0, inadimplencia: 0, pctInadimplencia: 0 },
@@ -65,10 +69,14 @@ module.exports = (app) => ({
             geradoEm: new Date().toISOString()
           });
         }
-        const inBu = bus.map((_, i) => `@bu${i}`).join(',');
-        bus.forEach((b, i) => { sqlParams[`bu${i}`] = b; });
-        condBuFat  = `AND RTRIM(sc5.C5_ZTIPO) IN (${inBu})`;
-        condBuInad = `AND RTRIM(sc5.C5_ZTIPO) IN (${inBu})`;
+        const inBu = buLabels.map((_, i) => `@bu${i}`).join(',');
+        buLabels.forEach((b, i) => { sqlParams[`bu${i}`] = b; });
+        // Reconstroi label exatamente como o dashboard: descricao SX5, ou
+        // fallback '<cod> (Desconhecido)' se SX5 nao tem descricao.
+        const exprBuLabel = `COALESCE(NULLIF(RTRIM(bu_sx5.X5_DESCRI), ''), RTRIM(sc5.C5_ZTIPO) + ' (Desconhecido)')`;
+        condBuFat  = `AND ${exprBuLabel} IN (${inBu})`;
+        condBuInad = `AND ${exprBuLabel} IN (${inBu})`;
+        joinSx5 = true;
       } catch (e) {
         console.warn('Falha ao traduzir equipe pra BUs:', e.message);
       }
@@ -77,12 +85,18 @@ module.exports = (app) => ({
     try {
       // JOINs com SC5 (pedido) so quando ha filtro de equipe, pra evitar custo
       // desnecessario quando o usuario nao filtrou.
+      const joinSx5Bu = joinSx5 ? `LEFT JOIN SX5010 bu_sx5 WITH (NOLOCK)
+                                      ON bu_sx5.X5_FILIAL = '  ' AND bu_sx5.X5_TABELA = 'Z1'
+                                     AND RTRIM(bu_sx5.X5_CHAVE) = RTRIM(sc5.C5_ZTIPO)
+                                     AND bu_sx5.D_E_L_E_T_ <> '*'` : '';
       const joinSc5Fat  = equipe ? `LEFT JOIN SC5010 sc5 WITH (NOLOCK)
                                       ON sc5.C5_FILIAL = sd2.D2_FILIAL AND sc5.C5_NUM = sd2.D2_PEDIDO
-                                     AND sc5.D_E_L_E_T_ <> '*'` : '';
+                                     AND sc5.D_E_L_E_T_ <> '*'
+                                    ${joinSx5Bu}` : '';
       const joinSc5Inad = equipe ? `LEFT JOIN SC5010 sc5 WITH (NOLOCK)
                                       ON sc5.C5_FILIAL = se1.E1_FILIAL AND sc5.C5_NUM = se1.E1_PEDIDO
-                                     AND sc5.D_E_L_E_T_ <> '*'` : '';
+                                     AND sc5.D_E_L_E_T_ <> '*'
+                                    ${joinSx5Bu}` : '';
 
       // 1) Faturamento por mes (NF saida)
       const fatRows = await Protheus.connectAndQuery(`
