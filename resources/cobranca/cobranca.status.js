@@ -1,5 +1,9 @@
 // Atualiza o status de cobrança de um cliente (upsert)
-const STATUS_VALIDOS = ['REGULAR','NEGOCIANDO','PROMESSA','PROTESTO','JURIDICO','PERDA'];
+const STATUS_VALIDOS = [
+  'REGULAR', 'NEGOCIANDO', 'PROMESSA',
+  'ACORDO_EM_ANDAMENTO', 'ACORDO_QUEBRADO',
+  'PROTESTO', 'JURIDICO', 'TERCEIRIZADA', 'NEGATIVADO', 'PERDA'
+];
 
 module.exports = (app) => ({
   verb: 'put',

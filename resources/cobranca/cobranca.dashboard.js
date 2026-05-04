@@ -83,14 +83,11 @@ module.exports = (app) => ({
       protheusParams.formaPgto = String(req.query.formaPgto);
       condsProtheus.push(`AND RTRIM(se1.E1_FORMAPG) = @formaPgto`);
     }
-    if (req.query.inicio && /^\d{8}$/.test(String(req.query.inicio))) {
-      protheusParams.inicio = req.query.inicio;
-      condsProtheus.push(`AND se1.E1_EMISSAO >= @inicio`);
-    }
-    if (req.query.fim && /^\d{8}$/.test(String(req.query.fim))) {
-      protheusParams.fim = req.query.fim;
-      condsProtheus.push(`AND se1.E1_EMISSAO <= @fim`);
-    }
+    // OBS: filtros de PERIODO (inicio/fim/ano) e AGING NAO entram no SQL — sao
+    // aplicados em loop posterior, pra que os KPIs "totais globais" sempre
+    // reflitam toda a carteira em aberto (independente de filtro). Isso atende
+    // ao requisito da diretoria: % de inadimplencia eh sempre calculada em
+    // cima do TOTAL em aberto, nao do recorte filtrado.
 
     const sqlTitulos = `
       SELECT
@@ -188,11 +185,18 @@ module.exports = (app) => ({
         });
       });
 
-      // Filtros pos-enriquecimento (carteira/equipe/aging/acao)
+      // Filtros pos-enriquecimento (carteira/equipe/aging/acao/periodo/ano)
       const fCarteira = req.query.carteira ? String(req.query.carteira).toUpperCase() : null;
       const fEquipe   = req.query.equipe   ? String(req.query.equipe)   : null;
       const fAging    = req.query.aging    ? String(req.query.aging)    : null;
       const fAcao     = req.query.acao     ? String(req.query.acao)     : null;
+      const fInicio   = req.query.inicio && /^\d{8}$/.test(String(req.query.inicio)) ? String(req.query.inicio) : null;
+      const fFim      = req.query.fim    && /^\d{8}$/.test(String(req.query.fim))    ? String(req.query.fim)    : null;
+      const fAno      = req.query.ano    && /^\d{4}$/.test(String(req.query.ano))    ? String(req.query.ano)    : null;
+
+      // Acumuladores GLOBAIS (sem filtros de periodo/aging — toda a carteira)
+      let globalEmAberto = 0, globalVencido = 0, globalAVencer = 0;
+      const globalClientes = new Set(), globalClientesVencidos = new Set();
 
       const titulos = [];
       rowsP.forEach(r => {
@@ -212,11 +216,30 @@ module.exports = (app) => ({
         const buLabel = buNome || (buCod ? `${buCod} (Desconhecido)` : '(Desconhecido)');
         const equipe  = mapBuEquipe.get(buLabel) || 'Sem equipe';
 
-        // Aplica filtros de enriquecimento
+        // ============== Totais GLOBAIS (sem filtros de periodo/aging) ==============
+        // Aplicam-se aqui apenas filtros de "escopo" (carteira/equipe), nao de visao.
+        const passaCarteira = !fCarteira || (atrib.carteira || '').toUpperCase() === fCarteira;
+        const passaEquipe   = !fEquipe   || equipe === fEquipe;
+        const saldoNum = toN(r.saldo);
+        if (passaCarteira && passaEquipe) {
+          globalEmAberto += saldoNum;
+          globalClientes.add(cliKey);
+          if (dias > 0) {
+            globalVencido += saldoNum;
+            globalClientesVencidos.add(cliKey);
+          } else {
+            globalAVencer += saldoNum;
+          }
+        }
+
+        // Aplica filtros de enriquecimento + periodo/aging (somente pra lista filtrada)
         if (fCarteira && (atrib.carteira || '').toUpperCase() !== fCarteira) return;
         if (fEquipe   && equipe                                !== fEquipe)   return;
         if (fAging    && aging.codigo                         !== fAging)    return;
         if (fAcao     && (acao?.tipoAcao || '')               !== fAcao)     return;
+        if (fInicio   && trim(r.emissao) < fInicio)                          return;
+        if (fFim      && trim(r.emissao) > fFim)                             return;
+        if (fAno      && trim(r.emissao).slice(0, 4) !== fAno)               return;
 
         const numero = trim(r.numero);
         titulos.push({
@@ -395,7 +418,12 @@ module.exports = (app) => ({
         resumoABC[c.classeABC].valor += c.totalEmAberto;
       });
 
-      const indiceInadimplencia = totalEmAberto > 0 ? (totalVencido / totalEmAberto) * 100 : 0;
+      // KPIs GLOBAIS (sempre toda a carteira) — atendem requisito da diretoria:
+      // % inadimplencia eh sempre calculada sobre o TOTAL em aberto, nao sobre
+      // o recorte filtrado.
+      const indiceInadimplencia = globalEmAberto > 0 ? (globalVencido / globalEmAberto) * 100 : 0;
+      // KPIs FILTRADOS (do recorte) — uteis em algumas tabelas/agregacoes
+      const indiceInadimplenciaFiltrado = totalEmAberto > 0 ? (totalVencido / totalEmAberto) * 100 : 0;
 
       return res.json({
         geradoEm: new Date().toISOString(),
@@ -409,16 +437,25 @@ module.exports = (app) => ({
           aging: req.query.aging || null,
           acao: req.query.acao || null,
           inicio: req.query.inicio || null,
-          fim: req.query.fim || null
+          fim: req.query.fim || null,
+          ano: req.query.ano || null
         },
         kpis: {
-          totalEmAberto,
-          totalVencido,
-          totalAVencer,
+          // Globais (toda a carteira, sempre) — usados nos cards principais
+          totalEmAberto: globalEmAberto,
+          totalVencido: globalVencido,
+          totalAVencer: globalAVencer,
+          qtdClientes: globalClientes.size,
+          qtdClientesVencidos: globalClientesVencidos.size,
+          indiceInadimplencia,
+          // Filtrados (apenas o recorte aplicado) — usados em tabelas/grids
+          totalEmAbertoFiltrado: totalEmAberto,
+          totalVencidoFiltrado: totalVencido,
+          totalAVencerFiltrado: totalAVencer,
           qtdTitulos: titulos.length,
-          qtdClientes: clientesUnicos.size,
-          qtdClientesVencidos: clientesVencidos.size,
-          indiceInadimplencia
+          qtdClientesFiltrados: clientesUnicos.size,
+          qtdClientesVencidosFiltrados: clientesVencidos.size,
+          indiceInadimplenciaFiltrado
         },
         porAging: porAgingArr,
         porCarteira: porCarteiraArr,
