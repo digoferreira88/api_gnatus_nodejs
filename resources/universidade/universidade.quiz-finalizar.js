@@ -5,8 +5,6 @@
 // POST /universidade/tentativa/:id/finalizar
 // Body: { respostas: [{ questaoId, alternativaId }] }
 
-const trim = (v) => v == null ? null : String(v).trim();
-
 module.exports = (app) => ({
   verb: 'post',
   route: '/tentativa/:id/finalizar',
@@ -25,8 +23,8 @@ module.exports = (app) => ({
     try {
       // Valida tentativa: pertence ao user e nao foi finalizada
       const t = await Pg.connectAndQuery(`
-        SELECT t.id, t.matricula_id, t.quiz_id, t.finalizada_em, m.user_id, m.curso_id,
-               q.nota_minima
+        SELECT t.id, t.matricula_id, t.quiz_id, t.finalizada_em, t.nota, t.aprovado,
+               m.user_id, m.curso_id, q.nota_minima
           FROM tab_uni_tentativa t
           INNER JOIN tab_uni_matricula m ON m.id = t.matricula_id
           INNER JOIN tab_uni_quiz q      ON q.id = t.quiz_id
@@ -34,7 +32,32 @@ module.exports = (app) => ({
       if (!t.length) return res.status(404).json({ message: 'Tentativa nao encontrada.' });
       const tent = t[0];
       if (Number(tent.user_id) !== Number(user.ID)) return res.status(403).json({ message: 'Tentativa de outro usuario.' });
-      if (tent.finalizada_em) return res.status(409).json({ message: 'Tentativa ja finalizada.' });
+
+      // Se ja foi finalizada (double-submit, refresh, outra aba), retorna o resultado existente
+      // em vez de 409. Idempotente — UX melhor que erro tecnico.
+      if (tent.finalizada_em) {
+        const cnt = await Pg.connectAndQuery(`
+          SELECT
+            COUNT(*) FILTER (WHERE correta = true) AS corretas,
+            COUNT(*) AS total,
+            SUM(pontos) AS obtidos,
+            (SELECT COALESCE(SUM(pontuacao), 0) FROM tab_uni_questao WHERE quiz_id = @qid) AS maximo
+          FROM tab_uni_resposta WHERE tentativa_id = @tid`,
+          { tid, qid: tent.quiz_id }
+        );
+        const c = cnt[0] || {};
+        return res.json({
+          ok: true,
+          jaFinalizadaAntes: true,
+          nota: Number(tent.nota || 0),
+          aprovado: !!tent.aprovado,
+          notaMinima: Number(tent.nota_minima || 0),
+          pontosObtidos: Number(c.obtidos || 0),
+          pontosTotal: Number(c.maximo || 0),
+          questoesCorretas: Number(c.corretas || 0),
+          questoesTotal: Number(c.total || 0)
+        });
+      }
 
       // Pega questoes do quiz com alternativa correta + pontuacao
       const questoes = await Pg.connectAndQuery(`
