@@ -41,7 +41,9 @@ module.exports = (app) => ({
         );
       } catch { /* idempotent */ }
 
-      // Recalcula progresso
+      // Recalcula progresso. Conta aulas obrigatorias; se nenhuma estiver marcada
+      // como obrigatoria (cenario comum quando admin esqueceu o checkbox), faz
+      // fallback considerando TODAS as aulas — assim nao trava em 0%.
       const totObrig = await Pg.connectAndQuery(
         `SELECT COUNT(*)::int total FROM tab_uni_aula WHERE curso_id = @cid AND obrigatoria = true`,
         { cid: cursoId }
@@ -54,8 +56,22 @@ module.exports = (app) => ({
         { mid: matrId }
       );
 
-      const total = Number(totObrig[0].total || 0);
-      const conc = Number(totConcObrig[0].total || 0);
+      let total = Number(totObrig[0].total || 0);
+      let conc = Number(totConcObrig[0].total || 0);
+
+      if (total === 0) {
+        // Fallback: conta todas as aulas
+        const totAll = await Pg.connectAndQuery(
+          `SELECT COUNT(*)::int total FROM tab_uni_aula WHERE curso_id = @cid`, { cid: cursoId }
+        );
+        const totConcAll = await Pg.connectAndQuery(
+          `SELECT COUNT(*)::int total FROM tab_uni_progresso p
+             INNER JOIN tab_uni_aula a ON a.id = p.aula_id
+            WHERE p.matricula_id = @mid`, { mid: matrId }
+        );
+        total = Number(totAll[0].total || 0);
+        conc  = Number(totConcAll[0].total || 0);
+      }
       const aulasOk = total > 0 && conc >= total;
 
       // Se o curso tem quiz, conclusao final exige aprovacao

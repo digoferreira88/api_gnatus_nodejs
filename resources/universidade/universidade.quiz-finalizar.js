@@ -98,7 +98,8 @@ module.exports = (app) => ({
         { tid, nota: Number(nota.toFixed(2)), apr: aprovado }
       );
 
-      // Recalcula progresso do curso (aulas + quiz)
+      // Recalcula progresso do curso (aulas + quiz). Se nenhuma aula obrigatoria,
+      // conta todas (fallback robusto).
       const totObrig = await Pg.connectAndQuery(
         `SELECT COUNT(*)::int total FROM tab_uni_aula WHERE curso_id = @cid AND obrigatoria = true`,
         { cid: tent.curso_id }
@@ -110,8 +111,20 @@ module.exports = (app) => ({
         { mid: tent.matricula_id }
       );
 
-      const total = Number(totObrig[0].total || 0);
-      const conc = Number(totConcObrig[0].total || 0);
+      let total = Number(totObrig[0].total || 0);
+      let conc = Number(totConcObrig[0].total || 0);
+      if (total === 0) {
+        const tAll = await Pg.connectAndQuery(
+          `SELECT COUNT(*)::int total FROM tab_uni_aula WHERE curso_id = @cid`, { cid: tent.curso_id }
+        );
+        const tcAll = await Pg.connectAndQuery(
+          `SELECT COUNT(*)::int total FROM tab_uni_progresso p
+             INNER JOIN tab_uni_aula a ON a.id = p.aula_id
+            WHERE p.matricula_id = @mid`, { mid: tent.matricula_id }
+        );
+        total = Number(tAll[0].total || 0);
+        conc  = Number(tcAll[0].total || 0);
+      }
       const aulasOk = total > 0 && conc >= total;
       // Se ja existiu aprovacao previa, mantem aprovado
       const jaAprovouAntes = await Pg.connectAndQuery(`

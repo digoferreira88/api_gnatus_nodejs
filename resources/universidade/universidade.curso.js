@@ -71,12 +71,18 @@ module.exports = (app) => ({
         }
       }
 
+      // Para a barra de progresso da UI: usa aulas obrigatorias se houver,
+      // senao conta todas (mesmo fallback do aula-concluir/quiz-finalizar).
+      const obrigatorias = aulas.filter(a => a.obrigatoria);
+      const baseAulas = obrigatorias.length > 0 ? obrigatorias : aulas;
+      const baseConcluidas = baseAulas.filter(a => setConcluidas.has(a.id)).length;
+
       return res.json({
         curso: cursoRows[0],
         aulas: aulasComProgresso,
         matricula,
-        totalAulas: aulas.length,
-        aulasConcluidas: aulasConcluidas.length,
+        totalAulas: baseAulas.length,
+        aulasConcluidas: baseConcluidas,
         quiz
       });
     } catch (err) {
