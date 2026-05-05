@@ -17,7 +17,9 @@
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([11003]);
+// Importacao em massa = acao destrutiva, restrita a admin (perm 0).
+// requirePerm([0]) gera IN (0, 0) — soh admin universal passa.
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([0]);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 const trim = (v) => v == null ? null : (typeof v === 'string' ? v.trim() : String(v).trim()) || null;
