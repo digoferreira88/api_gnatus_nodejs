@@ -45,6 +45,9 @@ require('./config/resources')(app, {
   environment: process.env.NODE_ENV || 'development'
 });
 
+// PASSO 4: Inicia jobs cron (cobranca-whatsapp + futuros)
+app.services.Scheduler.start(app);
+
 const Jwt = require('./services/jwt')();
 
 app.io.on('connection', socket => {
