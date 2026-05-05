@@ -12,6 +12,11 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
+// Em producao a app fica atras do Nginx (proxy reverso). Sem 'trust proxy', o
+// req.ip vira sempre 127.0.0.1 e o express-rate-limit cospe ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
+// Confiamos so no PRIMEIRO proxy (Nginx local) — nao no header em si vindo de fora.
+app.set('trust proxy', 1);
+
 // CORS — whitelist por env (CSV). Em dev libera localhost:5173 por padrao.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ||
   'http://localhost:5173,http://localhost:3000,https://intranew.gnatus.com.br'
