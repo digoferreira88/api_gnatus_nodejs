@@ -143,11 +143,12 @@ module.exports = (app) => ({
           );
           r.forEach(x => scInfo.set(trim(x.numero), x));
 
-          // Itens detalhados
+          // Itens detalhados (inclui C1_OBS — observacao por item da SC)
           const it = await Protheus.connectAndQuery(
             `SELECT RTRIM(C1_NUM) numero, RTRIM(C1_ITEM) item,
                     RTRIM(C1_PRODUTO) produto, RTRIM(C1_DESCRI) descricao,
-                    RTRIM(C1_UM) unidade, C1_QUANT quantidade, C1_TOTAL valorTotal
+                    RTRIM(C1_UM) unidade, C1_QUANT quantidade, C1_TOTAL valorTotal,
+                    RTRIM(C1_OBS) obs
                FROM SC1010 WITH (NOLOCK)
               WHERE D_E_L_E_T_ <> '*' AND C1_FILIAL = '01' AND C1_NUM IN (${inSc})
               ORDER BY C1_NUM, C1_ITEM`,
@@ -162,7 +163,8 @@ module.exports = (app) => ({
               descricao: trim(x.descricao),
               unidade: trim(x.unidade),
               quantidade: toN(x.quantidade),
-              valorTotal: toN(x.valorTotal)
+              valorTotal: toN(x.valorTotal),
+              obs: trim(x.obs) || null
             });
           });
         } catch (e) { console.warn('SC info batch err:', e.message); }
@@ -194,12 +196,13 @@ module.exports = (app) => ({
           );
           r.forEach(x => pcInfo.set(trim(x.numero), x));
 
-          // Itens detalhados
+          // Itens detalhados (inclui C7_OBS curta, C7_OBSM memo, C7_OBSFOR obs ao fornecedor)
           const it = await Protheus.connectAndQuery(
             `SELECT RTRIM(C7_NUM) numero, RTRIM(C7_ITEM) item,
                     RTRIM(C7_PRODUTO) produto, RTRIM(C7_DESCRI) descricao,
                     RTRIM(C7_UM) unidade, C7_QUANT quantidade,
-                    C7_PRECO preco, C7_TOTAL valorTotal
+                    C7_PRECO preco, C7_TOTAL valorTotal,
+                    RTRIM(C7_OBS) obs, C7_OBSM obs_memo, C7_OBSFOR obs_fornecedor
                FROM SC7010 WITH (NOLOCK)
               WHERE D_E_L_E_T_ <> '*' AND C7_FILIAL = '01' AND C7_NUM IN (${inPc})
               ORDER BY C7_NUM, C7_ITEM`,
@@ -215,7 +218,10 @@ module.exports = (app) => ({
               unidade: trim(x.unidade),
               quantidade: toN(x.quantidade),
               preco: toN(x.preco),
-              valorTotal: toN(x.valorTotal)
+              valorTotal: toN(x.valorTotal),
+              obs: trim(x.obs) || null,
+              obsMemo: trim(x.obs_memo) || null,
+              obsFornecedor: trim(x.obs_fornecedor) || null
             });
           });
         } catch (e) { console.warn('PC info batch err:', e.message); }
