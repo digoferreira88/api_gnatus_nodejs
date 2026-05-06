@@ -12,6 +12,7 @@
 // Acessivel pelo operador de Cobranca (9004) e por Tecnologia (1030 — pra debug).
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9004, 1030]);
 const Scheduler = require('../../services/scheduler');
+const Auditoria = require('../../services/auditoria');
 
 const chaveTitulo = (t) => [
   t.filial, t.prefixo, t.numero, t.parcela || '',
@@ -92,6 +93,13 @@ module.exports = (app) => ({
         }
       }
 
+      Auditoria.registrar(app, {
+        modulo: 'Cobranca', submodulo: 'WhatsApp', acao: 'EXECUTE',
+        severidade: stats.erros > 0 ? 'ALERTA' : 'AVISO',
+        req, entidade: 'whatsapp_envio', entidadeId: tipo,
+        descricao: `Disparou WhatsApp ${tipo} para ${stats.enviados} cliente(s) (de ${stats.solicitados} selecionados, ${stats.erros} erros, ${stats.sem_telefone} sem telefone)`,
+        meta: { tipo, ...stats, detalhes: undefined }   // detalhes pode ser grande — corta
+      });
       return res.json({ ok: true, ...stats });
     } catch (err) {
       console.error('whatsapp-enviar:', err);

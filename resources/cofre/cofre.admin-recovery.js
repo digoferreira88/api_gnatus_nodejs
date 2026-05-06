@@ -6,6 +6,7 @@
 //  2. Log automático: cada leitura incrementa META_READ_COUNT e atualiza META_LAST_READ.
 //  3. Justificativa obrigatória no body (vai pro console.log do servidor).
 const backup = require('../../services/cofreBackup');
+const Auditoria = require('../../services/auditoria');
 
 module.exports = (app) => ({
   verb: 'post',
@@ -68,6 +69,13 @@ module.exports = (app) => ({
                   `alvo: ${target.EMAIL} (id=${target.ID}) | ` +
                   `leitura #${meta[0].META_READ_COUNT + 1} | ` +
                   `justificativa: ${justificativa}`);
+
+      Auditoria.registrar(app, {
+        modulo: 'Cofre', submodulo: 'AdminRecovery', acao: 'EXECUTE', severidade: 'CRITICO',
+        req, entidade: 'cofre_recovery_key', entidadeId: target.ID,
+        descricao: `Recuperou recovery-key de ${target.EMAIL}. Justificativa: ${justificativa}`,
+        meta: { alvo_id: target.ID, alvo_email: target.EMAIL, leitura_numero: meta[0].META_READ_COUNT + 1, justificativa }
+      });
 
       return res.json({
         usuario: { id: target.ID, nome: target.NOME, email: target.EMAIL },

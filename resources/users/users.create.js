@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const Auditoria = require('../../services/auditoria');
 
 module.exports = (app) => ({
   verb: 'post',
@@ -74,6 +75,12 @@ module.exports = (app) => ({
         );
       }
 
+      Auditoria.registrar(app, {
+        modulo: 'Tecnologia', submodulo: 'GestaoUsuarios', acao: 'CREATE', severidade: 'CRITICO',
+        req, entidade: 'usuario_intranet', entidadeId: novoId,
+        descricao: `Criou usuário "${nome}" (${email})${permsValidas.length ? ` com ${permsValidas.length} permissão(ões)` : ''}`,
+        meta: { nome, email, matricula, codigo_protheus: codProth, permissoes: permsValidas, ativo: ativoFlag }
+      });
       return res.status(201).json({ ok: true, id: novoId, permissoesAplicadas: permsValidas.length });
     } catch (err) {
       console.error('Erro ao criar usuário:', err);

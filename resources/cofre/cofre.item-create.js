@@ -1,3 +1,5 @@
+const Auditoria = require('../../services/auditoria');
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/items',
@@ -27,6 +29,12 @@ module.exports = (app) => ({
           notasEnc: notasEnc || ''
         }
       );
+      Auditoria.registrar(app, {
+        modulo: 'Cofre', submodulo: 'Item', acao: 'CREATE', severidade: 'INFO',
+        req, entidade: 'cofre_item', entidadeId: result[0]?.id,
+        descricao: `Criou item no Cofre: "${titulo}"${categoria ? ' (' + categoria + ')' : ''}`,
+        meta: { titulo, categoria, url }   // sem incluir as cifras
+      });
       return res.status(201).json({ ok: true, id: result[0]?.id });
     } catch (err) {
       console.error('Erro cofre/items-create:', err);

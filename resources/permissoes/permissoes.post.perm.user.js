@@ -1,4 +1,5 @@
 // Toggle (concede/remove) uma permissão de um usuário.
+const Auditoria = require('../../services/auditoria');
 module.exports = app => ({
   verb: 'post',
   route: '/permissoes/toggle',
@@ -36,6 +37,14 @@ module.exports = app => ({
           { u: idUser, p: idPerm }
         );
       }
+      Auditoria.registrar(app, {
+        modulo: 'Tecnologia', submodulo: 'Permissoes',
+        acao: assigned === 1 ? 'GRANT' : 'REVOKE',
+        severidade: 'CRITICO',          // mudanca de permissao eh sempre critica
+        req, entidade: 'permissao_user', entidadeId: `${idUser}:${idPerm}`,
+        descricao: `${assigned === 1 ? 'Concedeu' : 'Revogou'} permissão ${idPerm} ao usuário ${idUser}`,
+        meta: { id_user: idUser, id_permissao: idPerm, matricula: MATRICULA }
+      });
       return res.json({
         message: 'Permissões atualizada com sucesso.',
         ID_USER: idUser, ID_PERMISSAO: idPerm, MATRICULA, ASSIGNED: assigned

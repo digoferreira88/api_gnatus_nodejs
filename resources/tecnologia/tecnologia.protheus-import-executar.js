@@ -6,6 +6,7 @@
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1031]);
 const Trpwsimp = require('../../services/trpwsimp');
+const Auditoria = require('../../services/auditoria');
 
 module.exports = (app) => ({
   verb: 'post',
@@ -68,6 +69,18 @@ module.exports = (app) => ({
         }
       );
     } catch (e) { console.warn('protheus-import-log save err:', e.message); }
+
+    Auditoria.registrar(app, {
+      modulo: 'Tecnologia', submodulo: 'ImportacaoProtheus',
+      acao: 'EXECUTE', severidade: sucesso ? 'CRITICO' : 'ALERTA',
+      req, entidade: 'protheus_import', entidadeId: `${id}${tabela ? ':' + tabela : ''}`,
+      descricao: `${sucesso ? 'Importou' : 'Falhou ao importar'} ${dados.length} registro(s) — ${modeloNome || 'modelo ' + id}`,
+      meta: {
+        modelo_id: id, modelo_nome: modeloNome, tabela, empresa, filial, protheus_user: user,
+        qt_total: status.TOTAL, qt_atualizados: status.ATUALIZADOS, qt_inconsistencias: status.NAO_ATUALIZADOS,
+        duracao: status.DURACAO, erro
+      }
+    });
 
     if (erro && !resp) {
       return res.status(500).json({ message: 'Erro ao chamar TRPWSIMP: ' + erro });

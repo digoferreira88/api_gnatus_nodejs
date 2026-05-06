@@ -14,6 +14,7 @@
 // e o admin completa manualmente.
 
 const trim = (v) => String(v || '').trim();
+const Auditoria = require('../../services/auditoria');
 
 const checarPerm = async (Pg, idUser) => {
   const r = await Pg.connectAndQuery(
@@ -183,6 +184,14 @@ module.exports = (app) => ({
           }
         );
       } catch (e) { console.error('Falha ao gravar log:', e.message); }
+
+      Auditoria.registrar(app, {
+        modulo: 'Tecnologia', submodulo: 'Provisionamento',
+        acao: 'CREATE', severidade: sucesso ? 'CRITICO' : 'ALERTA',
+        req, entidade: 'usuario_ad_m365', entidadeId: upn,
+        descricao: `${sucesso ? 'Provisionou' : 'Falhou ao provisionar'} usuário "${nomeCompleto}" (${upn}) — AD:${criouAd ? 'OK' : '–'} M365:${criouM365 ? 'OK' : '–'} Licença:${atribuiuLicenca ? 'OK' : '–'}`,
+        meta: { upn, nome: nomeCompleto, ou, gruposAd, criouAd, criouM365, atribuiuLicenca, erro: erroFinal }
+      });
 
       const resp = {
         ok: sucesso, etapas,

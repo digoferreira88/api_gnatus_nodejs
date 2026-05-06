@@ -20,6 +20,7 @@
 
 const trim = (v) => String(v || '').trim();
 const tiposValidos = new Set(['SC', 'PC']);
+const Auditoria = require('../../services/auditoria');
 
 module.exports = (app) => ({
   verb: 'post',
@@ -101,7 +102,21 @@ module.exports = (app) => ({
       const txt = await r.text();
       const ok = r.ok;
       await logar(ok, `[${r.status}] ${txt.slice(0, 1000)}`);
-      if (!ok) return res.status(502).json({ ok: false, message: 'Protheus retornou erro.', status: r.status, body: txt.slice(0, 500) });
+      if (!ok) {
+        Auditoria.registrar(app, {
+          modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'APPROVE_FAIL', severidade: 'ALERTA',
+          req, entidade: tipo === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
+          descricao: `Falha ao aprovar ${tipo} ${numero} (Protheus ${r.status})`,
+          meta: { tipo, numero, observacao, http: r.status }
+        });
+        return res.status(502).json({ ok: false, message: 'Protheus retornou erro.', status: r.status, body: txt.slice(0, 500) });
+      }
+      Auditoria.registrar(app, {
+        modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'APPROVE', severidade: 'CRITICO',
+        req, entidade: tipo === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
+        descricao: `Aprovou ${tipo} ${numero}${observacao ? ` — "${observacao.slice(0, 80)}"` : ''}`,
+        meta: { tipo, numero, observacao }
+      });
       return res.json({ ok: true, status: r.status, response: (() => { try { return JSON.parse(txt); } catch { return txt; } })() });
     } catch (err) {
       await logar(false, err.message);

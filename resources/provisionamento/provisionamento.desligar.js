@@ -4,6 +4,7 @@
 // Não deleta nada — apenas desabilita/bloqueia (reversível).
 
 const trim = (v) => String(v || '').trim();
+const Auditoria = require('../../services/auditoria');
 
 const checarPerm = async (Pg, idUser) => {
   const r = await Pg.connectAndQuery(
@@ -115,6 +116,14 @@ module.exports = (app) => ({
         }
       );
     } catch (e) { console.error('Falha ao gravar log:', e.message); }
+
+    Auditoria.registrar(app, {
+      modulo: 'Tecnologia', submodulo: 'Provisionamento',
+      acao: 'DISABLE', severidade: 'CRITICO',
+      req, entidade: 'usuario_ad_m365', entidadeId: upn || adDn || nomeRef,
+      descricao: `Desligou usuário "${nomeRef}" — M365:${bloqueouM365 ? 'OK' : '–'} AD:${desabilitouAd ? 'OK' : '–'} Licenças: ${licencasRemovidas.length}`,
+      meta: { upn, adDn, bloqueouM365, removeuLicencas, desabilitouAd, licencasRemovidas, sucesso }
+    });
 
     return res.status(sucesso ? 200 : 502).json({
       ok: sucesso,

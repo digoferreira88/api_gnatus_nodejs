@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
+const Auditoria = require('../../services/auditoria');
 
 // Rate limit: 5 tentativas por IP a cada 15 min. Mais que suficiente pra uso
 // legitimo (humano) e bloqueia brute force.
@@ -33,13 +34,30 @@ module.exports = (app) => ({
       if (!user) {
         // Custo constante: faz hash dummy pra nao vazar timing-side-channel
         bcrypt.compareSync(senha, '$2a$10$abcdefghijklmnopqrstuv.WXYZ0123456789abcdef');
+        Auditoria.registrar(app, {
+          modulo: 'Sistema', submodulo: 'Login', acao: 'LOGIN_FAIL', severidade: 'AVISO',
+          req, usuarioEmail: email,
+          descricao: `Tentativa de login com e-mail nao cadastrado: ${email}`
+        });
         return res.status(401).json({ message: 'E-mail ou senha invalidos.' });
       }
 
       const ok = bcrypt.compareSync(senha, user.SENHA);
-      if (!ok) return res.status(401).json({ message: 'E-mail ou senha invalidos.' });
+      if (!ok) {
+        Auditoria.registrar(app, {
+          modulo: 'Sistema', submodulo: 'Login', acao: 'LOGIN_FAIL', severidade: 'ALERTA',
+          req, idUsuario: user.ID, usuarioEmail: user.EMAIL, usuarioNome: user.NOME,
+          descricao: `Senha incorreta no login`
+        });
+        return res.status(401).json({ message: 'E-mail ou senha invalidos.' });
+      }
 
       const token = Jwt.generate({ id: user.ID, type: 'usuario' });
+      Auditoria.registrar(app, {
+        modulo: 'Sistema', submodulo: 'Login', acao: 'LOGIN', severidade: 'INFO',
+        req, idUsuario: user.ID, usuarioEmail: user.EMAIL, usuarioNome: user.NOME,
+        descricao: `Login efetuado com sucesso`
+      });
       return res.json({ token });
     } catch (error) {
       console.error("Erro ao realizar a autenticacao:", error.message);
