@@ -7,30 +7,28 @@
 //   B6_SALDO = quantidade ainda em poder do terceiro (após retornos)
 //   Valor = SALDO × B6_PRUNIT
 //
-// Categoria amigável é derivada do CFOP do TES (SF4010.F4_CF):
-//   5901/6901  → Industrialização
-//   5908/6908  → Comodato
-//   5910/6910  → Bonificação
-//   5912/6912  → Demonstração
-//   5914/6914  → Mercadoria em Exposição
-//   5915/6915  → Conserto / Reparo
-//   5917/6917  → Consignação
-//   demais     → Outras Remessas
+// Filtro: por TES (B6_TES / SF4.F4_CODIGO). Lista definida pelo Fiscal
+// (2026-05) — ver TES_INCLUIR abaixo. CFOP fica como informacao adicional
+// na linha mas nao filtra.
 
 const trim = (v) => String(v || '').trim();
 const toN  = (v) => Number(v || 0);
 
-// Apenas as CFOPs definidas pela Gnatus para este relatório (escopo Controladoria 2026-04):
-//   5901/6901 = Industrialização
-//   5908/6908 = Comodato
-//   5915/6915 = Conserto
-const CFOPS_INCLUIR = ['5901','6901','5908','6908','5915','6915'];
-const CATEGORIA_BY_CFOP = {
-  '5901': 'Industrialização', '6901': 'Industrialização',
-  '5908': 'Comodato',         '6908': 'Comodato',
-  '5915': 'Conserto',         '6915': 'Conserto'
+// TES que entram no relatorio (definidas pelo Fiscal):
+//   546 (CFOP 5908/6908) → Comodato
+//   544 (CFOP 5915/6915) → Conserto
+//   573 (CFOP 5915/6915) → Conserto
+//   563 (CFOP 5901/6901) → Industrializacao
+//   656 (CFOP 5949/6949) → Teste/Desenvolvimento
+const TES_INCLUIR = ['546', '544', '573', '563', '656'];
+const CATEGORIA_BY_TES = {
+  '546': 'Comodato',
+  '544': 'Conserto',
+  '573': 'Conserto',
+  '563': 'Industrialização',
+  '656': 'Teste/Desenvolvimento'
 };
-const categoriaFromCfop = (cfop) => CATEGORIA_BY_CFOP[trim(cfop)] || null;
+const categoriaFromTes = (tes) => CATEGORIA_BY_TES[trim(tes)] || null;
 
 const protheusDateToISO = (s) => {
   s = String(s || '').replace(/\D/g, '');
@@ -53,9 +51,9 @@ module.exports = (app) => ({
     const { Protheus } = app.services;
 
     try {
-      // SB6010 com TES + descricao + cfop, JOIN com produto/clifor (cliente OU fornecedor)
-      // Filtra no INNER JOIN com SF4010 só os TES cujo CFOP esteja na lista alvo.
-      const inCfops = CFOPS_INCLUIR.map(c => `'${c}'`).join(',');
+      // SB6010 filtrada pela lista de TES definida pelo fiscal.
+      // SF4010 traz a descricao e o CFOP da TES (informativo, nao filtra).
+      const inTes = TES_INCLUIR.map(t => `'${t}'`).join(',');
       const rows = await Protheus.connectAndQuery(
         `SELECT RTRIM(b6.B6_PRODUTO) produto,
                 RTRIM(sb1.B1_DESC)   produtoDesc,
@@ -78,9 +76,8 @@ module.exports = (app) => ({
                 RTRIM(sf4.F4_TEXTO)  tesDesc,
                 RTRIM(sf4.F4_CF)     cfop
            FROM SB6010 b6 WITH (NOLOCK)
-           INNER JOIN SF4010 sf4 WITH (NOLOCK)
+           LEFT JOIN SF4010 sf4 WITH (NOLOCK)
              ON sf4.F4_FILIAL = '01' AND sf4.F4_CODIGO = b6.B6_TES AND sf4.D_E_L_E_T_ <> '*'
-            AND sf4.F4_CF IN (${inCfops})
            LEFT JOIN SB1010 sb1 WITH (NOLOCK)
              ON sb1.B1_COD = b6.B6_PRODUTO AND sb1.D_E_L_E_T_ <> '*'
            LEFT JOIN SA1010 sa1 WITH (NOLOCK)
@@ -90,13 +87,14 @@ module.exports = (app) => ({
           WHERE b6.D_E_L_E_T_ <> '*'
             AND b6.B6_FILIAL = '01'
             AND b6.B6_SALDO > 0
-            AND b6.B6_TIPO = 'E'`,
+            AND b6.B6_TIPO = 'E'
+            AND RTRIM(b6.B6_TES) IN (${inTes})`,
         {}
       );
 
-      // Normaliza + categoriza (descarta linhas sem categoria conhecida — defesa)
+      // Normaliza + categoriza pela TES (descarta linhas sem categoria mapeada — defesa)
       const itens = rows.map(r => {
-        const categoria = categoriaFromCfop(r.cfop);
+        const categoria = categoriaFromTes(r.tes);
         if (!categoria) return null;
         const saldo  = toN(r.saldo);
         const prunit = toN(r.prunit);
