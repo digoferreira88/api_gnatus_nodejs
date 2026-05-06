@@ -19,6 +19,7 @@ INSERT INTO tab_intranet_permissoes (id_permissao, nome, modulo) VALUES
   (7001, 'Perfil - Cofre de Senhas',                 'Perfil'),
   (8001, 'Financeiro - Contas a Pagar',              'Financeiro'),
   (8002, 'Financeiro - Contas a Receber',            'Financeiro'),
+  (8004, 'Financeiro - Fluxo de Caixa',              'Financeiro'),
   (8003, 'Cobrança - Acesso',                        'Cobrança'),
   (9001, 'Cobrança - Painel',                        'Cobrança'),
   (9002, 'Cobrança - Ação',                          'Cobrança'),
