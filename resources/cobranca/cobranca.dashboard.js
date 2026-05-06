@@ -79,15 +79,13 @@ module.exports = (app) => ({
       protheusParams.bu = String(req.query.bu).toUpperCase();
       condsProtheus.push(`AND RTRIM(sc5.C5_ZTIPO) = @bu`);
     }
-    if (req.query.formaPgto) {
-      protheusParams.formaPgto = String(req.query.formaPgto);
-      condsProtheus.push(`AND RTRIM(se1.E1_FORMAPG) = @formaPgto`);
-    }
-    // OBS: filtros de PERIODO (inicio/fim/ano) e AGING NAO entram no SQL — sao
-    // aplicados em loop posterior, pra que os KPIs "totais globais" sempre
-    // reflitam toda a carteira em aberto (independente de filtro). Isso atende
+    // OBS: filtros de PERIODO (inicio/fim/ano), AGING e FORMA PGTO NAO entram
+    // no SQL — sao aplicados em loop posterior. Pros 2 primeiros, isso atende
     // ao requisito da diretoria: % de inadimplencia eh sempre calculada em
-    // cima do TOTAL em aberto, nao do recorte filtrado.
+    // cima do TOTAL em aberto, nao do recorte filtrado. Pra forma de pgto, eh
+    // pra que o dropdown de filtro consiga listar TODAS as opcoes da carteira
+    // (rowsP completo) — se filtrasse no SQL, o dropdown so mostraria a opcao
+    // ja selecionada.
 
     const sqlTitulos = `
       SELECT
@@ -190,6 +188,7 @@ module.exports = (app) => ({
       const fEquipe   = req.query.equipe   ? String(req.query.equipe)   : null;
       const fAging    = req.query.aging    ? String(req.query.aging)    : null;
       const fAcao     = req.query.acao     ? String(req.query.acao)     : null;
+      const fFormaPgto= req.query.formaPgto ? String(req.query.formaPgto) : null;
       const fInicio   = req.query.inicio && /^\d{8}$/.test(String(req.query.inicio)) ? String(req.query.inicio) : null;
       const fFim      = req.query.fim    && /^\d{8}$/.test(String(req.query.fim))    ? String(req.query.fim)    : null;
       const fAno      = req.query.ano    && /^\d{4}$/.test(String(req.query.ano))    ? String(req.query.ano)    : null;
@@ -197,6 +196,17 @@ module.exports = (app) => ({
       // Acumuladores GLOBAIS (sem filtros de periodo/aging — toda a carteira)
       let globalEmAberto = 0, globalVencido = 0, globalAVencer = 0;
       const globalClientes = new Set(), globalClientesVencidos = new Set();
+
+      // Conta formas de pagamento DISTINTAS na carteira inteira (antes dos
+      // filtros JS), pra popular o dropdown — igual o painel faz.
+      const formasSet = new Map();
+      rowsP.forEach(r => {
+        const fp = trim(r.formaPgto);
+        formasSet.set(fp, (formasSet.get(fp) || 0) + 1);
+      });
+      const formasPgtoDisponiveis = [...formasSet.entries()]
+        .map(([cod, qtd]) => ({ cod, nome: descreverFormaPgto(cod), qtd }))
+        .sort((a, b) => a.nome.localeCompare(b.nome));
 
       const titulos = [];
       rowsP.forEach(r => {
@@ -233,13 +243,14 @@ module.exports = (app) => ({
         }
 
         // Aplica filtros de enriquecimento + periodo/aging (somente pra lista filtrada)
-        if (fCarteira && (atrib.carteira || '').toUpperCase() !== fCarteira) return;
-        if (fEquipe   && equipe                                !== fEquipe)   return;
-        if (fAging    && aging.codigo                         !== fAging)    return;
-        if (fAcao     && (acao?.tipoAcao || '')               !== fAcao)     return;
-        if (fInicio   && trim(r.emissao) < fInicio)                          return;
-        if (fFim      && trim(r.emissao) > fFim)                             return;
-        if (fAno      && trim(r.emissao).slice(0, 4) !== fAno)               return;
+        if (fCarteira  && (atrib.carteira || '').toUpperCase() !== fCarteira) return;
+        if (fEquipe    && equipe                               !== fEquipe)   return;
+        if (fAging     && aging.codigo                         !== fAging)    return;
+        if (fAcao      && (acao?.tipoAcao || '')               !== fAcao)     return;
+        if (fFormaPgto && trim(r.formaPgto)                    !== fFormaPgto) return;
+        if (fInicio    && trim(r.emissao) < fInicio)                          return;
+        if (fFim       && trim(r.emissao) > fFim)                             return;
+        if (fAno       && trim(r.emissao).slice(0, 4) !== fAno)               return;
 
         const numero = trim(r.numero);
         titulos.push({
@@ -457,6 +468,7 @@ module.exports = (app) => ({
         porEquipe: porEquipeArr,
         porBu: porBuArr,
         porCliente: clientesArr,
+        formasPgtoDisponiveis,
         porSemana: porSemanaArr,
         resumoABC,
         titulos
