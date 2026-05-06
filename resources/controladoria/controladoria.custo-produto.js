@@ -313,7 +313,7 @@ module.exports = (app) => ({
       const custoComponentes = componentes.reduce((s, c) => s + (c.custoReal || 0), 0);
       const impostosTotal    = componentes.reduce((s, c) => s + (c.impostos || 0), 0);
 
-      // 7) Histórico agregado por mês (para gráfico)
+      // 7) Histórico agregado por mês (para gráfico — mantido pra compatibilidade)
       const aggMes = {};
       hist.forEach(h => {
         const ym = trim(h.emissao).slice(0, 6);
@@ -332,6 +332,41 @@ module.exports = (app) => ({
           vunitMedio: m.qtd > 0 ? m.valor / m.qtd : 0,
           lancamentos: m.nLancam
         }));
+
+      // 8) Top variacoes (unitario e total) — apenas componentes com >=2 compras.
+      // Calcula variacao % entre primeira e ultima compra do periodo.
+      const variacoes = todos.map(cod => {
+        const h = histByComp[cod] || [];
+        if (h.length < 2) return null;
+        const primeiro = h[0];
+        const ultimo   = h[h.length - 1];
+        const vunitPct = primeiro.vunit > 0 ? ((ultimo.vunit - primeiro.vunit) / primeiro.vunit) * 100 : 0;
+        const totalPct = primeiro.total > 0 ? ((ultimo.total - primeiro.total) / primeiro.total) * 100 : 0;
+        // Encontra descricao em algum lugar da arvore
+        let descricao = cod;
+        for (const arr of porPai.values()) {
+          const f = arr.find(x => x.componente === cod);
+          if (f) { descricao = f.descricao; break; }
+        }
+        return {
+          componente: cod, descricao,
+          primeira: { emissao: primeiro.emissao, vunit: primeiro.vunit, total: primeiro.total, qtd: primeiro.qtd },
+          ultima:   { emissao: ultimo.emissao,   vunit: ultimo.vunit,   total: ultimo.total,   qtd: ultimo.qtd },
+          deltaVunit: ultimo.vunit - primeiro.vunit,
+          deltaTotal: ultimo.total - primeiro.total,
+          variacaoPctVunit: vunitPct,
+          variacaoPctTotal: totalPct,
+          qtdCompras: h.length,
+          historico: h.map(x => ({ emissao: x.emissao, vunit: x.vunit, total: x.total, qtd: x.qtd }))
+        };
+      }).filter(Boolean);
+
+      const topVariacaoUnitario = [...variacoes]
+        .sort((a, b) => Math.abs(b.variacaoPctVunit) - Math.abs(a.variacaoPctVunit))
+        .slice(0, 5);
+      const topVariacaoTotal = [...variacoes]
+        .sort((a, b) => Math.abs(b.variacaoPctTotal) - Math.abs(a.variacaoPctTotal))
+        .slice(0, 5);
 
       return res.json({
         produto: {
@@ -354,6 +389,7 @@ module.exports = (app) => ({
           qtdComponentes: componentes.length
         },
         historicoAgregado,
+        topVariacao: { unitario: topVariacaoUnitario, total: topVariacaoTotal },
         parametros: { histMeses, histInicio: histIniYmd, maxNivel: MAX_NIVEL },
         geradoEm: new Date().toISOString()
       });
