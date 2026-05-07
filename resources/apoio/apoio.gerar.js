@@ -25,6 +25,13 @@ module.exports = (app) => ({
     if (req.file.size > 25 * 1024 * 1024) {
       return res.status(413).json({ message: 'Arquivo muito grande (max 25MB).' });
     }
+    const ext = (req.file.originalname || '').toLowerCase().split('.').pop();
+    if (ext === 'xls') {
+      return res.status(400).json({ message: 'Formato .xls (Excel 97-2003) nao suportado. Abra no Excel e salve como .xlsx.' });
+    }
+    if (!['xlsx', 'csv'].includes(ext)) {
+      return res.status(400).json({ message: 'Formato nao suportado. Aceita XLSX ou CSV.' });
+    }
 
     const t0 = Date.now();
     let perfil = null;
