@@ -105,26 +105,26 @@ module.exports = (app) => ({
       if (!ok) {
         Auditoria.registrar(app, {
           modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'APPROVE_FAIL', severidade: 'ALERTA',
-          req, entidade: tipo === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
-          descricao: `Falha ao aprovar ${tipo} ${numero} (Protheus ${r.status})`,
-          meta: { tipo, numero, observacao, http: r.status }
+          req, entidade: tipoIntranet === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
+          descricao: `Falha ao aprovar ${tipoIntranet} ${numero} (Protheus ${r.status})`,
+          meta: { tipo: tipoIntranet, numero, justificativa, http: r.status }
         });
         return res.status(502).json({ ok: false, message: 'Protheus retornou erro.', status: r.status, body: txt.slice(0, 500) });
       }
       Auditoria.registrar(app, {
         modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'APPROVE', severidade: 'CRITICO',
-        req, entidade: tipo === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
-        descricao: `Aprovou ${tipo} ${numero}${observacao ? ` — "${observacao.slice(0, 80)}"` : ''}`,
-        meta: { tipo, numero, observacao }
+        req, entidade: tipoIntranet === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
+        descricao: `Aprovou ${tipoIntranet} ${numero}${justificativa ? ` — "${justificativa.slice(0, 80)}"` : ''}`,
+        meta: { tipo: tipoIntranet, numero, justificativa }
       });
       return res.json({ ok: true, status: r.status, response: (() => { try { return JSON.parse(txt); } catch { return txt; } })() });
     } catch (err) {
       await logar(false, err.message);
       Auditoria.registrar(app, {
         modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'APPROVE_ERROR', severidade: 'CRITICO',
-        req, entidade: tipo === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
-        descricao: `Erro ao chamar Protheus em aprovacao de ${tipo} ${numero}: ${err.message}`,
-        meta: { tipo, numero, erro: err.message }
+        req, entidade: tipoIntranet === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
+        descricao: `Erro ao chamar Protheus em aprovacao de ${tipoIntranet} ${numero}: ${err.message}`,
+        meta: { tipo: tipoIntranet, numero, erro: err.message }
       });
       return res.status(500).json({ ok: false, message: 'Erro ao chamar Protheus: ' + err.message });
     }
