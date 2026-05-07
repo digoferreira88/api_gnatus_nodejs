@@ -13,6 +13,7 @@
 // EncodeDocument = conteúdo do arquivo em base64.
 
 const trim = (v) => String(v || '').trim();
+const Auditoria = require('../../services/auditoria');
 
 const mimeFromExt = (name) => {
   const ext = (name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
@@ -90,8 +91,23 @@ module.exports = (app) => ({
       res.setHeader('Content-Disposition',
         `inline; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
       res.setHeader('Cache-Control', 'private, max-age=300');
+
+      // Auditoria de acesso a documento (rastreio de quem viu o que)
+      Auditoria.registrar(app, {
+        modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'DOWNLOAD_ANEXO', severidade: 'AVISO',
+        req, entidade: 'aprovacao_anexo', entidadeId: codObj,
+        descricao: `Baixou anexo "${fileName}" (${(buffer.length / 1024).toFixed(0)}KB)`,
+        meta: { codObj, fileName, sizeBytes: buffer.length, mime }
+      });
+
       return res.end(buffer);
     } catch (err) {
+      Auditoria.registrar(app, {
+        modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'DOWNLOAD_ANEXO_FAIL', severidade: 'ALERTA',
+        req, entidade: 'aprovacao_anexo', entidadeId: codObj,
+        descricao: `Falha ao baixar anexo: ${err.message}`,
+        meta: { codObj, erro: err.message }
+      });
       return res.status(500).json({ message: 'Erro ao baixar anexo: ' + err.message });
     }
   }

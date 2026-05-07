@@ -120,6 +120,12 @@ module.exports = (app) => ({
       return res.json({ ok: true, status: r.status, response: (() => { try { return JSON.parse(txt); } catch { return txt; } })() });
     } catch (err) {
       await logar(false, err.message);
+      Auditoria.registrar(app, {
+        modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'APPROVE_ERROR', severidade: 'CRITICO',
+        req, entidade: tipo === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
+        descricao: `Erro ao chamar Protheus em aprovacao de ${tipo} ${numero}: ${err.message}`,
+        meta: { tipo, numero, erro: err.message }
+      });
       return res.status(500).json({ ok: false, message: 'Erro ao chamar Protheus: ' + err.message });
     }
   }
