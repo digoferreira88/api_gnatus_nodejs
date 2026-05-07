@@ -34,18 +34,36 @@ module.exports = (app) => ({
 
     const ip = req.headers['x-forwarded-for'] || req.connection?.remoteAddress || '';
 
+    // Normaliza lista de dispositivos. Aceita:
+    //   - body.dispositivos: [{ marca, modelo, cor, novo, condicoes }, ...]
+    //   - retrocompat: campos chapados (marca/modelo/cor/novo/condicoes) =
+    //     1 dispositivo
+    let dispositivos = Array.isArray(b.dispositivos) ? b.dispositivos : [];
+    if (!dispositivos.length && (b.marca || b.modelo)) {
+      dispositivos = [{ marca: b.marca, modelo: b.modelo, cor: b.cor, novo: b.novo, condicoes: b.condicoes }];
+    }
+    dispositivos = dispositivos.map(d => ({
+      marca: trim(d?.marca) || null,
+      modelo: trim(d?.modelo) || null,
+      cor: trim(d?.cor) || null,
+      novo: typeof d?.novo === 'boolean' ? d.novo : null,
+      condicoes: trim(d?.condicoes) || null
+    })).filter(d => d.marca || d.modelo);  // descarta vazios
+
     const dataTermo = trim(b.dataTermo) || new Date().toISOString().slice(0, 10);
+    // Snapshot do 1o dispositivo nos campos antigos (retrocompat tab_termo_equipamento)
+    const primeiro = dispositivos[0] || { marca: null, modelo: null, cor: null, novo: null, condicoes: null };
     const params = {
       uid: user.ID, modo,
       mat: trim(b.matriculaProtheus) || null,
       nome, doc: documento,
       cargo: trim(b.cargo) || null,
-      marca: trim(b.marca) || null,
-      modelo: trim(b.modelo) || null,
-      cor: trim(b.cor) || null,
-      novo: typeof b.novo === 'boolean' ? b.novo : null,
+      marca: primeiro.marca,
+      modelo: primeiro.modelo,
+      cor: primeiro.cor,
+      novo: primeiro.novo,
       acess: trim(b.acessorios) || null,
-      cond: trim(b.condicoes) || null,
+      cond: primeiro.condicoes,
       cidade: trim(b.cidade) || null,
       dt: dataTermo,
       ip
@@ -66,34 +84,51 @@ module.exports = (app) => ({
       );
       const idTermo = r[0]?.id;
 
-      // Tambem registra como equipamento ATIVO em poder do colaborador
-      // (so se tem equipamento minimo: marca ou modelo). Permite controle
-      // de tempo de uso e historico de defeitos. Idempotente — checa se ja
-      // existe registro pra esse termo.
-      let idEquipamento = null;
-      if (idTermo && (params.marca || params.modelo)) {
-        try {
-          const eq = await Pg.connectAndQuery(
-            `INSERT INTO tab_equipamento_atual (
-               documento, nome, matricula_protheus, cargo,
-               marca, modelo, cor, novo, acessorios, condicoes,
-               data_entrega, status, id_termo_origem, registrado_por
-             ) VALUES (
-               @doc, @nome, @mat, @cargo,
-               @marca, @modelo, @cor, @novo, @acess, @cond,
-               @dt, 'ATIVO', @idTermo, @uid
-             )
-             ON CONFLICT DO NOTHING
-             RETURNING id`,
-            { ...params, idTermo }
-          );
-          idEquipamento = eq[0]?.id || null;
-        } catch (e) {
-          console.warn('Termo salvo, mas falhou registrar equipamento atual:', e.message);
+      // 1) Insere cada dispositivo em tab_termo_dispositivo (filha)
+      // 2) Tambem registra cada um como equipamento ATIVO em poder do
+      //    colaborador (tab_equipamento_atual) — permite controle de tempo
+      //    de uso e historico de defeitos. Idempotente via ON CONFLICT.
+      const idsEquipamento = [];
+      if (idTermo && dispositivos.length > 0) {
+        for (let i = 0; i < dispositivos.length; i++) {
+          const d = dispositivos[i];
+          try {
+            await Pg.connectAndQuery(`
+              INSERT INTO tab_termo_dispositivo (id_termo, ordem, marca, modelo, cor, novo, condicoes)
+              VALUES (@idTermo, @ord, @marca, @modelo, @cor, @novo, @cond)`,
+              { idTermo, ord: i, marca: d.marca, modelo: d.modelo, cor: d.cor, novo: d.novo, cond: d.condicoes }
+            );
+          } catch (e) {
+            console.warn('Falhou insert dispositivo:', e.message);
+          }
+          try {
+            const eq = await Pg.connectAndQuery(
+              `INSERT INTO tab_equipamento_atual (
+                 documento, nome, matricula_protheus, cargo,
+                 marca, modelo, cor, novo, acessorios, condicoes,
+                 data_entrega, status, id_termo_origem, registrado_por
+               ) VALUES (
+                 @doc, @nome, @mat, @cargo,
+                 @marca, @modelo, @cor, @novo, @acess, @cond,
+                 @dt, 'ATIVO', @idTermo, @uid
+               )
+               ON CONFLICT DO NOTHING
+               RETURNING id`,
+              {
+                doc: params.doc, nome: params.nome, mat: params.mat, cargo: params.cargo,
+                marca: d.marca, modelo: d.modelo, cor: d.cor, novo: d.novo,
+                acess: i === 0 ? params.acess : null,   // acessorios so no 1o (sao do termo, nao do dispositivo)
+                cond: d.condicoes, dt: params.dt, idTermo, uid: user.ID
+              }
+            );
+            if (eq[0]?.id) idsEquipamento.push(eq[0].id);
+          } catch (e) {
+            console.warn('Termo salvo, mas falhou registrar equipamento atual:', e.message);
+          }
         }
       }
 
-      return res.json({ ok: true, id: idTermo, criadoEm: r[0]?.criado_em, idEquipamento });
+      return res.json({ ok: true, id: idTermo, criadoEm: r[0]?.criado_em, idsEquipamento, qtdDispositivos: dispositivos.length });
     } catch (err) {
       console.error('Erro salvar termo log:', err);
       return res.status(500).json({ message: 'Erro ao salvar log: ' + err.message });

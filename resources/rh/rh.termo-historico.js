@@ -49,24 +49,56 @@ module.exports = (app) => ({
         params
       );
 
+      // Carrega dispositivos de TODOS os termos retornados (1 query)
+      const ids = r.map(x => x.id);
+      let dispositivosByTermo = {};
+      if (ids.length > 0) {
+        const inIds = ids.map((_, i) => `@i${i}`).join(',');
+        const pIds = {};
+        ids.forEach((id, i) => { pIds[`i${i}`] = id; });
+        const disp = await Pg.connectAndQuery(
+          `SELECT id_termo, ordem, marca, modelo, cor, novo, condicoes
+             FROM tab_termo_dispositivo
+            WHERE id_termo IN (${inIds})
+            ORDER BY id_termo, ordem`,
+          pIds
+        );
+        disp.forEach(d => {
+          if (!dispositivosByTermo[d.id_termo]) dispositivosByTermo[d.id_termo] = [];
+          dispositivosByTermo[d.id_termo].push({
+            ordem: d.ordem, marca: d.marca, modelo: d.modelo, cor: d.cor,
+            novo: d.novo, condicoes: d.condicoes
+          });
+        });
+      }
+
       return res.json({
         total: r.length,
-        historico: r.map(x => ({
-          id: x.id,
-          modo: x.modo,
-          matriculaProtheus: x.matricula_protheus,
-          nome: x.nome,
-          documento: x.documento,
-          cargo: x.cargo,
-          equipamento: {
-            marca: x.marca, modelo: x.modelo, cor: x.cor,
-            novo: x.novo, acessorios: x.acessorios, condicoes: x.condicoes
-          },
-          cidade: x.cidade,
-          dataTermo: x.data_termo,
-          criadoEm: x.criado_em,
-          emissor: { nome: x.emissor_nome, email: x.emissor_email }
-        }))
+        historico: r.map(x => {
+          const dispositivos = dispositivosByTermo[x.id] || [];
+          // Fallback retrocompat: se nao tem dispositivos cadastrados mas o termo
+          // antigo tinha marca/modelo, monta 1 dispositivo a partir dos campos snapshot
+          if (dispositivos.length === 0 && (x.marca || x.modelo)) {
+            dispositivos.push({ ordem: 0, marca: x.marca, modelo: x.modelo, cor: x.cor, novo: x.novo, condicoes: x.condicoes });
+          }
+          return {
+            id: x.id,
+            modo: x.modo,
+            matriculaProtheus: x.matricula_protheus,
+            nome: x.nome,
+            documento: x.documento,
+            cargo: x.cargo,
+            equipamento: {
+              marca: x.marca, modelo: x.modelo, cor: x.cor,
+              novo: x.novo, acessorios: x.acessorios, condicoes: x.condicoes
+            },
+            dispositivos,
+            cidade: x.cidade,
+            dataTermo: x.data_termo,
+            criadoEm: x.criado_em,
+            emissor: { nome: x.emissor_nome, email: x.emissor_email }
+          };
+        })
       });
     } catch (err) {
       console.error('Erro histórico termo:', err);
