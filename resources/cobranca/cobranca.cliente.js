@@ -58,7 +58,8 @@ module.exports = (app) => ({
          FROM SE1010 WITH (NOLOCK)
          WHERE D_E_L_E_T_ <> '*'
            AND E1_CLIENTE = @cod AND E1_LOJA = @loja
-           AND E1_SALDO > 0 AND (E1_BAIXA = '' OR E1_BAIXA IS NULL)
+           -- Soh E1_SALDO > 0 (sem checar E1_BAIXA, que pode estar preenchida em baixas parciais)
+           AND E1_SALDO > 0
            AND RTRIM(E1_TIPO) NOT IN ('RA', 'NCC')
          ORDER BY E1_VENCREA ASC`,
         { cod, loja }

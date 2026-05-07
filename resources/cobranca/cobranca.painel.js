@@ -104,7 +104,9 @@ module.exports = (app) => ({
        AND buNome.D_E_L_E_T_ <> '*'
       WHERE se1.D_E_L_E_T_ <> '*'
         AND se1.E1_SALDO > 0
-        AND (se1.E1_BAIXA = '' OR se1.E1_BAIXA IS NULL)
+        -- E1_BAIXA pode estar preenchida em baixas parciais. O criterio canonico
+        -- de "titulo em aberto" no Protheus eh apenas E1_SALDO > 0 (sem checar
+        -- E1_BAIXA), senao ~96 clientes / R$660k de saldo residual ficam de fora.
         AND RTRIM(se1.E1_TIPO) NOT IN ('RA', 'NCC')
         AND DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) >= @diasMinimos
         ${conds.join(' ')}
