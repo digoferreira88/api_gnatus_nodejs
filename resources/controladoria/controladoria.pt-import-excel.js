@@ -1,53 +1,74 @@
-// POST /controladoria/pt/import-excel — importa planilha legada de Poder de Terceiros.
+// POST /controladoria/pt/import-excel — importa planilha de Poder de Terceiros.
 // Multipart: campo 'arquivo' = .xlsx
 // Query: ?dry=true → so valida e retorna preview (nao grava)
 //
-// Estrutura esperada (colunas pela ORDEM, baseado na planilha do fiscal):
-//   A=destinatario  B=pedido  C=solicitante  D=responsavel  E=produtos
-//   F=finalidade    G=ult.validacao  H=prazo_dias  I=nf_saida  J=cfop_saida
-//   K=natureza      L=contrato_comodato  M=valor  N=data_emissao  O=data_expedicao
-//   P=data_vencimento  Q=forma_finalizacao  R=equipamento_chegou
-//   S=nf_finalizacao  T=data_finalizacao  U=cfop_final  V=valor_venda
-//   W=pedido_venda   X=cobranca_1a  Y=cobranca_2a
+// Layout 2026 (planilha "GERAL", header na linha 7):
+//   A=ATUALIZADO_EM   B=NOVO_VENCIMENTO   C=DESTINATARIO   D=Nº PEDIDO
+//   E=SOLICITANTE     F=RESPONSAVEL       G=PRODUTOS       H=FINALIDADE
+//   I=ULT.VALIDACAO   J=PRAZO[dias]       K=NF SAIDA       L=CFOP
+//   M=NATUREZA OP     N=CONTRATO COMODATO O=VALOR          P=DATA EMISSAO NF
+//   Q=DATA EXPEDICAO  R=DATA VENCIMENTO   S=FORMA FINAL.   T=EQUIP CHEGOU
+//   U=NF FINALIZACAO  V=DATA VENDA/RET    W=CFOP2          X=VALOR3
+//   Y=Nº PEDIDO VENDA Z=COBRANCA 1a       AA=COBRANCA 2a
 //
-// Linha de cabecalho esta na linha 6. Dados comecam na linha 7.
-//
-// Permissao 11003.
+// O detector de header procura "DESTINATARIO" em qualquer das primeiras 10
+// linhas, em qualquer das 5 primeiras colunas — robusto a futuras mudancas
+// pequenas. Permissao 0 (admin).
 
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 
-// Importacao em massa = acao destrutiva, restrita a admin (perm 0).
-// requirePerm([0]) gera IN (0, 0) — soh admin universal passa.
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([0]);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-const trim = (v) => v == null ? null : (typeof v === 'string' ? v.trim() : String(v).trim()) || null;
+// trim() de campo TEXTO. Date / object viram null — Date especialmente
+// importante: a planilha tem celulas de data soltas (ex linhas-rotulo) que
+// se cairem aqui viram strings tipo "Tue Apr 07 2026 21:00:00 GMT-0300 (...)"
+// e estouram varchar curtos.
+const trim = (v) => {
+  if (v == null) return null;
+  if (v instanceof Date) return null;
+  if (typeof v === 'object') {
+    if (v.text)        return String(v.text).trim() || null;
+    if (v.result != null && !(v.result instanceof Date)) return String(v.result).trim() || null;
+    if (v.richText)    return v.richText.map(r => r.text).join('').trim() || null;
+    return null;
+  }
+  return String(v).trim() || null;
+};
 
-// Excel armazena datas como Date object OU como serial. Tenta normalizar.
-function toISODate(v) {
-  if (!v) return null;
+// Date / serial Excel / string ISO / DD/MM/YYYY / Date.toString() JS
+function toISODate (v) {
+  if (v == null || v === '') return null;
   if (v instanceof Date) {
     if (isNaN(v.getTime())) return null;
     return v.toISOString().slice(0, 10);
   }
-  // numero serial Excel (dias desde 1900-01-00)
+  if (typeof v === 'object' && v.result instanceof Date) {
+    return v.result.toISOString().slice(0, 10);
+  }
   if (typeof v === 'number') {
     const ms = (v - 25569) * 86400 * 1000;
     const d = new Date(ms);
     if (isNaN(d.getTime())) return null;
     return d.toISOString().slice(0, 10);
   }
-  // string YYYY-MM-DD ou DD/MM/YYYY
   const s = String(v).trim();
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  // Fallback: Date.toString() JS ("Mon Apr 25 2022 21:00:00 GMT-0300 (...)") —
+  // a planilha 2026 da fiscal tem varias colunas de data nesse formato. Date()
+  // parseia direto, mas por seguranca conferimos validade.
+  if (/^\w{3} \w{3} \d{1,2} \d{4}/.test(s)) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
   return null;
 }
 
-function toNumber(v) {
+function toNumber (v) {
   if (v == null || v === '') return null;
   if (typeof v === 'number') return v;
   if (typeof v === 'object' && 'result' in v) return Number(v.result) || null;
@@ -56,26 +77,43 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function toBool(v) {
+function toBool (v) {
   if (v == null || v === '') return null;
   const s = String(v).trim().toUpperCase();
-  if (['SIM','S','TRUE','1','YES','Y'].includes(s)) return true;
-  if (['NAO','NÃO','N','FALSE','0','NO'].includes(s)) return false;
+  if (['SIM', 'S', 'TRUE', '1', 'YES', 'Y'].includes(s)) return true;
+  if (['NAO', 'NÃO', 'N', 'FALSE', '0', 'NO'].includes(s)) return false;
   return null;
 }
 
-const FORMAS_VALIDAS = ['RETORNO','PARCIAL','VENDA','RENOVACAO','TROCA'];
-function normalizarForma(v) {
+const FORMAS_VALIDAS = ['RETORNO', 'PARCIAL', 'VENDA', 'RENOVACAO', 'TROCA'];
+function normalizarForma (v) {
   if (!v) return null;
   const s = String(v).trim().toUpperCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '');  // remove acentos
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (FORMAS_VALIDAS.includes(s)) return s;
   if (s.includes('RETORN')) return 'RETORNO';
   if (s.includes('VENDA')) return 'VENDA';
   if (s.includes('RENOV')) return 'RENOVACAO';
-  if (s.includes('TROC')) return 'TROCA';
+  if (s.includes('TROC'))  return 'TROCA';
   if (s.includes('PARCIAL')) return 'PARCIAL';
   return null;
+}
+
+// Localiza a linha do header pela palavra "DESTINATARIO" e devolve em qual
+// coluna ela esta — assim qualquer deslocamento futuro de coluna eh detectado.
+function localizarLayout (ws) {
+  for (let r = 1; r <= 15; r++) {
+    const row = ws.getRow(r);
+    for (let col = 1; col <= 8; col++) {
+      const v = row.getCell(col).value;
+      const s = (typeof v === 'string' ? v : (v?.text || '')).trim().toUpperCase();
+      if (s === 'DESTINATARIO' || s === 'DESTINATÁRIO') {
+        // offset = colunas antes de DESTINATARIO
+        return { headerRow: r, dataInicio: r + 1, offsetDestinatario: col };
+      }
+    }
+  }
+  return { headerRow: 7, dataInicio: 8, offsetDestinatario: 3 };  // fallback layout 2026
 }
 
 module.exports = (app) => ({
@@ -95,57 +133,96 @@ module.exports = (app) => ({
     try {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(req.file.buffer);
-      const ws = wb.worksheets[0];
+      // Procura aba "GERAL" primeiro (planilha 2026); fallback pra primeira aba
+      const ws = wb.getWorksheet('GERAL') || wb.worksheets[0];
+      if (!ws) return res.status(400).json({ message: 'Planilha nao tem abas.' });
+
+      const layout = localizarLayout(ws);
+      // Mapeia coluna do BD → numero da coluna na planilha, em funcao do offset
+      // (DESTINATARIO esta na col `offsetDestinatario`; tudo a partir dali e
+      // alinhado por ORDEM com o layout esperado).
+      const D = layout.offsetDestinatario;     // coluna de DESTINATARIO
+      // Colunas a esquerda do destinatario (offsets negativos): se houver 2
+      // colunas extras (ATUALIZADO_EM e NOVO_VENCIMENTO), esta a 2 e 1 antes
+      const COL = {
+        atualizado: D >= 3 ? D - 2 : null,    // ATUALIZADO EM (planilha 2026)
+        novoVenc:   D >= 2 ? D - 1 : null,    // NOVO VENCIMENTO   (planilha 2026)
+        destinatario: D,
+        pedido:        D + 1,
+        solicitante:   D + 2,
+        responsavel:   D + 3,
+        produtos:      D + 4,
+        finalidade:    D + 5,
+        ultValidacao:  D + 6,
+        prazoDias:     D + 7,
+        nfSaida:       D + 8,
+        cfop:          D + 9,
+        natureza:      D + 10,
+        contrato:      D + 11,
+        valor:         D + 12,
+        dataEmissao:   D + 13,
+        dataExpedicao: D + 14,
+        dataVencto:    D + 15,
+        formaFinal:    D + 16,
+        equipChegou:   D + 17,
+        nfFinal:       D + 18,
+        dataFinal:     D + 19,
+        cfopFinal:     D + 20,
+        valorFinal:    D + 21,
+        pedidoVenda:   D + 22,
+        cobranca1:     D + 23,
+        cobranca2:     D + 24
+      };
 
       const linhas = [];
       const erros = [];
-      // Detecta inicio dos dados: procura "DESTINATARIO" no header (col A)
-      // e usa linha+1 como inicio.
-      let linhaInicio = 7;
-      for (let r = 1; r <= 10; r++) {
-        const v = ws.getRow(r).getCell(1).value;
-        if (typeof v === 'string' && v.trim().toUpperCase() === 'DESTINATARIO') {
-          linhaInicio = r + 1;
-          break;
-        }
-      }
+      const ROTULOS_NAO_DADOS = /^(atualizado|responsavel|total|legenda|obs|observa|verde|amarelo|vermelho|gnatus|controle de equipamentos)/i;
+      const PARECE_DATA_TXT = /^\d{2}\/\d{2}\/\d{4}|^\d{4}-\d{2}-\d{2}|^\w{3} \w{3} \d{1,2} \d{4}/;
 
-      for (let r = linhaInicio; r <= ws.rowCount; r++) {
+      for (let r = layout.dataInicio; r <= ws.rowCount; r++) {
         const row = ws.getRow(r);
-        const destinatario = trim(row.getCell(1).value);
-        if (!destinatario) continue;  // pula vazias
+        // Filtros de linha-nao-dado: destinatario vazio, Date solto, rotulos
+        const colDest = row.getCell(COL.destinatario).value;
+        if (colDest instanceof Date) continue;
+        const destinatario = trim(colDest);
+        if (!destinatario) continue;
+        if (ROTULOS_NAO_DADOS.test(destinatario)) continue;
+        if (PARECE_DATA_TXT.test(destinatario)) continue;
 
         const item = {
           linha_excel: r,
           destinatario_nome: destinatario,
-          pedido_protheus: trim(row.getCell(2).value),
-          solicitante_nome: trim(row.getCell(3).value),
-          responsavel_nome: trim(row.getCell(4).value),
-          produtos: trim(row.getCell(5).value),
-          finalidade: trim(row.getCell(6).value),
-          ultima_validacao: trim(row.getCell(7).value),
-          prazo_dias: toNumber(row.getCell(8).value),
-          nf_saida: trim(row.getCell(9).value),
-          cfop_saida: trim(row.getCell(10).value),
-          natureza_operacao: trim(row.getCell(11).value),
-          contrato_comodato: toBool(row.getCell(12).value),
-          valor: toNumber(row.getCell(13).value),
-          data_emissao_nf: toISODate(row.getCell(14).value),
-          data_expedicao: toISODate(row.getCell(15).value),
-          data_vencimento: toISODate(row.getCell(16).value),
-          forma_finalizacao: normalizarForma(row.getCell(17).value),
-          equipamento_chegou: toBool(row.getCell(18).value),
-          nf_finalizacao: trim(row.getCell(19).value),
-          data_finalizacao: toISODate(row.getCell(20).value),
-          cfop_final: trim(row.getCell(21).value),
-          valor_venda: toNumber(row.getCell(22).value),
-          pedido_venda: trim(row.getCell(23).value),
-          cobranca_1a: trim(row.getCell(24).value),
-          cobranca_2a: trim(row.getCell(25).value)
+          atualizado_em_planilha: COL.atualizado ? toISODate(row.getCell(COL.atualizado).value) : null,
+          novo_vencimento_obs:    COL.novoVenc   ? trim(row.getCell(COL.novoVenc).value)        : null,
+          pedido_protheus:   trim(row.getCell(COL.pedido).value),
+          solicitante_nome:  trim(row.getCell(COL.solicitante).value),
+          responsavel_nome:  trim(row.getCell(COL.responsavel).value),
+          produtos:          trim(row.getCell(COL.produtos).value),
+          finalidade:        trim(row.getCell(COL.finalidade).value),
+          ultima_validacao:  trim(row.getCell(COL.ultValidacao).value),
+          prazo_dias:        toNumber(row.getCell(COL.prazoDias).value),
+          nf_saida:          trim(row.getCell(COL.nfSaida).value),
+          cfop_saida:        trim(row.getCell(COL.cfop).value),
+          natureza_operacao: trim(row.getCell(COL.natureza).value),
+          contrato_comodato: toBool(row.getCell(COL.contrato).value),
+          valor:             toNumber(row.getCell(COL.valor).value),
+          data_emissao_nf:   toISODate(row.getCell(COL.dataEmissao).value),
+          data_expedicao:    toISODate(row.getCell(COL.dataExpedicao).value),
+          data_vencimento:   toISODate(row.getCell(COL.dataVencto).value),
+          forma_finalizacao: normalizarForma(row.getCell(COL.formaFinal).value),
+          equipamento_chegou: toBool(row.getCell(COL.equipChegou).value),
+          nf_finalizacao:    trim(row.getCell(COL.nfFinal).value),
+          data_finalizacao:  toISODate(row.getCell(COL.dataFinal).value),
+          cfop_final:        trim(row.getCell(COL.cfopFinal).value),
+          valor_venda:       toNumber(row.getCell(COL.valorFinal).value),
+          pedido_venda:      trim(row.getCell(COL.pedidoVenda).value),
+          cobranca_1a:       trim(row.getCell(COL.cobranca1).value),
+          cobranca_2a:       trim(row.getCell(COL.cobranca2).value)
         };
-        // Cobranca 1a/2a podem ser datas — tenta converter pra ISO mas mantem texto se nao for
-        const c1iso = toISODate(row.getCell(24).value);
-        const c2iso = toISODate(row.getCell(25).value);
+        // Cobranca 1a/2a podem ser datas — tenta converter pra ISO mas mantem
+        // o texto original se nao for parseavel
+        const c1iso = toISODate(row.getCell(COL.cobranca1).value);
+        const c2iso = toISODate(row.getCell(COL.cobranca2).value);
         if (c1iso) item.cobranca_1a = c1iso;
         if (c2iso) item.cobranca_2a = c2iso;
         linhas.push(item);
@@ -155,7 +232,7 @@ module.exports = (app) => ({
         return res.json({
           dry_run: true,
           total_linhas_validas: linhas.length,
-          linhaInicio,
+          layout,
           amostra: linhas.slice(0, 5),
           erros
         });
@@ -165,7 +242,6 @@ module.exports = (app) => ({
       let criados = 0, ignorados = 0;
       for (const it of linhas) {
         try {
-          // Calcula status: se tem forma_finalizacao -> FINALIZADO ou PARCIAL
           const status = it.forma_finalizacao
             ? (it.forma_finalizacao === 'PARCIAL' ? 'PARCIAL' : 'FINALIZADO')
             : 'EM_ABERTO';
@@ -178,6 +254,7 @@ module.exports = (app) => ({
               data_emissao_nf, data_expedicao, data_vencimento,
               nf_saida, cfop_saida, valor,
               cobranca_1a, cobranca_2a,
+              atualizado_em_planilha, novo_vencimento_obs,
               status, criado_por, atualizado_por, origem
             ) VALUES (
               @dest, @ped, @sol, @resp,
@@ -186,6 +263,7 @@ module.exports = (app) => ({
               @demnf::date, @dexp::date, @dvenc::date,
               @nfs, @cfop, @valor,
               @c1, @c2,
+              @attp::date, @nvobs,
               @status, @uid, @uid, 'planilha_legada'
             ) RETURNING id`,
             {
@@ -196,12 +274,13 @@ module.exports = (app) => ({
               demnf: it.data_emissao_nf, dexp: it.data_expedicao, dvenc: it.data_vencimento,
               nfs: it.nf_saida, cfop: it.cfop_saida, valor: it.valor,
               c1: it.cobranca_1a, c2: it.cobranca_2a,
+              attp: it.atualizado_em_planilha,
+              nvobs: it.novo_vencimento_obs ? String(it.novo_vencimento_obs).slice(0, 200) : null,
               status, uid: user.ID
             }
           );
           const envioId = ins[0].id;
 
-          // Item unico texto livre da coluna E (Produtos)
           if (it.produtos) {
             await Pg.connectAndQuery(`
               INSERT INTO tab_pt_envio_item (envio_id, produto_desc, quantidade, valor_unit, ordem)
@@ -210,7 +289,6 @@ module.exports = (app) => ({
             );
           }
 
-          // Se ha finalizacao, registra
           if (it.forma_finalizacao && it.data_finalizacao) {
             await Pg.connectAndQuery(`
               INSERT INTO tab_pt_finalizacao
@@ -239,7 +317,7 @@ module.exports = (app) => ({
         criados,
         ignorados,
         total_linhas: linhas.length,
-        linhaInicio,
+        layout,
         erros: erros.slice(0, 50)
       });
     } catch (err) {
