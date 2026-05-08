@@ -125,13 +125,21 @@ module.exports = (app) => ({
       }).filter(Boolean);
 
       // Resumo por categoria
+      // qtItens  = linhas de SB6010 (1 item de uma NF)
+      // qtNotas  = NFs distintas (1 NF pode ter varios itens)
       const porCategoria = {};
       itens.forEach(i => {
         if (!porCategoria[i.categoria]) {
-          porCategoria[i.categoria] = { categoria: i.categoria, qtItens: 0, qtProdutosDistintos: new Set(), qtTerceiros: new Set(), qtUnidades: 0, valor: 0 };
+          porCategoria[i.categoria] = {
+            categoria: i.categoria,
+            qtItens: 0, qtNotas: new Set(),
+            qtProdutosDistintos: new Set(), qtTerceiros: new Set(),
+            qtUnidades: 0, valor: 0
+          };
         }
         const c = porCategoria[i.categoria];
         c.qtItens++;
+        c.qtNotas.add(`${i.nf}|${i.serie}|${i.codClifor}|${i.loja}`);
         c.qtProdutosDistintos.add(i.produto);
         c.qtTerceiros.add(`${i.codClifor}|${i.loja}`);
         c.qtUnidades += i.saldo;
@@ -141,6 +149,7 @@ module.exports = (app) => ({
         .map(c => ({
           categoria: c.categoria,
           qtItens: c.qtItens,
+          qtNotas: c.qtNotas.size,
           qtProdutosDistintos: c.qtProdutosDistintos.size,
           qtTerceiros: c.qtTerceiros.size,
           qtUnidades: Number(c.qtUnidades.toFixed(2)),
@@ -152,25 +161,38 @@ module.exports = (app) => ({
       const totalValor = itens.reduce((s, i) => s + i.valor, 0);
       const totalUnidades = itens.reduce((s, i) => s + i.saldo, 0);
       const totalTerceiros = new Set(itens.map(i => `${i.codClifor}|${i.loja}`)).size;
-      const totalProdutos = new Set(itens.map(i => i.produto)).size;
+      const totalProdutos  = new Set(itens.map(i => i.produto)).size;
+      const totalNotas     = new Set(itens.map(i => `${i.nf}|${i.serie}|${i.codClifor}|${i.loja}`)).size;
 
-      // Top terceiros (concentração)
+      // Top terceiros (concentração) — inclui lista de NFs distintas
       const porTerceiro = {};
       itens.forEach(i => {
         const k = `${i.codClifor}|${i.loja}`;
         if (!porTerceiro[k]) {
-          porTerceiro[k] = { codigo: i.codClifor, loja: i.loja, nome: i.terceiroNome, tipo: i.tipoTerceiro, qtItens: 0, valor: 0 };
+          porTerceiro[k] = {
+            codigo: i.codClifor, loja: i.loja, nome: i.terceiroNome, tipo: i.tipoTerceiro,
+            qtItens: 0, notasSet: new Set(), valor: 0
+          };
         }
-        porTerceiro[k].qtItens++;
-        porTerceiro[k].valor += i.valor;
+        const t = porTerceiro[k];
+        t.qtItens++;
+        t.notasSet.add(`${i.nf}/${i.serie}`);
+        t.valor += i.valor;
       });
       const topTerceiros = Object.values(porTerceiro)
-        .map(t => ({ ...t, valor: Number(t.valor.toFixed(2)) }))
+        .map(t => ({
+          codigo: t.codigo, loja: t.loja, nome: t.nome, tipo: t.tipo,
+          qtItens: t.qtItens,
+          qtNotas: t.notasSet.size,
+          notas: [...t.notasSet].sort(),
+          valor: Number(t.valor.toFixed(2))
+        }))
         .sort((a, b) => b.valor - a.valor)
         .slice(0, 20);
 
       return res.json({
         totalItens: itens.length,
+        totalNotas,
         totalProdutos,
         totalTerceiros,
         totalUnidades: Number(totalUnidades.toFixed(2)),
