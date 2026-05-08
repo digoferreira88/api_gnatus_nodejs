@@ -56,10 +56,6 @@ module.exports = (app) => ({
         ON fe.z1_filial = f2.F2_FILIAL
        AND fe.z1_doc    = f2.F2_DOC
        AND fe.z1_serie  = f2.F2_SERIE
-      LEFT JOIN faturamento_cfop sd2
-        ON sd2.d2_filial = f2.F2_FILIAL
-       AND sd2.d2_doc    = f2.F2_DOC
-       AND sd2.d2_serie  = f2.F2_SERIE
       LEFT JOIN SA4010 sa4 WITH (NOLOCK)
         ON f2.F2_TRANSP = sa4.A4_COD AND sa4.D_E_L_E_T_ <> '*'
       LEFT JOIN (
@@ -81,7 +77,17 @@ module.exports = (app) => ({
         AND f2.F2_EMISSAO > @dataMinima
         AND fe.z1_expedic IS NULL
         AND (sa1.A1_COD IS NULL OR sa1.D_E_L_E_T_ <> '*')
-        AND sd2.d2_cf NOT IN ('5118','6118','5119','6119','5934','5905','5922','6922')
+        -- Exclui NF que NAO tenha NENHUM item com CFOP de expedicao fisica.
+        -- Antes era LEFT JOIN faturamento_cfop, mas a view agrupa por CFOP
+        -- e a NF aparecia N vezes quando tinha mais de um CFOP (ex 6105+6106).
+        -- EXISTS retorna 0/1 sem multiplicar linhas.
+        AND EXISTS (
+          SELECT 1 FROM faturamento_cfop fc
+           WHERE fc.d2_filial = f2.F2_FILIAL
+             AND fc.d2_doc    = f2.F2_DOC
+             AND fc.d2_serie  = f2.F2_SERIE
+             AND fc.d2_cf NOT IN ('5118','6118','5119','6119','5934','5905','5922','6922')
+        )
         ${conds.join(' ')}
       ORDER BY f2.F2_EMISSAO DESC, f2.F2_DOC DESC
     `;
