@@ -22,6 +22,8 @@ module.exports = (app) => ({
       conds.push(`AND (UPPER(sa1.A1_NOME) LIKE '%' + @busca + '%' OR f2.F2_DOC LIKE @busca + '%' OR f2.F2_CLIENTE LIKE @busca + '%')`);
     }
 
+    // SX3 da Gnatus: DIFAL = SD2.D2_DIFAL ; FCP Proprio = SD2.D2_VALFECP.
+    // Nao ha campo agregado em SF2 — somamos por NF via subquery.
     const sql = `
       SELECT
         RTRIM(f2.F2_DOC)     nfe,
@@ -43,6 +45,8 @@ module.exports = (app) => ({
         fe.z1_expedic        zExpedic,
         RTRIM(fe.z1_rastrei) zRastrei,
         f2.F2_VALMERC        total,
+        ISNULL(imp.difal, 0) difal,
+        ISNULL(imp.fcp, 0)   fcp,
         f2.R_E_C_N_O_        id
       FROM SF2010 f2 WITH (NOLOCK)
       LEFT JOIN SA1010 sa1 WITH (NOLOCK)
@@ -58,6 +62,19 @@ module.exports = (app) => ({
        AND sd2.d2_serie  = f2.F2_SERIE
       LEFT JOIN SA4010 sa4 WITH (NOLOCK)
         ON f2.F2_TRANSP = sa4.A4_COD AND sa4.D_E_L_E_T_ <> '*'
+      LEFT JOIN (
+        SELECT D2_FILIAL, D2_DOC, D2_SERIE, D2_CLIENTE, D2_LOJA,
+               SUM(D2_DIFAL)   difal,
+               SUM(D2_VALFECP) fcp
+          FROM SD2010 WITH (NOLOCK)
+         WHERE D_E_L_E_T_ <> '*'
+         GROUP BY D2_FILIAL, D2_DOC, D2_SERIE, D2_CLIENTE, D2_LOJA
+      ) imp
+        ON imp.D2_FILIAL  = f2.F2_FILIAL
+       AND imp.D2_DOC     = f2.F2_DOC
+       AND imp.D2_SERIE   = f2.F2_SERIE
+       AND imp.D2_CLIENTE = f2.F2_CLIENTE
+       AND imp.D2_LOJA    = f2.F2_LOJA
       WHERE f2.F2_FILIAL = '01'
         AND f2.D_E_L_E_T_ <> '*'
         AND f2.F2_SERIE = '1'
@@ -102,6 +119,8 @@ module.exports = (app) => ({
         zExpedic: trim(r.zExpedic),
         zRastrei: trim(r.zRastrei),
         total: toN(r.total),
+        difal: toN(r.difal),
+        fcp: toN(r.fcp),
         noBordero: nfsNoBordero.has(trim(r.nfe))
       }));
 
