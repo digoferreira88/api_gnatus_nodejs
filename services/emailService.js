@@ -30,4 +30,19 @@ async function sendVerificationEmail(to, codigo) {
     });
 }
 
-module.exports = { sendVerificationEmail };
+// Envio generico — usado por modulos que precisam mandar e-mail livre
+// (alertas de contrato, notificacoes diversas, etc).
+async function sendEmail({ to, subject, text, html, cc, bcc }) {
+    if (!to) throw new Error('Destinatario obrigatorio.');
+    if (isDev) {
+        console.log(`[emailService] DEV — email pra ${to}: "${subject}"`);
+        return { dev: true };
+    }
+    const info = await transporter.sendMail({
+        from: process.env.SMTP_FROM || 'noreply@intranet.local',
+        to, cc, bcc, subject, text, html
+    });
+    return info;
+}
+
+module.exports = { sendVerificationEmail, sendEmail };

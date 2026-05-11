@@ -222,10 +222,12 @@ async function registrarEnvio(Pg, titulo, tipo, info) {
   );
 }
 
+// Cron de alertas de contratos roda 30min antes do cobranca-whatsapp pra
+// nao competir conexao Protheus/PG, e antes do horario comercial.
+const CRON_CONTRATOS = '30 8 * * *';  // 08:30 todo dia
+
 function start(app) {
-  if (jobs.cobranca) {
-    jobs.cobranca.cancel();
-  }
+  if (jobs.cobranca) jobs.cobranca.cancel();
   jobs.cobranca = schedule.scheduleJob(CRON_DIARIO, async () => {
     console.log('[scheduler] disparo cobranca-whatsapp iniciado:', new Date().toISOString());
     try {
@@ -235,6 +237,20 @@ function start(app) {
     }
   });
   console.log(`[scheduler] cobranca-whatsapp agendado: cron "${CRON_DIARIO}"`);
+
+  // Contratos - alertas de vencimento (D-90/D-60/D-30 por email)
+  if (jobs.contratos) jobs.contratos.cancel();
+  jobs.contratos = schedule.scheduleJob(CRON_CONTRATOS, async () => {
+    console.log('[scheduler] alertas de contrato iniciado:', new Date().toISOString());
+    try {
+      const ContratoAlertas = require('./contratoAlertas');
+      const stats = await ContratoAlertas.rodarAlertas(app);
+      console.log('[scheduler] alertas de contrato concluido:', stats);
+    } catch (err) {
+      console.error('[scheduler] erro nos alertas de contrato:', err.message);
+    }
+  });
+  console.log(`[scheduler] contratos agendado: cron "${CRON_CONTRATOS}"`);
 }
 
 function stop() {
