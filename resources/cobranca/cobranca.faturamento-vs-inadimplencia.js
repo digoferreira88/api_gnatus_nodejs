@@ -178,16 +178,212 @@ module.exports = (app) => ({
       // Totais consolidados do periodo
       const totFat = serie.reduce((s, x) => s + x.faturado, 0);
       const totInad = serie.reduce((s, x) => s + x.inadimplencia, 0);
+      const pctAtual = totFat > 0 ? (totInad / totFat) * 100 : 0;
+
+      // ============== Analise de "como baixar o indice" ==============
+      // Meta default 6% — operador pode passar ?metaPct=N pra customizar.
+      const metaPct = Number(req.query.metaPct) || 6;
+      // Valor de inadimplencia tolerado pra atingir a meta:
+      //   inadAlvo = totFat * (metaPct/100)
+      //   excesso  = max(0, totInad - inadAlvo)  -> precisa "limpar" excesso pra bater meta
+      const inadAlvo = totFat * (metaPct / 100);
+      const excessoParaMeta = Math.max(0, totInad - inadAlvo);
+
+      // Top 15 clientes contribuindo pra inadimplencia (mesmo universo: titulos
+      // vencidos, saldo > 0, mesma janela de emissao). Ajuda o operador a focar
+      // esforco — pareto puro.
+      const topClientes = await Protheus.connectAndQuery(`
+        SELECT TOP 15
+               RTRIM(se1.E1_CLIENTE) cod,
+               RTRIM(se1.E1_LOJA)    loja,
+               RTRIM(COALESCE(NULLIF(sa1.A1_NOME, ''), se1.E1_NOMCLI)) nome,
+               RTRIM(sa1.A1_EST) uf,
+               SUM(se1.E1_SALDO) saldo,
+               COUNT(*) qtd,
+               MAX(DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE())) maiorAtraso
+          FROM SE1010 se1 WITH (NOLOCK)
+          LEFT JOIN SA1010 sa1 WITH (NOLOCK)
+            ON sa1.A1_COD = se1.E1_CLIENTE AND sa1.A1_LOJA = se1.E1_LOJA
+           AND sa1.D_E_L_E_T_ <> '*'
+          ${joinSc5Inad}
+         WHERE se1.D_E_L_E_T_ <> '*'
+           AND se1.E1_FILIAL = '01'
+           AND se1.E1_SALDO > 0
+           AND CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, GETDATE())
+           AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+           AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+           ${condBuInad}
+         GROUP BY se1.E1_CLIENTE, se1.E1_LOJA, sa1.A1_NOME, se1.E1_NOMCLI, sa1.A1_EST
+         ORDER BY SUM(se1.E1_SALDO) DESC`,
+        sqlParams
+      );
+
+      // Distribuicao por aging (faixa de atraso) — onde concentrar acao
+      const agingRows = await Protheus.connectAndQuery(`
+        SELECT
+          CASE
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 30  THEN 'A_1_30'
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 60  THEN 'B_31_60'
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 90  THEN 'C_61_90'
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 180 THEN 'D_91_180'
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 365 THEN 'E_181_365'
+            ELSE 'F_365_MAIS'
+          END faixa,
+          SUM(se1.E1_SALDO) saldo,
+          COUNT(*) qtd
+          FROM SE1010 se1 WITH (NOLOCK)
+          ${joinSc5Inad}
+         WHERE se1.D_E_L_E_T_ <> '*'
+           AND se1.E1_FILIAL = '01'
+           AND se1.E1_SALDO > 0
+           AND CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, GETDATE())
+           AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+           AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+           ${condBuInad}
+         GROUP BY
+          CASE
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 30  THEN 'A_1_30'
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 60  THEN 'B_31_60'
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 90  THEN 'C_61_90'
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 180 THEN 'D_91_180'
+            WHEN DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) <= 365 THEN 'E_181_365'
+            ELSE 'F_365_MAIS'
+          END`,
+        sqlParams
+      );
+      const FAIXAS_LABEL = {
+        A_1_30:    '1-30 dias',
+        B_31_60:   '31-60 dias',
+        C_61_90:   '61-90 dias',
+        D_91_180:  '91-180 dias',
+        E_181_365: '181-365 dias',
+        F_365_MAIS:'>365 dias'
+      };
+      const aging = agingRows
+        .map(r => ({
+          faixa: trim(r.faixa),
+          label: FAIXAS_LABEL[trim(r.faixa)] || trim(r.faixa),
+          saldo: Number(toN(r.saldo).toFixed(2)),
+          qtd: toN(r.qtd),
+          pct_da_inadimplencia: totInad > 0 ? Number(((toN(r.saldo) / totInad) * 100).toFixed(2)) : 0
+        }))
+        .sort((a, b) => a.faixa.localeCompare(b.faixa));
+
+      // Top equipes contribuindo (sem filtro de equipe — pra ver onde focar)
+      let topEquipes = [];
+      if (!equipe) {
+        try {
+          const buEqRows = await Pg.connectAndQuery(
+            `SELECT bu_codigo, equipe FROM tab_cobranca_bu_equipe`, {}
+          );
+          const mapBuEquipe = new Map();
+          buEqRows.forEach(r => mapBuEquipe.set(trim(r.bu_codigo), trim(r.equipe)));
+
+          const inadEqRows = await Protheus.connectAndQuery(`
+            SELECT COALESCE(NULLIF(RTRIM(bu_sx5.X5_DESCRI), ''), RTRIM(sc5.C5_ZTIPO) + ' (Desconhecido)') buLabel,
+                   SUM(se1.E1_SALDO) saldo, COUNT(*) qtd
+              FROM SE1010 se1 WITH (NOLOCK)
+              LEFT JOIN SC5010 sc5 WITH (NOLOCK)
+                ON sc5.C5_FILIAL = se1.E1_FILIAL AND sc5.C5_NUM = se1.E1_PEDIDO
+               AND sc5.D_E_L_E_T_ <> '*'
+              LEFT JOIN SX5010 bu_sx5 WITH (NOLOCK)
+                ON bu_sx5.X5_FILIAL = '  ' AND bu_sx5.X5_TABELA = 'Z1'
+               AND RTRIM(bu_sx5.X5_CHAVE) = RTRIM(sc5.C5_ZTIPO)
+               AND bu_sx5.D_E_L_E_T_ <> '*'
+             WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
+               AND se1.E1_SALDO > 0
+               AND CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, GETDATE())
+               AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+               AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+             GROUP BY COALESCE(NULLIF(RTRIM(bu_sx5.X5_DESCRI), ''), RTRIM(sc5.C5_ZTIPO) + ' (Desconhecido)')`,
+            { ini: inicioStr, fim: fimStr }
+          );
+          const porEq = new Map();
+          inadEqRows.forEach(r => {
+            const buLabel = trim(r.buLabel);
+            const eq = mapBuEquipe.get(buLabel) || 'Sem equipe';
+            if (!porEq.has(eq)) porEq.set(eq, { equipe: eq, saldo: 0, qtd: 0 });
+            const e = porEq.get(eq);
+            e.saldo += toN(r.saldo);
+            e.qtd   += toN(r.qtd);
+          });
+          topEquipes = [...porEq.values()]
+            .map(e => ({
+              equipe: e.equipe,
+              saldo: Number(e.saldo.toFixed(2)),
+              qtd: e.qtd,
+              pct_da_inadimplencia: totInad > 0 ? Number(((e.saldo / totInad) * 100).toFixed(2)) : 0
+            }))
+            .sort((a, b) => b.saldo - a.saldo);
+        } catch (e) {
+          console.warn('fat-vs-inad topEquipes:', e.message);
+        }
+      }
+
+      // Recomendacoes textuais (heuristica simples)
+      const recomendacoes = [];
+      if (pctAtual > metaPct) {
+        recomendacoes.push(
+          `Reduzir inadimplencia em R$ ${excessoParaMeta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} pra atingir meta de ${metaPct}%.`
+        );
+        const top3 = topClientes.slice(0, 3);
+        if (top3.length) {
+          const soma3 = top3.reduce((s, c) => s + toN(c.saldo), 0);
+          const pctTop3 = totInad > 0 ? (soma3 / totInad) * 100 : 0;
+          recomendacoes.push(
+            `Os 3 maiores clientes inadimplentes concentram R$ ${soma3.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${pctTop3.toFixed(1)}% do total) — focar acao neles tem maior alavancagem.`
+          );
+        }
+        const longoPrazo = aging.filter(a => ['D_91_180', 'E_181_365', 'F_365_MAIS'].includes(a.faixa))
+          .reduce((s, a) => s + a.saldo, 0);
+        const pctLongo = totInad > 0 ? (longoPrazo / totInad) * 100 : 0;
+        if (pctLongo > 30) {
+          recomendacoes.push(
+            `${pctLongo.toFixed(1)}% da inadimplencia e de >90 dias (R$ ${longoPrazo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) — avaliar protesto, juridico ou marcar como PERDA pra "limpar" a base.`
+          );
+        }
+        if (topEquipes.length > 0) {
+          const t1 = topEquipes[0];
+          if (t1.pct_da_inadimplencia > 30) {
+            recomendacoes.push(
+              `Equipe "${t1.equipe}" responde por ${t1.pct_da_inadimplencia}% da inadimplencia — alinhar processo de cobranca/credito com essa equipe.`
+            );
+          }
+        }
+      } else {
+        const folga = inadAlvo - totInad;
+        recomendacoes.push(
+          `Inadimplencia esta DENTRO da meta de ${metaPct}%. Folga de R$ ${folga.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} antes de atingir o limite.`
+        );
+      }
 
       return res.json({
         periodo: { anoMin, anoMax },
         equipe: equipe || null,
+        meta: {
+          pct: metaPct,
+          inadimplencia_alvo: Number(inadAlvo.toFixed(2)),
+          excesso_para_meta: Number(excessoParaMeta.toFixed(2)),
+          dentro_da_meta: pctAtual <= metaPct,
+          delta_pp: Number((pctAtual - metaPct).toFixed(2))   // pontos percentuais acima/abaixo da meta
+        },
         totais: {
           faturado: Number(totFat.toFixed(2)),
           inadimplencia: Number(totInad.toFixed(2)),
-          pctInadimplencia: totFat > 0 ? Number(((totInad / totFat) * 100).toFixed(2)) : 0
+          pctInadimplencia: Number(pctAtual.toFixed(2))
         },
         serie,
+        analise: {
+          top_clientes: topClientes.map(c => ({
+            cod: trim(c.cod), loja: trim(c.loja), nome: trim(c.nome),
+            uf: trim(c.uf), saldo: Number(toN(c.saldo).toFixed(2)),
+            qtd: toN(c.qtd), maior_atraso: toN(c.maiorAtraso),
+            pct_da_inadimplencia: totInad > 0 ? Number(((toN(c.saldo) / totInad) * 100).toFixed(2)) : 0
+          })),
+          aging,
+          top_equipes: topEquipes,
+          recomendacoes
+        },
         geradoEm: new Date().toISOString()
       });
     } catch (err) {
