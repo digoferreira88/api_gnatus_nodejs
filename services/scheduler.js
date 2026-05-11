@@ -67,6 +67,7 @@ async function buscarTitulos(Protheus, deltaDias, mode = 'exato') {
       se1.E1_SALDO          saldo,
       RTRIM(se1.E1_VENCREA) vencimento,
       RTRIM(se1.E1_NUM)     nf,
+      RTRIM(se1.E1_FORMAPG) forma_pgto,
       DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), CONVERT(date, GETDATE())) dias_atraso
     FROM SE1010 se1 WITH (NOLOCK)
     LEFT JOIN SA1010 sa1 WITH (NOLOCK)

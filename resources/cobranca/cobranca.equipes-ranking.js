@@ -1,4 +1,5 @@
-// GET /cobranca/equipes-ranking?anoMin=YYYY&anoMax=YYYY
+// GET /cobranca/equipes-ranking?mesIni=YYYYMM&mesFim=YYYYMM
+//   (legacy: anoMin=YYYY&anoMax=YYYY ainda aceito; mesIni/mesFim tem precedencia)
 //
 // Cruza faturamento × inadimplencia POR EQUIPE no periodo. Mesmo conceito
 // do /cobranca/faturamento-vs-inadimplencia, mas agregando por equipe (1
@@ -35,15 +36,34 @@ module.exports = (app) => ({
   handler: async (req, res) => {
     const { Protheus, Pg } = app.services;
 
-    const anoAtual = new Date().getFullYear();
-    const anoMin = Number(req.query.anoMin) || (anoAtual - 1);
-    const anoMax = Number(req.query.anoMax) || anoAtual;
-    if (anoMin < 2018 || anoMax > 2050 || anoMin > anoMax) {
-      return res.status(400).json({ message: 'Parametros anoMin/anoMax invalidos.' });
-    }
+    // Aceita mesIni/mesFim (YYYYMM, novo) ou anoMin/anoMax (YYYY, legacy)
+    const mesIniRaw = String(req.query.mesIni || '').trim();
+    const mesFimRaw = String(req.query.mesFim || '').trim();
+    const usaMes = /^\d{6}$/.test(mesIniRaw) && /^\d{6}$/.test(mesFimRaw);
 
-    const inicioStr = `${anoMin}0101`;
-    const fimStr    = `${anoMax}1231`;
+    let inicioStr, fimStr, periodo;
+    if (usaMes) {
+      const aIni = mesIniRaw.slice(0, 4), mIni = mesIniRaw.slice(4, 6);
+      const aFim = mesFimRaw.slice(0, 4), mFim = mesFimRaw.slice(4, 6);
+      if (mesIniRaw > mesFimRaw) {
+        return res.status(400).json({ message: 'mesIni nao pode ser maior que mesFim.' });
+      }
+      // Ultimo dia do mes de fim — calcula via Date pra cobrir 28/29/30/31 corretamente
+      const ultimoDia = new Date(Number(aFim), Number(mFim), 0).getDate();
+      inicioStr = `${aIni}${mIni}01`;
+      fimStr    = `${aFim}${mFim}${String(ultimoDia).padStart(2, '0')}`;
+      periodo = { mesIni: mesIniRaw, mesFim: mesFimRaw };
+    } else {
+      const anoAtual = new Date().getFullYear();
+      const anoMin = Number(req.query.anoMin) || (anoAtual - 1);
+      const anoMax = Number(req.query.anoMax) || anoAtual;
+      if (anoMin < 2018 || anoMax > 2050 || anoMin > anoMax) {
+        return res.status(400).json({ message: 'Parametros anoMin/anoMax invalidos.' });
+      }
+      inicioStr = `${anoMin}0101`;
+      fimStr    = `${anoMax}1231`;
+      periodo = { anoMin, anoMax };
+    }
     const cfopList  = CFOPS_VENDA.map(c => `'${c}'`).join(',');
 
     try {
@@ -135,7 +155,7 @@ module.exports = (app) => ({
       })).sort((a, b) => b.faturamento - a.faturamento);
 
       return res.json({
-        periodo: { anoMin, anoMax },
+        periodo,
         totais: {
           faturamento: Number(totalFat.toFixed(2)),
           inadimplencia: Number(totalInad.toFixed(2)),

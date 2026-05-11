@@ -6,6 +6,24 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9004, 1030]);
 const Scheduler = require('../../services/scheduler');
 
+// Mesma tabela usada no painel (cobranca.painel.js). E1_FORMAPG nao tem cBox
+// nem SX5 — mapeamento eh interpretacao comum no Protheus.
+const FORMAS_PGTO = {
+  '1': 'Cheque',
+  '2': 'Dinheiro',
+  '3': 'Cartão',
+  '4': 'Boleto Bancário',
+  '5': 'Não informado',
+  '6': 'Financiamento',
+  '7': 'Cartão BNDS',
+  '8': 'Bonificação',
+  '9': 'Consignado',
+  'B': 'Antecipação Parcelada',
+  'A': 'Futuro Garantido',
+  '': 'Não informado'
+};
+const descreverFormaPgto = (cod) => FORMAS_PGTO[cod] || `Forma ${cod}`;
+
 const chaveTitulo = (t) => [
   t.filial, t.prefixo, t.numero, t.parcela || '',
   t.cliente_cod, t.cliente_loja
@@ -87,6 +105,8 @@ module.exports = (app) => ({
             valor: Number(row.saldo || 0),
             vencimento: row.vencimento,
             dias_atraso: Number(row.dias_atraso || 0),
+            forma_pgto: String(row.forma_pgto || '').trim(),
+            forma_pgto_nome: descreverFormaPgto(String(row.forma_pgto || '').trim()),
             telefone: phone,
             tem_telefone: !!phone,
             parametros: params,
@@ -106,10 +126,24 @@ module.exports = (app) => ({
         };
       }
 
+      // Lista de formas de pagamento presentes (pra popular o dropdown do filtro)
+      const formasSet = new Map();
+      for (const tipo of Object.keys(candidatos)) {
+        for (const c of candidatos[tipo]) {
+          if (c.forma_pgto !== undefined) {
+            formasSet.set(c.forma_pgto, (formasSet.get(c.forma_pgto) || 0) + 1);
+          }
+        }
+      }
+      const formas_pgto_disponiveis = [...formasSet.entries()]
+        .map(([cod, qtd]) => ({ cod, nome: descreverFormaPgto(cod), qtd }))
+        .sort((a, b) => a.nome.localeCompare(b.nome));
+
       return res.json({
         data_referencia: new Date().toISOString().slice(0, 10),
         candidatos,
         totais,
+        formas_pgto_disponiveis,
         gerado_em: new Date().toISOString()
       });
     } catch (err) {
