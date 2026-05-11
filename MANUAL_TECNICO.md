@@ -329,6 +329,19 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - **Filtro mês/ano** (`mesIni`/`mesFim` no formato `YYYYMM`) com retrocompat pra `anoMin`/`anoMax`
 - Equipe deriva da BU via `tab_cobranca_bu_equipe`
 
+#### Recuperados (tab no Dashboard) · perm 9001
+- **Endpoint**: [GET /cobranca/recuperados](resources/cobranca/cobranca.recuperados.js)
+- **Definição operacional**: "recuperado" = título com `E1_BAIXA` preenchida no período de baixa, onde o atraso na baixa foi `>= D+4` (`DATEDIFF(VENCREA, BAIXA) >= 4`). Considera **todas as formas de pagamento**.
+- **Por que D+4 e não D+0?** Alinhado com o último lembrete WhatsApp (D+3). Antes disso o cliente está em "carência operacional" e não conta como recuperação ativa.
+- **Visão escolhida — agrupa pelo MÊS DA BAIXA, não do vencimento**:
+  - Exemplo: título venceu em `dez/2025`, foi pago em `mar/2026` (83 dias de atraso) → aparece em **mar/2026** com `atraso_medio_dias = 83`
+  - Lente operacional: "**desempenho do time de cobrança no mês**" (quanto entrou no caixa em X)
+  - Não temos a visão por safra (mês de vencimento) — decisão consciente: a operação prioriza performance mensal vs análise contábil retroativa
+- **Fórmula da % de recuperação**: `recuperado / (recuperado + em_aberto_vencido)` — onde `em_aberto_vencido` é a soma de saldos vencidos no MESMO período de vencimento. Ou seja: do que ficou em atraso, quanto já foi pago.
+- **Filtros**: `mesIni`/`mesFim` (YYYYMM, default 12 meses até hoje), `diasAtrasoMin` (default 4), `equipe`, `formaPgto`
+- **KPIs no frontend**: total recuperado · taxa de recuperação (verde ≥70% / amarelo 50-70% / vermelho <50%) · atraso médio · em aberto vencido (denominador)
+- **Visualizações**: ComposedChart (barras recuperado mensal + linha atraso médio) · tabela faixa de atraso · tabela forma pgto · top 15 clientes · BarChart por equipe
+
 ---
 
 ### 3.7 Apoio Gerencial (perms 5xxx)
@@ -772,6 +785,7 @@ Resumo dos principais:
 - **Vencido/saldo** usa `E1_VENCREA` (vencimento real) não `E1_VENCTO` (original) — porque negociações alteram
 - **`E1_BAIXA` preenchida ≠ título quitado** — pode ser baixa parcial. Critério canônico de "em aberto" é `E1_SALDO > 0` apenas (não checar `E1_BAIXA`)
 - **`E1_PORTADO` preenchido = banco já decidido pelo financeiro** — Envio de Boleto filtra justamente por isso
+- **Recuperados conta no MÊS DA BAIXA** (não do vencimento) — visão operacional do time de cobrança. Título que venceu em dez e foi pago em mar entra no mês de mar (com `atraso_medio_dias = 83`). Decisão consciente: NÃO temos a visão por "safra" (vencimento), só a por "competência de caixa" (baixa)
 - **View `faturamento_cfop` agrupa por (filial, doc, série, cfop)** — NFs com 2+ CFOPs duplicam em LEFT JOIN. Usar `EXISTS` em vez disso
 - **Contratos: status calculado em runtime**, não gravado. Sempre depende de "hoje" — não cachear
 - **Reajuste BCB: produto dos `(1+v/100)`**, não soma simples (juros compostos)
