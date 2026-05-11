@@ -10,9 +10,11 @@ Documento de referência técnico do projeto. Para cada módulo, descreve **o qu
 
 A Intranet GNATUS substitui processos manuais (planilhas, sistemas legados, formulários) por uma aplicação web única, integrada ao ERP **Protheus** (TOTVS) e ao **Microsoft 365**.
 
-**Dois repositórios** (github.com/gnatusintranet, branch `master`):
-- **Backend**: `api_ecopower_nodejs` — Node.js + Express, porta 3000
+**Dois repositórios** (github.com/digoferreira88, branch `master`):
+- **Backend**: `api_gnatus_nodejs` — Node.js 22 + Express, porta 3000
 - **Frontend**: `frontend_intranet_react` — Vite + React 18 + TypeScript, porta 5173 (dev)
+
+> Os repos viviam em `github.com/gnatusintranet` até 2026-05; foram migrados pra conta pessoal `digoferreira88`. Os redirects do GitHub continuam funcionando, mas o `git remote -v` correto aponta pra `digoferreira88/...` em ambos os clones (PC e VPS).
 
 **Produção**: `https://intranew.gnatus.com.br` (VPS Hostinger Boston, IP `177.7.37.251`).
 
@@ -111,6 +113,51 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Requer `.env`: `AD_URL`, `AD_BASE_DN`, `AD_BIND_USER`, `AD_BIND_PASSWORD`, `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`
 - Em produção, AD é acessado via **VIP do FortiGate** (200.15.18.119:36363 → 172.31.255.100:636 LDAPS)
 
+#### Cobrança WhatsApp (relatório/automação) · `/tecnologia/cobranca-whatsapp` · perm 1030
+- **Página**: [CobrancaWhatsApp.tsx](../frontend_intranet_react/src/pages/CobrancaWhatsApp/CobrancaWhatsApp.tsx)
+- **Service**: [services/scheduler.js](services/scheduler.js) (cron `09:00` todo dia) + [services/suri.js](services/suri.js) (cliente HTTP do Fluig SURI)
+- Dispara mensagem WhatsApp pra clientes com títulos em **D-1** (lembrete), **D0** (vencimento) e **D+3** (atraso)
+- Idempotente via UNIQUE em `tab_cobranca_whatsapp_envio (disparo_em, tipo, chave_titulo)` — não envia mesmo título 2x no dia
+- Templates parametrizados (Gupshup/Meta): nome do cliente, nº NF, valor, vencimento
+- Página exibe relatório dos envios (OK/ERRO/SEM TELEFONE) + botão "Disparar agora" + toggle de ligar/desligar automação
+- Toggle persistido em `tab_cobranca_whatsapp_config.chave = 'automacao_ativa'`
+- O **operador de cobrança** usa o módulo paralelo em `/cobranca/envio-whatsapp` (perm 9004) — preview com curadoria manual antes do envio
+- Endpoint do SURI descoberto via SSH no Fluig PHP da Develsoft: `POST /api/messages/send` (Basic Auth)
+
+#### Importação Protheus (TRPWSIMP) · `/tecnologia/importar-protheus` · perm 1031
+- **Página**: [ProtheusImport.tsx](../frontend_intranet_react/src/pages/ProtheusImport/ProtheusImport.tsx)
+- **Service**: [services/trpwsimp.js](services/trpwsimp.js) — cliente do **Template MIT072** da TOTVS (REST nativo do Protheus)
+- Permite **importação em massa** de dados pra qualquer tabela cadastrada no MIT072 (47+ IDs catalogados: SA1 clientes, SA2 fornecedores, SB1 produtos, SC5 pedidos, SF6 movimentos, etc)
+- Lê **SX3** (dicionário Protheus) pra trazer descrição dos campos com `X3_OBRIGAT` (na Gnatus = 'x' minúsculo, não 'S' do padrão TOTVS)
+- **Layouts salvos** ([migration 28](database/postgres/28-protheus-import-layout.sql)): operador salva mapeamento coluna XLSX → campo Protheus pra reuso
+- **Log de execuções** em `tab_protheus_import_log` (sucesso/erro, qt registros, JSON do request/response)
+- Auditoria: cada execução com severidade CRITICO
+
+#### Linhas Móveis (Claro/TIM) · `/tecnologia/telefonia-movel` · perm 1027
+- **Página**: [TelefoniaMovel.tsx](../frontend_intranet_react/src/pages/TelefoniaMovel/TelefoniaMovel.tsx)
+- **Service de import**: [services/telefoniaImport.js](services/telefoniaImport.js) — parser do XLSX legado "Gnatus_Linhas_Telefonia Móvel"
+- Substitui a planilha. Detecta múltiplos blocos `NºConta: ... | NºCliente: ...` por aba (Claro/TIM/Vivo) e converte em registros
+- **Tabelas** ([migration 31](database/postgres/31-telefonia-movel.sql)):
+  - `tab_operadora` (Claro, TIM, Vivo — seed)
+  - `tab_telefonia_conta` (1 conta por operadora — pode ter várias por operadora)
+  - `tab_telefonia_departamento` (alimentada da planilha)
+  - `tab_telefonia_linha` (1 linha = 1 número de telefone)
+  - `tab_telefonia_linha_hist` (histórico de troca de titular/status/plano)
+- UNIQUE em `(id_operadora, numero_telefone)` garante idempotência da importação
+- CRUD completo + filtros (operadora/status/depto/busca/vencimento) + KPIs (total/ativas/suspensas/canceladas/estoque/vencendo)
+- Drawer com histórico completo de mudanças
+
+#### Auditoria (logs centralizados) · `/tecnologia/auditoria` · perm 1032
+- **Página**: [Auditoria.tsx](../frontend_intranet_react/src/pages/Auditoria/Auditoria.tsx)
+- **Service**: [services/auditoria.js](services/auditoria.js) — função `registrar(app, opts)` não-bloqueante (catch silencioso)
+- **Tabela** `tab_auditoria` ([migration 29](database/postgres/29-tecnologia-auditoria.sql)): modulo, submodulo, acao, severidade (`INFO`/`AVISO`/`ALERTA`/`CRITICO`), usuario, entidade, descrição, antes/depois (jsonb), meta (jsonb), ip, user_agent
+- Índice GIN trigram (pg_trgm) em `descricao` pra busca textual rápida
+- Filtros: módulo, severidade, usuário, data, busca livre
+- KPIs do dia: total, eventos críticos, alertas, usuários distintos
+- Drill-down em cada log: vê antes/depois em JSON formatado
+- **Sem expiração** — logs ficam indefinidamente (compliance LGPD)
+- **Onda 1 instrumentada**: Cofre, Aprovações Compras, Provisionamento, Importação Protheus, Telefonia, Contratos, Apoio Gerencial, Envio Boleto, Auditoria Própria
+
 ---
 
 ### 3.2 Faturamento
@@ -122,6 +169,12 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 #### Relatório de Faturamento · `/vendas/faturamento` · perm 2002
 - **Página**: [FaturamentoRelatorio.tsx](../frontend_intranet_react/src/pages/FaturamentoRelatorio/FaturamentoRelatorio.tsx)
 - 73 colunas via `exceljs`. Preview paginado + export `.xlsx`.
+
+#### Vendas Analítico · `/vendas/analitico` · perm 2003
+- **Página**: [VendasAnalitico.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/VendasAnalitico.tsx)
+- Análise multidimensional com TES → categoria de operação ([migration 21](database/postgres/21-vendas-tes-categoria.sql))
+- Permite drill por categoria, vendedor, equipe, BU, cliente, produto
+- Histórico anual em [HistoricoAnual.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/HistoricoAnual.tsx)
 
 ---
 
@@ -138,8 +191,20 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 #### Minhas Aprovações · `/compras/aprovacoes` · perm 13001
 - **Página**: [Aprovacoes.tsx](../frontend_intranet_react/src/pages/Compras/Aprovacoes.tsx)
 - Pega documentos pendentes pra aprovador logado (cruza `req.user.codigoProtheus` com `SC1_USERAPRO`/`C7_USERAPRO`)
-- Aprova/rejeita via API REST custom Gnatus do Protheus (não TOTVS REST padrão)
-- Anexos via TOTVS Documents (base64 EncodeDocument)
+- Aprova/rejeita via API REST custom Gnatus do Protheus (`POST http://protheus.gnatus.com.br:8081/rest/AprovaCompras/aprovar` — Basic Auth, **não** TOTVS REST padrão)
+- Pedido também traz observações (C7_OBS/OBSM/OBSFOR) e anexos via TOTVS Documents (base64 `EncodeDocument`)
+- Auditoria registra cada APPROVE/REJECT com severidade CRITICO (módulo `Compras/Aprovacoes`)
+- ⚠️ Variáveis na rotina de auditoria: usar `tipoIntranet` e `justificativa` (não `tipo`/`observacao` — bug corrigido em 2026-05)
+
+#### MCL — Compras Mínimas Lucrativas · `/compras/mcl` · perm 4003
+- **Páginas**: [MCL.tsx](../frontend_intranet_react/src/pages/MCL/MCL.tsx) (dashboard) + [Apresentacao.tsx](../frontend_intranet_react/src/pages/MCL/Apresentacao.tsx) (slideshow pra diretoria)
+- **Tabelas** ([migrations 13-15](database/postgres/13-compras-mcl.sql)):
+  - `tab_mcl_indice` (índice padrão de margem por categoria/grupo)
+  - `tab_mcl_sc_snapshot` (snapshot de SC pra acompanhamento histórico)
+  - `tab_mcl_scii` (SC Item Imobilizado — comparação preço/orçamento)
+  - `tab_mcl_standard_cost` (custo padrão pra calcular Δ)
+- Compara solicitações de compra em curso vs custo padrão e flags itens fora do range
+- Endpoints: `mcl-dashboard`, `mcl-sc-list`, `mcl-sc-snapshot`, `mcl-sc-comparacao`, `mcl-scii`, `mcl-scii-sync`, `mcl-pva`, `mcl-config`, `mcl-indice-upsert`, `mcl-sync`
 
 ---
 
@@ -167,6 +232,26 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - **Página**: [ContasReceber.tsx](../frontend_intranet_react/src/pages/Financeiro/ContasReceber.tsx)
 - SE1010 análogo, com cálculo de multa/juros
 
+#### Fluxo de Caixa · `/financeiro/fluxo-caixa` · perm 8004
+- **Página**: [FluxoCaixa.tsx](../frontend_intranet_react/src/pages/Financeiro/FluxoCaixa.tsx)
+- **Endpoint**: [GET /financeiro/fluxo-caixa](resources/financeiro/financeiro.fluxo-caixa.js)
+- Combina SE1 (a receber) + SE2 (a pagar) projetando saldo dia a dia
+- Filtros: cliente, equipe, BU, forma de pagamento
+
+#### Envio de Boleto (curadoria de bordero) · `/financeiro/envio-boleto` · perm 8005
+- **Página**: [EnvioBoleto.tsx](../frontend_intranet_react/src/pages/Financeiro/EnvioBoleto.tsx)
+- **Tabelas** ([migration 35](database/postgres/35-financeiro-envio-boleto.sql)):
+  - `tab_boleto_envio_lote` (cabeçalho — banco, qt, valor total, status, observação)
+  - `tab_boleto_envio_lote_titulo` (itens do lote)
+- **5 endpoints** em `resources/financeiro/financeiro.boleto-*.js`: bancos · elegíveis · lote-create · lote-list · lote-detail
+- **Bancos comerciais** (filtro hardcoded): `001` BB · `033` Santander · `104` CEF · `237` Bradesco · `341` Itaú · `422` Safra · `748` Sicredi · `756` Sicoob — exclui FIDCs/cartões/aplicações dos 156 cadastros do SA6010
+- **Formas de pagamento elegíveis** (default): `4` Boleto · `A` Futuro Garantido · `B` Antecipação Parcelada
+- **Regra do filtro de portador (importante)**: lista APENAS títulos com `E1_PORTADO` JÁ preenchido (banco já decidido pelo financeiro). Antes mostrava títulos sem portador, contradizendo o fluxo real. Resultado: ~285 títulos / R$ 1,77M elegíveis hoje.
+- Operador **seleciona títulos** com checkbox + footer sticky com **valor total selecionado** (KPI grande verde)
+- "Banco do lote" derivado dos títulos selecionados (se 2+ bancos sem filtrar, bloqueia com aviso vermelho)
+- Cria lote → registra na Intranet pra rastreio. **NÃO** envia ao Protheus ainda (Onda 1 do módulo). Operador roda ESF050 separadamente
+- **Onda 2 prevista**: chamar endpoint REST custom no Protheus (`POST /rest/Cobranca/gerar-bordero`) — spec técnica em [docs/spec-protheus-rest-cobranca-bordero.md](../docs/spec-protheus-rest-cobranca-bordero.md) pra Develsoft
+
 ---
 
 ### 3.6 Cobrança (módulo dedicado)
@@ -175,10 +260,15 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 **Tabelas próprias** (Postgres):
 - `tab_cobranca_acao` — cada interação registrada (ligação, email, acordo, etc.)
+- `tab_cobranca_anexo` — arquivos enviados anexos a uma ação ([migration 24](database/postgres/24-cobranca-anexo.sql))
 - `tab_cobranca_comentario` — notas internas (não vão pro cliente)
-- `tab_cobranca_status_cliente` — status comercial atual (REGULAR/NEGOCIANDO/PROMESSA/PROTESTO/JURIDICO/PERDA)
+- `tab_cobranca_status_cliente` — status comercial atual
 - `tab_cobranca_atribuicao` — carteira manual por cliente (NORMAL/JURIDICO/NEGOCIACAO/OUTROS) [migration 10]
 - `tab_cobranca_bu_equipe` — mapeamento BU → Equipe (substitui aba "apoio" da planilha) [migration 11]
+- `tab_cobranca_whatsapp_*` — config + envios + log do disparo de WhatsApp ([migration 25](database/postgres/25-cobranca-whatsapp.sql))
+
+**Status válidos** ([cobranca.status.js](resources/cobranca/cobranca.status.js)):
+`REGULAR` · `NEGOCIANDO` · `PROMESSA` · `ACORDO_EM_ANDAMENTO` · `ACORDO_QUEBRADO` · `RETENCAO` · `DISTRATO` · `DEVOLUCAO` · `PROTESTO` · `JURIDICO` · `TERCEIRIZADA` · `NEGATIVADO` · `PERDA`
 
 **Regras importantes**:
 - Sempre exclui `E1_TIPO IN ('RA','NCC')` (adiantamentos e créditos do cliente — não são títulos cobráveis)
@@ -218,9 +308,66 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - **Página**: [MinhasAcoes.tsx](../frontend_intranet_react/src/pages/Cobranca/MinhasAcoes.tsx)
 - Fila do analista logado. Scope `pendentes` (promessas em aberto) ou `todas`
 
+#### Envio WhatsApp (curadoria) · `/cobranca/envio-whatsapp` · perm 9004
+- **Página**: [WhatsAppEnvio.tsx](../frontend_intranet_react/src/pages/Cobranca/WhatsAppEnvio.tsx)
+- Permite ao operador **curar** o disparo: mostra os candidatos do dia (D-1, D0, D+3) com checkbox por título, antes de enviar
+- Filtros: forma de pagamento (mostra só boletos / cartão / etc), busca, "ja enviado hoje"
+- "Marcar todos" respeita o filtro de forma de pagamento
+- Backend: [GET /cobranca/whatsapp-preview](resources/cobranca/cobranca.whatsapp-preview.js) e [POST /cobranca/whatsapp-enviar](resources/cobranca/cobranca.whatsapp-enviar.js)
+- Mostra "última cobrança em" + status do envio anterior
+- Idempotência diária: bloqueia reenvio do mesmo título no mesmo dia
+
+#### Faturamento × Inadimplência (mensal) · perm 9001
+- **Página**: [FaturamentoVsInadimplencia.tsx](../frontend_intranet_react/src/pages/Cobranca/FaturamentoVsInadimplencia.tsx)
+- **Endpoint**: [GET /cobranca/faturamento-vs-inadimplencia](resources/cobranca/cobranca.faturamento-vs-inadimplencia.js)
+- Cruza receita vs inadimplência **por mês** no período (1 linha por mês)
+- CFOPs de venda hardcoded (mesma lista do equipes-ranking)
+
+#### Ranking de Equipes · perm 9001 (tab no Dashboard de Cobrança)
+- **Endpoint**: [GET /cobranca/equipes-ranking](resources/cobranca/cobranca.equipes-ranking.js)
+- Cruza Faturamento × Inadimplência **agregado por equipe** (1 linha por equipe)
+- **Filtro mês/ano** (`mesIni`/`mesFim` no formato `YYYYMM`) com retrocompat pra `anoMin`/`anoMax`
+- Equipe deriva da BU via `tab_cobranca_bu_equipe`
+
 ---
 
-### 3.7 Gerência
+### 3.7 Apoio Gerencial (perms 5xxx)
+
+> Faixa de permissões 5xxx. Módulo agrupa ferramentas executivas que cruzam vários domínios.
+
+#### Gerador de Apresentações (IA) · `/apoio-gerencial/gerador-apresentacao` · perm 5001
+- **Página**: [GeradorApresentacao.tsx](../frontend_intranet_react/src/pages/ApoioGerencial/GeradorApresentacao.tsx)
+- Operador faz upload de **XLSX/CSV** (até 25MB), serviço lê e gera perfil estatístico, manda pra IA gerar apresentação executiva (capa + KPIs + gráficos + insights + próximos passos) renderizada em slides web
+- **Pipeline backend**:
+  1. [services/apoioPerfil.js](services/apoioPerfil.js) — `parsePlanilha(buffer)`: detecta header, tipos de coluna (`numero`/`data`/`categoria`/`texto`), agregados (min/max/media/soma), top valores
+  2. [services/apoioApresentacao.js](services/apoioApresentacao.js) — monta prompt + chama IA via `services/ia.js`, valida JSON retornado (titulo + kpis[] + graficos[] obrigatórios)
+  3. Resposta tem `tema_detectado`, `titulo`, `subtitulo`, `resumo_executivo`, `kpis[]`, `graficos[]` (tipo+aba+eixo+series), `insights[]`, `conclusao`, `proximos_passos[]`
+- **Tabela** `tab_apoio_apresentacao` ([migration 32](database/postgres/32-apoio-gerencial.sql)): perfil + dados retornados pela IA + tokens + custo estimado em USD
+- **Frontend**: 8 slides renderizados (capa + resumo + N gráficos + insights + conclusão), export PDF via `jspdf` + `html2canvas` (JPEG 0.82 + scale 1.5 + compress = ~3-5MB pra 8 slides)
+- Histórico de apresentações geradas com tokens/custo/modelo
+- Provedor de IA: ver [§4.7 IA Provider](#47-ia-provider-anthropic--openai)
+
+#### Gestão de Contratos · `/apoio-gerencial/contratos` · perms 5002 (Ver) / 5003 (Editar) / 5004 (Aprovar Aditivos)
+- **Página**: [Contratos.tsx](../frontend_intranet_react/src/pages/Contratos/Contratos.tsx)
+- Cobre 6 tipos: `LOCACAO`, `FORNECIMENTO`, `MANUTENCAO`, `COMODATO`, `CLIENTE`, `PJ`
+- **Tabelas** ([migration 36](database/postgres/36-contratos.sql)):
+  - `tab_contrato` (cabeçalho — número auto `CT/AAAA/SEQ`, contraparte, vigência, valores, índice de reajuste, renovação automática, meta jsonb)
+  - `tab_contrato_aditivo` (versionamento — VALOR/PRAZO/ESCOPO/REAJUSTE/MISTO, status RASCUNHO/APROVADO/CANCELADO)
+  - `tab_contrato_anexo` (PDF/documentos — bytea inline, max 25MB)
+  - `tab_contrato_alerta` (log de alertas enviados — UNIQUE evita duplicar no mesmo dia)
+- **Status calculado em runtime** ([services/contratos.js](services/contratos.js)): RASCUNHO / AGUARDANDO / VIGENTE / VENCENDO (≤90d) / VENCIDO / RENOVADO / ENCERRADO
+- **Onda 1**: CRUD + dashboard (pizza por tipo, top contraparte, próximos vencimentos) + anexos + autocomplete contraparte SA1/SA2 do Protheus
+- **Onda 2** ([services/contratoAlertas.js](services/contratoAlertas.js) + [services/bcbIndices.js](services/bcbIndices.js)):
+  - **Alertas D-90/D-60/D-30** por e-mail via cron `30 8 * * *` ([scheduler.js](services/scheduler.js))
+  - **Reajuste automático** consultando API gratuita do BCB (IPCA 433, INPC 188, IGPM 189, IGPC 192, SELIC 4189). Calcula variação acumulada N meses por produto dos `(1 + v/100)`
+  - **Aditivos** com fluxo de aprovação — RASCUNHO → APROVADO aplica novos valores no contrato pai
+  - Endpoint manual `POST /contratos/alertas/disparar` (admin) pra rodar cron agora
+- **Onda 3 prevista**: renovação automática, WhatsApp alongside e-mail, assinatura digital (Clicksign), faturamento automático (gerar SE1)
+- 13 endpoints em `resources/contratos/`: list, dashboard, dominios, contraparte-search, detail, create, update, delete, anexo-upload/download/delete, aditivo-create/aprovar/delete, reajuste-preview/aplicar, alertas-disparar
+
+---
+
+### 3.8 Gerência
 
 #### DRE Gerencial · `/gerencia/dre` · perm 10001
 - **Página**: [DRE.tsx](../frontend_intranet_react/src/pages/Gerencia/DRE.tsx)
@@ -241,7 +388,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 ---
 
-### 3.8 Controladoria
+### 3.9 Controladoria
 
 #### Estoque · `/controladoria/estoque` · perm 11001
 - **Página**: [Estoque.tsx](../frontend_intranet_react/src/pages/Controladoria/Estoque.tsx)
@@ -256,27 +403,115 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Por componente: última compra (SD1+SF1), rateio de impostos por unidade × qtd do BOM, histórico paginado, variação %
 - Coluna **Custo Médio** vem de `SB2.B2_CM1` (não `B1_CM1` que não existe na SB1 da Gnatus)
 - KPIs: custo padrão (B1_CUSTD), custo médio (B2_CM1 max), custo calculado, Δ vs padrão
-- Gráfico de linha mostra variação mensal do vunit pros top 5 componentes mais comprados
+- Coluna **Subtotal** entre Custo Médio e Impostos pra deixar `Subtotal + Impostos = Custo c/ imp` explícito
+- **Top 5 variação** (unitário e total) substitui o gráfico genérico — mostra os componentes que mais subiram/caíram %
+- **Export XLSX (TOTVS)** — botão verde no header (só pra produtos PA): gera planilha 2-abas no mesmo formato do relatório clássico do Protheus
+  - **Aba "Estrutura"**: BOM hierárquica completa (PIs explodidos)
+  - **Aba "Custo TOTVS"**: 22 colunas exatas (Cód PA, Descrição, Qtd Necessária, UM, Última Compra, Fornecedor `cod/loja`, NF `doc-serie`, Pedido, Qtde NF, vunit, Total, IPI, ICMS, COFINS, PIS, Frete, Custo Bruto Unit, Custo Liq c/ IPI, Custo Liq Unit) + linha de total
+  - **Endpoint**: [GET /controladoria/custo/:produto/xlsx](resources/controladoria/controladoria.custo-produto-xlsx.js)
+  - Fórmulas: `bruto = (Total + IPI + ICMS + Frete) / Qtde` · `liq c/IPI = (Total + IPI - ICMS - PIS - COFINS) / Qtde` · `liq = (Total - ICMS - PIS - COFINS) / Qtde`
 
-#### Poder de Terceiros · `/controladoria/poder-terceiros` · perm 11003
-- **Página**: [PoderTerceiros.tsx](../frontend_intranet_react/src/pages/Controladoria/PoderTerceiros.tsx)
-- Quem detém poder/crédito comercial sobre clientes (CDS)
+#### Poder de Terceiros (Espelho Protheus) · `/controladoria/poder-terceiros` · perm 11003
+- **Página**: [PoderTerceiros.tsx](../frontend_intranet_react/src/pages/Controladoria/PoderTerceiros.tsx) — aba "Espelho Protheus (SB6010)"
+- **Endpoint**: [GET /controladoria/poder-terceiros](resources/controladoria/controladoria.poder-terceiros.js)
+- Mostra o saldo de equipamentos em poder de clientes/fornecedores via `SB6010` (controle de poder de terceiros do Protheus)
+- **Filtro por TES** (não CFOP): TES_INCLUIR `546` Comodato, `544/573` Conserto, `563` Industrialização, `656` Teste/Desenvolvimento — definidas pelo Fiscal
+- **Top 20 Concentração de Valor**: terceiros com maior valor — exibe coluna **Notas Fiscais** com lista das NFs únicas (até 4 + tooltip com a lista completa)
+- **Cards de categoria**: contagem em "notas" (NFs distintas), não em "itens" (linhas de SD2)
+- **Filtros do detalhamento** (client-side, instantâneos): operadora · status · departamento · busca · período de emissão (de/até) · faixa de dias em poder · valor mínimo
+- **Toggle "Visualizar por: Item / NF"**: agrupa as linhas por NF (1 linha por nota com soma de itens) — útil quando a planilha original do fiscal já vem por NF
+- **Bug histórico (corrigido)**: a view `faturamento_cfop` agrupa por (filial, doc, série, cfop) — NFs com 2+ CFOPs apareciam duplicadas. Agora usa `EXISTS` em vez de `LEFT JOIN` (semântica de filtro idêntica, sem multiplicar linhas)
+
+#### Poder de Terceiros (Controle Operacional) · `/controladoria/poder-terceiros` (aba "Controle Operacional") · perm 11003
+- **Página**: [PoderTerceirosControle.tsx](../frontend_intranet_react/src/pages/Controladoria/PoderTerceirosControle.tsx)
+- Substitui a planilha **CONTROLE DE EQUIPAMENTOS EM PODER DE TERCEIROS** do fiscal
+- **Tabelas** ([migration 26](database/postgres/26-poder-terceiros-controle.sql)):
+  - `tab_pt_envio` (cabeçalho do envio: destinatário, pedido, NF saída, finalidade, vigência)
+  - `tab_pt_envio_item` (produtos do envio)
+  - `tab_pt_finalizacao` (RETORNO/PARCIAL/VENDA/RENOVACAO/TROCA + nf_final + cfop_final + pedido_venda)
+  - `tab_pt_envio_acao` (timeline de ações comerciais)
+- **Importer XLSX** ([POST /controladoria/pt/import-excel](resources/controladoria/controladoria.pt-import-excel.js)):
+  - **Layout 2026** suportado: aba "GERAL", header na linha 7, 2 colunas extras antes do DESTINATARIO (`ATUALIZADO EM:` e `NOVO VENCIMENTO`)
+  - Detecção dinâmica: varre primeiras 15 linhas × 8 colunas procurando "DESTINATARIO" → mapeia tudo a partir dali (robusto a futuros deslocamentos)
+  - `trim()` defensivo: Date solto vira null (antes virava string ICU enorme estourando varchar)
+  - `toISODate()` aceita Date.toString() JS (`Mon Apr 25 2022 21:00:00 GMT-0300 (...)`)
+  - Skip de linhas-rótulo (ATUALIZADO/RESPONSAVEL/TOTAL/VERDE/AMARELO/VERMELHO/GNATUS)
+- **Migrations relacionadas**:
+  - [33-pt-novas-colunas.sql](database/postgres/33-pt-novas-colunas.sql) — adiciona `atualizado_em_planilha` (date) e `novo_vencimento_obs` (varchar 200)
+  - [34-pt-pedido-venda-amplo.sql](database/postgres/34-pt-pedido-venda-amplo.sql) — amplia `pedido_venda` pra varchar(200) (fiscal usa pra anotação livre tipo "RETORNO VIRTUAL, BAIXA COMO PERDA")
 
 ---
 
-### 3.9 Expedição
+### 3.10 Produção
+
+#### Registro de Produção · `/producao/registro` · perm 14001
+- **Página**: [Producao.tsx](../frontend_intranet_react/src/pages/Producao/Producao.tsx)
+- **Tabelas** ([migrations 17/18](database/postgres/17-producao-registro.sql)):
+  - `tab_producao_registro` (apontamentos de produção pelo PCP)
+  - `tab_producao_op` (Ordens de Produção sincronizadas do Protheus)
+- Endpoints: `producao.registro-criar`, `producao.ops-disponiveis`, `producao.sync` (sincroniza do Protheus)
+
+#### Dashboard de Produção · `/producao/dashboard` · perm 14002
+- KPIs de produção (ops em andamento, atrasadas, eficiência)
+
+---
+
+### 3.11 Universidade Corporativa
+
+#### Trilhas e Cursos · `/universidade` · perm 15001
+- **Páginas**: [Universidade.tsx](../frontend_intranet_react/src/pages/Universidade/Universidade.tsx) (catálogo) + [Curso.tsx](../frontend_intranet_react/src/pages/Universidade/Curso.tsx)
+- **Tabelas** ([migrations 19/20/23](database/postgres/19-universidade.sql)):
+  - `tab_uni_trilha`, `tab_uni_curso`, `tab_uni_modulo`, `tab_uni_aula`
+  - `tab_uni_quiz`, `tab_uni_quiz_pergunta`, `tab_uni_quiz_resposta`
+  - `tab_uni_progresso` (corrigido em [migration 23](database/postgres/23-universidade-fix-progresso.sql) — UNIQUE composto por user+aula)
+- Tracking de tempo assistido por aula
+- Quiz no fim do módulo com nota mínima
+
+---
+
+### 3.12 Planejamento
+
+#### Disponibilidade · `/planejamento/disponibilidade` · perm 3001
+- **Página**: [Disponibilidade.tsx](../frontend_intranet_react/src/pages/Disponibilidade/Disponibilidade.tsx)
+- Análise de disponibilidade de itens MR/MP no estoque vs demanda
+- Roda em SB2 + SC6 (itens de pedido) + SC7 (pedidos de compra)
+
+---
+
+### 3.13 Expedição
 
 > Substitui o legado PHP. Bordero em tabela `TAB_EXP_BORDERO` (1 linha por volume, formato "001/003"). Ao confirmar, gera XLSX pro **configurador da impressora Zebra**.
 
 #### Notas a Expedir · `/expedicao/notas` · perm 12001
 - **Página**: [NotasExpedir.tsx](../frontend_intranet_react/src/pages/Expedicao/NotasExpedir.tsx)
-- SF2010 série 1 filial 01 com `z1_expedic IS NULL` e CFOPs de venda
+- **Endpoint principal**: [GET /expedicao/notas](resources/expedicao/expedicao.notas.js)
+- SF2010 série 1 filial 01 com `z1_expedic IS NULL`, NFs com ao menos 1 item com CFOP fora da lista de proibidos
 - Linha verde quando NF já está no bordero. Botão "Adicionar/Remover" alterna inline
+- **DIFAL e FCP**: agregados via subquery `SUM(D2_DIFAL)` e `SUM(D2_VALFECP)` por NF. Coluna **DIFAL** em vermelho quando > 0, **FCP** em laranja. KPIs adicionais "DIFAL total" e "FCP total" aparecem no topo se houver
+- **Filtros**: busca, data mínima, **checkbox "Só com DIFAL"** mostra contagem (ex 17 NFs)
+- **Bug duplicação corrigido**: a view `faturamento_cfop` agrupa por (filial, doc, série, **cfop**) — NFs mistas (ex 087577 com 6105 + 6106) viravam N linhas no LEFT JOIN. Agora usa `EXISTS` (mesma semântica de filtragem, sem duplicar)
+- **Prévia da NF**: clique no número da NF abre **drawer lateral** ([endpoint GET /expedicao/notas/:doc/:serie](resources/expedicao/expedicao.nf-detalhe.js)) com cabeçalho + destinatário (CNPJ, endereço, cidade/UF/CEP, telefone, email) + transportadora + tabela de itens (cód, descrição, qtd, vunit, total, CFOP, DIFAL) + totais (mercadorias, bruto, ICMS, IPI, PIS, COFINS, DIFAL, FCP)
+- **Campos PIS/COFINS no SF2 da Gnatus**: `F2_VALPIS` / `F2_VALCOFI` (não existem `F2_PIS` / `F2_COFINS`)
 
 #### Bordero de Etiquetagem · `/expedicao/bordero` · perm 12002
 - **Página**: [BorderoEtiquetagem.tsx](../frontend_intranet_react/src/pages/Expedicao/BorderoEtiquetagem.tsx)
 - Visualiza linhas atuais agrupadas por NF (1 linha por volume)
 - "Exportar XLSX" gera arquivo no formato Zebra via `exceljs`
+
+---
+
+### 3.14 RH
+
+#### Termo de Responsabilidade · perm 1027 (mesma do equipamentos)
+- **Endpoint principal**: [resources/rh/rh.termo-log.js](resources/rh/rh.termo-log.js)
+- **Tabelas relacionadas**:
+  - `tab_termo_equipamento` (cabeçalho do termo — colaborador, acessórios, condições)
+  - `tab_termo_dispositivo` ([migration 30](database/postgres/30-termo-dispositivo.sql)) — **1 termo agora aceita N dispositivos**
+- Backfill automático: termos antigos com 1 equipamento ficam como `ordem=0` na tabela filha (`tab_termo_dispositivo`)
+- Aceita body com `dispositivos[]` OU campos chapados (retrocompatível)
+- Cada dispositivo gera 1 row em `tab_termo_dispositivo` E 1 em `tab_equipamento_atual`
+- Acessórios são do termo (não duplicam por dispositivo) — `acessoriosTexto()` no frontend monta string CSV final
+- Bug histórico (corrigido): print do termo tinha quadrado branco por causa do `.sidebar-mobile-toggle` não escondido em `@media print` — adicionado `display:none` nas 3 classes do menu mobile (toggle/close/backdrop)
 
 ---
 
@@ -340,7 +575,70 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 ### 4.6 SMTP
 - Prod: config completa em `.env` (`SMTP_HOST/PORT/USER/PASS/FROM`)
 - Dev: MailHog em `localhost:1025`
-- Uso: reset de senha + (futuro) notificações de aprovação/cobrança
+- Service: [services/emailService.js](services/emailService.js) — `sendEmail({ to, subject, text, html, cc, bcc })` genérico + `sendVerificationEmail(to, codigo)` específico
+- Uso: reset de senha + alertas de contrato (cron diário 08:30)
+
+### 4.7 IA Provider (Anthropic / OpenAI)
+- **Service**: [services/ia.js](services/ia.js) — abstração que roteia por env `IA_PROVIDER=anthropic|openai`
+- Interface uniforme: `chat({system, messages, maxTokens, temperature})` e `chatJson({...})` (parseia `dados` automaticamente, tolera ` ```json ` ao redor)
+- **Anthropic (Claude)**: `POST https://api.anthropic.com/v1/messages` com `x-api-key` + `anthropic-version: 2023-06-01`
+  - `.env`: `ANTHROPIC_API_KEY=sk-ant-api03-...` + `ANTHROPIC_MODEL=claude-sonnet-4-5-20250929`
+  - JSON mode via prompt (Anthropic não tem JSON mode formal)
+- **OpenAI (GPT)**: `POST https://api.openai.com/v1/chat/completions` com `Authorization: Bearer ...`
+  - `.env`: `OPENAI_API_KEY=sk-proj-...` + `OPENAI_MODEL=gpt-4o-mini`
+  - JSON mode formal via `response_format: { type: 'json_object' }` (exige palavra "json" em alguma message)
+- **Pricing tracking**: tabela hardcoded em USD/1M tokens; cada chamada calcula custo estimado e devolve em `r.custo`
+  - Sonnet 4.5: $3 in / $15 out (~$0.045 por apresentação)
+  - GPT-4o-mini: $0.15 in / $0.60 out (~$0.003 por apresentação — 15x mais barato)
+- **Usado por**: Apoio Gerencial → Gerador de Apresentações
+- ⚠️ **Comum colar a chave com prefixo duplicado** (`sk-ant-api03-sk-ant-api03-XXX`). Diagnóstico: `printf "len=%s" "${#ANTHROPIC_API_KEY}"` deve dar 108 (não 121)
+
+### 4.8 BCB Séries Temporais
+- **Service**: [services/bcbIndices.js](services/bcbIndices.js) — cliente das Séries Temporais do Banco Central
+- Endpoint público gratuito: `https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial=DD/MM/YYYY&dataFinal=DD/MM/YYYY`
+- Códigos suportados: `IPCA=433`, `INPC=188`, `IGPM=189`, `IGPC=192`, `SELIC=4189`
+- `variacaoAcumulada(indice, meses)`: calcula `(1+v/100)` produto pra inflação acumulada
+- **Cache em memória** TTL 12h (índices mudam 1x/mês)
+- **Usado por**: Gestão de Contratos → reajuste automático
+- Validado: IPCA 12m = +4,14%, IGPM 12m = +0,62% (Mai/2026)
+
+### 4.9 TRPWSIMP — TOTVS Template de Importação
+- **Service**: [services/trpwsimp.js](services/trpwsimp.js)
+- Cliente do **MIT072** (Template Generic de Importação) do Protheus — REST nativo TOTVS
+- Catálogo de **47+ IDs** hardcoded (SA1, SA2, SB1, SC5, SF6, SD1, SE1, SE2, etc)
+- Auth: Basic Auth (mesmas credenciais Protheus REST)
+- Endpoint `POST {PROTHEUS_API_URL}/wsTRPWSIMP/run` com payload JSON contendo `id`, `tabela`, `titCampos[]`, `nomCampos[]`, `dados[][]`
+- Retorna `STATUS.TOTAL`, `STATUS.ATUALIZADOS`, `STATUS.NAO_ATUALIZADOS`, `STATUS.DURACAO` + log de inconsistências
+- **Usado por**: Tecnologia → Importação Protheus
+
+### 4.10 SURI WhatsApp (via Fluig PHP)
+- **Service**: [services/suri.js](services/suri.js)
+- Cliente do **Gupshup/SURI** mediado pelo **Fluig PHP da Develsoft** (`172.31.255.51`) — Gnatus não chama Gupshup direto
+- Endpoint: `POST {SURI_BASE_URL}/api/messages/send` com Basic Auth (`gnatus-fluig`/`@Senha1232019`)
+- Templates aprovados pela Meta com placeholders `{{1}}, {{2}}, ...` substituídos por nome/NF/valor/vencimento
+- Função `normalizePhone(rawPhone)` remove zeros, adiciona DDI 55, valida 12-13 dígitos
+- **Usado por**: Cobrança WhatsApp (cron diário) + Cobrança Envio WhatsApp (curadoria operador)
+
+### 4.11 Anthropic / Claude Code (este manual)
+- O próprio assistente que escreveu/escreve este manual usa Claude API
+- Integração específica do **assistente de desenvolvimento** (não confundir com o IA Provider do Apoio Gerencial)
+
+---
+
+## 4½. Crons (scheduler)
+
+[services/scheduler.js](services/scheduler.js) usa `node-schedule` e roda 2 jobs:
+
+| Cron | Horário | Job | Descrição |
+|---|---|---|---|
+| `0 9 * * *` | 09:00 todo dia | `cobranca-whatsapp` | Dispara WhatsApp pra clientes em D-1, D0, D+3 (via SURI/Fluig). Verifica flag `automacao_ativa` em `tab_cobranca_whatsapp_config` |
+| `30 8 * * *` | 08:30 todo dia | `contratos` | Cron de alertas D-90/D-60/D-30 do vencimento de contratos (e-mail pro responsável). Idempotente via UNIQUE em `tab_contrato_alerta` |
+
+Inicializado no `index.js` via `app.services.Scheduler.start(app)`.
+
+Endpoints manuais pra rodar agora (debug/teste — perm 0):
+- `POST /cobranca/whatsapp-disparar` — força disparo de cobrança WhatsApp
+- `POST /contratos/alertas/disparar` — força cron de alertas de contrato
 
 ---
 
@@ -463,24 +761,53 @@ Resumo dos principais:
 - **`B1_CM1` não existe** na SB1 da Gnatus — usar `SB2.B2_CM1` agregado
 - **`SX5 X5_TABELA = 'Z1'`** pra BUs (não 'ZA')
 - **`E1_TIPO IN ('RA','NCC')`** sempre excluído nas queries de cobrança
+- **`F2_VALPIS` / `F2_VALCOFI`** no SF2 da Gnatus (não `F2_PIS` / `F2_COFINS`)
+- **`X3_OBRIGAT = 'x'`** minúsculo na Gnatus (não 'S' do padrão TOTVS) — afeta TRPWSIMP
 - **MSAL precisa SPA platform** no Azure (não Web) — senão `AADSTS9002326`
 - **Vite `VITE_*` é build-time** — precisa rebuild
 - **PG migrations como user `intranet`** ou dar grants depois
 - **Build frontend tem noUnusedLocals strict** — limpar imports não usados
-- **CSS print** precisa força `visibility/opacity/color` em conteúdo do `.termo__doc`
+- **CSS print** precisa força `visibility/opacity/color` em conteúdo do `.termo__doc`. Também esconder `.sidebar-mobile-toggle` / `.sidebar-mobile-close` / `.sidebar-backdrop`
 - **VIP estática preserva source IP** — DC vê tráfego vindo do VPS público (177.7.37.251)
 - **Vencido/saldo** usa `E1_VENCREA` (vencimento real) não `E1_VENCTO` (original) — porque negociações alteram
+- **`E1_BAIXA` preenchida ≠ título quitado** — pode ser baixa parcial. Critério canônico de "em aberto" é `E1_SALDO > 0` apenas (não checar `E1_BAIXA`)
+- **`E1_PORTADO` preenchido = banco já decidido pelo financeiro** — Envio de Boleto filtra justamente por isso
+- **View `faturamento_cfop` agrupa por (filial, doc, série, cfop)** — NFs com 2+ CFOPs duplicam em LEFT JOIN. Usar `EXISTS` em vez disso
+- **Contratos: status calculado em runtime**, não gravado. Sempre depende de "hoje" — não cachear
+- **Reajuste BCB: produto dos `(1+v/100)`**, não soma simples (juros compostos)
+- **Anthropic: cuidado com prefixo `sk-ant-api03-` duplicado** ao colar no `.env`
+- **OpenAI JSON mode** exige palavra "json" em alguma message
+- **Repositórios em `digoferreira88/...`** (antigamente `gnatusintranet/...` — redirects funcionam mas evitar)
+- **Cobrança WhatsApp via Fluig PHP** (`172.31.255.51`), não chamada direta no Gupshup. Endpoint correto é `POST /api/messages/send` (não `/api/messages`)
+- **Aprovações: `tipoIntranet` e `justificativa`** nos calls de auditoria (não `tipo`/`observacao` — bug histórico já fixado)
+- **Importer XLSX**: planilha do fiscal pode ter Date solta em coluna A — `trim()` defensivo deve retornar null pra Date (não `String(Date)` que vira string ICU enorme estourando varchar curto)
+- **PG `psql -U intranet`** exige senha — passar `PGPASSWORD` do `.env` antes (peer auth do user `postgres` vs senha do `intranet`)
 
 ---
 
 ## 9. Roadmap conhecido / pendências
 
+### Cobrança
 - Tela dedicada de gestão de carteira por cliente em lote (atualmente só individual no drawer do dashboard cobrança)
-- Eficiência por ação (acordo cumprido vs total) em /cobranca
+- Eficiência por ação (acordo cumprido vs total)
 - Filtros temporais no Dashboard de Cobrança (hoje só mostra estado atual)
-- Adaptar `TermoEquipamento.tsx` pra ler query params auto-preenchendo formulário (atualmente só link, não preenche)
+
+### Envio de Boleto
+- **Onda 2**: integração REST com Protheus pra **gerar borderô automaticamente** (especificação em [docs/spec-protheus-rest-cobranca-bordero.md](../docs/spec-protheus-rest-cobranca-bordero.md) — aguarda Develsoft criar `POST /rest/Cobranca/gerar-bordero`)
+- **Onda 3**: detectar retorno do banco (E1_NUMBOR + E1_NUMBCO preenchidos) e disparar boleto por e-mail/WhatsApp. Geração de PDF próprio do boleto
+
+### Contratos
+- **Onda 3**: assinatura digital (Clicksign API), faturamento automático (gerar SE1), renovação automática quando `renovacao_automatica = true`, alertas por WhatsApp (alongside e-mail)
+
+### Apoio Gerencial / Apresentações
+- Editor visual de slides (atualmente o operador pega o que a IA devolveu, sem permitir ajustes pontuais)
+- Suporte a PDF/DOCX como input (hoje só XLSX/CSV)
+- Templates corporativos (escolher tema antes da geração)
+
+### Outros
 - Notificações em tempo real (Socket.IO já carregado mas não usado)
 - Assinatura digital nos termos (substituir o print)
+- Adaptar `TermoEquipamento.tsx` pra ler query params auto-preenchendo formulário (atualmente só link)
 
 ---
 
@@ -492,12 +819,42 @@ Resumo dos principais:
 | 02 | `02-migrate-data.js` | Migra dados MSSQL → PG (script JS conectando ambos) |
 | 03 | `03-refactor-mssql-to-pg.js` | Validação pós-migração |
 | 05 | `05-sac-pabx.sql` | Histórico PABX/ligações |
-| 06 | `06-controladoria-poder-terceiros.sql` | Tabela poder de terceiros |
+| 06 | `06-controladoria-poder-terceiros.sql` | Tabela poder de terceiros (controle operacional) |
 | 07 | `07-tecnologia-provisionamento.sql` | Log de provisioning AD/M365 |
 | 08 | `08-tecnologia-termo-equipamento.sql` | `tab_termo_equipamento` |
 | 09 | `09-seed-permissoes-base.sql` | Seed de 27 permissões iniciais |
 | 10 | `10-cobranca-atribuicao.sql` | `tab_cobranca_atribuicao` (carteira por cliente) |
 | 11 | `11-cobranca-bu-equipe.sql` | `tab_cobranca_bu_equipe` + 64 mapeamentos seedados |
 | 12 | `12-tecnologia-equipamento-atual.sql` | `tab_equipamento_atual` (estado de equips) |
+| 13 | `13-compras-mcl.sql` | MCL — `tab_mcl_indice`, `tab_mcl_sc_snapshot` |
+| 14 | `14-mcl-standard-cost.sql` | `tab_mcl_standard_cost` |
+| 15 | `15-mcl-scii.sql` | `tab_mcl_scii` (SC Item Imobilizado) |
+| 16 | `16-provisionamento-acao.sql` | `tab_provis_acao` (log granular de cada ação no AD/M365) |
+| 17 | `17-producao-registro.sql` | `tab_producao_registro` |
+| 18 | `18-producao-dashboard.sql` | Tabelas auxiliares pro dashboard de produção |
+| 19 | `19-universidade.sql` | Trilhas/cursos/módulos/aulas |
+| 20 | `20-universidade-quiz.sql` | Quiz no fim do módulo |
+| 21 | `21-vendas-tes-categoria.sql` | Mapeamento TES → Categoria de Venda |
+| 22 | `22-vendas-analitico.sql` | Tabelas de apoio pro Vendas Analítico |
+| 23 | `23-universidade-fix-progresso.sql` | Corrige UNIQUE em `tab_uni_progresso` (user+aula) |
+| 24 | `24-cobranca-anexo.sql` | `tab_cobranca_anexo` (PDF/imagens em ações) |
+| 25 | `25-cobranca-whatsapp.sql` | `tab_cobranca_whatsapp_*` (config + envios + log) |
+| 26 | `26-poder-terceiros-controle.sql` | `tab_pt_envio` + `tab_pt_envio_item` + `tab_pt_finalizacao` + `tab_pt_envio_acao` (substitui planilha do fiscal) |
+| 27 | `27-tecnologia-protheus-import.sql` | `tab_protheus_import_log` (log de execuções TRPWSIMP) + perm 1031 |
+| 28 | `28-protheus-import-layout.sql` | `tab_protheus_import_layout` (mapeamentos XLSX→Protheus salvos) |
+| 29 | `29-tecnologia-auditoria.sql` | `tab_auditoria` + extensão `pg_trgm` + perm 1032 (Tecnologia - Auditoria) |
+| 30 | `30-termo-dispositivo.sql` | `tab_termo_dispositivo` — 1 termo agora tem N dispositivos. Backfill automático |
+| 31 | `31-telefonia-movel.sql` | `tab_operadora` (seed Claro/Tim/Vivo) + `tab_telefonia_*` (conta/departamento/linha/hist) |
+| 32 | `32-apoio-gerencial.sql` | `tab_apoio_apresentacao` (apresentações geradas via IA) + perm 5001 |
+| 33 | `33-pt-novas-colunas.sql` | Adiciona `atualizado_em_planilha` + `novo_vencimento_obs` em `tab_pt_envio` (layout 2026 da planilha) |
+| 34 | `34-pt-pedido-venda-amplo.sql` | Amplia `pedido_venda` em `tab_pt_finalizacao` pra varchar(200) |
+| 35 | `35-financeiro-envio-boleto.sql` | `tab_boleto_envio_lote` + `tab_boleto_envio_lote_titulo` + perm 8005 |
+| 36 | `36-contratos.sql` | `tab_contrato` + `tab_contrato_aditivo` + `tab_contrato_anexo` + `tab_contrato_alerta` + perms 5002/5003/5004 |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
+
+⚠️ Novas migrations devem incrementar a numeração (próxima é #37) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+
+```bash
+sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
+```
