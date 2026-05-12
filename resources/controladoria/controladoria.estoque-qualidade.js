@@ -24,7 +24,7 @@ module.exports = (app) => ({
   middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
-    const { Pg, Protheus } = app.services;
+    const { Pg } = app.services;
     const tipo = trim(req.query.tipo);
     const armazem = trim(req.query.armazem);
     const criticidade = trim(req.query.criticidade);  // ruptura|risco|excesso|ideal (opcional)
@@ -93,27 +93,14 @@ module.exports = (app) => ({
         saidasPorCod.get(cod).set(r.ano_mes, N(r.qtd_saidas));
       });
 
-      // 3) Lead time real do Protheus (B1_PE). Bulk em batches de 500 codigos.
-      const codsUnicos = saldoAtual.map(s => trim(s.cod_produto));
+      // 3) Lead time real (B1_PE) — vem do cache PG populado pelo cron diario
+      // (services/estoqueSnapshot.js -> tab_estoque_produto_meta). Zero round-trip
+      // ao Protheus por chamada do dashboard.
+      const metaRows = await Pg.connectAndQuery(
+        `SELECT cod_produto, lead_time_dias FROM tab_estoque_produto_meta`, {}
+      );
       const leadTimeProd = new Map();
-      const BATCH = 500;
-      for (let i = 0; i < codsUnicos.length; i += BATCH) {
-        const slice = codsUnicos.slice(i, i + BATCH);
-        const inClause = slice.map((_, k) => `@c${k}`).join(',');
-        const params = {};
-        slice.forEach((c, k) => { params[`c${k}`] = c; });
-        try {
-          const rows = await Protheus.connectAndQuery(
-            `SELECT RTRIM(B1_COD) cod, B1_PE pe
-               FROM SB1010 WITH (NOLOCK)
-              WHERE D_E_L_E_T_ <> '*' AND B1_COD IN (${inClause})`,
-            params
-          );
-          rows.forEach(r => leadTimeProd.set(trim(r.cod), N(r.pe)));
-        } catch (e) {
-          console.warn('estoque-qualidade: falha batch B1_PE', i, e.message);
-        }
-      }
+      metaRows.forEach(r => leadTimeProd.set(trim(r.cod_produto), N(r.lead_time_dias)));
 
       // 4) Calcula metricas por produto
       const produtos = saldoAtual.map(s => {

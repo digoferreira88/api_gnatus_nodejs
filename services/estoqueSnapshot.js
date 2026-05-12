@@ -32,7 +32,7 @@ const CFOPS_SAIDA_VENDA = [
 // (Lista pode ser ajustada conforme padronizacao Protheus da Gnatus.)
 const TIPOS_SD3_SAIDA = ['RE0', 'RE1', 'RE5'];
 
-// Le saldo atual de SB2 (snapshot fotografico — usado pro mes corrente)
+// Le saldo atual de SB2 + ficha B1 (inclui B1_PE = lead time)
 async function lerSaldoAtual(Protheus) {
   return Protheus.connectAndQuery(`
     SELECT RTRIM(sb2.B2_COD)   cod_produto,
@@ -40,6 +40,8 @@ async function lerSaldoAtual(Protheus) {
            RTRIM(sb1.B1_TIPO)  tipo_produto,
            RTRIM(sb1.B1_DESC)  descricao,
            RTRIM(sb1.B1_GRUPO) grupo,
+           RTRIM(sb1.B1_UM)    unidade,
+           sb1.B1_PE           lead_time_dias,
            sb2.B2_QATU  qtd_estoque,
            sb2.B2_CM1   custo_medio,
            sb2.B2_VATU1 valor_estoque
@@ -50,6 +52,42 @@ async function lerSaldoAtual(Protheus) {
        AND sb2.B2_FILIAL = '01'`,
     {}
   );
+}
+
+// Upsert metadados (lead time, unidade) — 1 row por produto, nao por (produto, armazem)
+async function upsertProdutoMeta(Pg, saldo) {
+  const vistos = new Set();
+  let upserts = 0;
+  for (const r of saldo) {
+    const cod = String(r.cod_produto || '').trim();
+    if (!cod || vistos.has(cod)) continue;
+    vistos.add(cod);
+    try {
+      await Pg.connectAndQuery(`
+        INSERT INTO tab_estoque_produto_meta (cod_produto, tipo_produto, descricao, grupo, unidade, lead_time_dias, atualizado_em)
+        VALUES (@cod, @tipo, @desc, @grupo, @um, @lt, NOW())
+        ON CONFLICT (cod_produto) DO UPDATE SET
+          tipo_produto = EXCLUDED.tipo_produto,
+          descricao    = EXCLUDED.descricao,
+          grupo        = EXCLUDED.grupo,
+          unidade      = EXCLUDED.unidade,
+          lead_time_dias = EXCLUDED.lead_time_dias,
+          atualizado_em = NOW()`,
+        {
+          cod,
+          tipo: String(r.tipo_produto || '').trim(),
+          desc: String(r.descricao || '').trim().slice(0, 120),
+          grupo: String(r.grupo || '').trim().slice(0, 10),
+          um: String(r.unidade || '').trim().slice(0, 3),
+          lt: Number(r.lead_time_dias || 0)
+        }
+      );
+      upserts++;
+    } catch (e) {
+      console.error(`[snapshot] erro upsert meta ${cod}:`, e.message);
+    }
+  }
+  return upserts;
 }
 
 // Saidas SD2 (vendas) por (cod, armazem) num mes (formato YYYYMM01..YYYYMM31).
@@ -109,6 +147,11 @@ async function atualizar(app, { meses = 1 } = {}) {
   // Pra meses passados, eh um proxy (Protheus nao guarda saldo historico real).
   const saldo = await lerSaldoAtual(Protheus);
   console.log(`[snapshot] saldo atual lido: ${saldo.length} produtos x armazem`);
+
+  // 1b) Atualiza metadados (lead time, unidade) — cache pro dashboard de qualidade
+  const metaUpserts = await upsertProdutoMeta(Pg, saldo);
+  console.log(`[snapshot] meta de produto atualizada: ${metaUpserts} produtos`);
+  stats.meta_upserts = metaUpserts;
 
   const anosMes = Calc.ultimosAnoMes(meses);
 
