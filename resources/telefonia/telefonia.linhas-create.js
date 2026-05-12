@@ -31,11 +31,11 @@ module.exports = (app) => ({
       const r = await Pg.connectAndQuery(`
         INSERT INTO tab_telefonia_linha (
           id_operadora, id_conta, id_departamento, numero_telefone,
-          plano, franquia_gb, pessoa, codigo_protheus, filial, centro_custo,
+          plano, franquia_gb, valor_mensal, pessoa, codigo_protheus, filial, centro_custo,
           data_ativacao, data_vencimento, status, observacoes
         ) VALUES (
           @op, @con, @dep, @num,
-          @pl, @gb, @pes, @cprot, @fil, @cc,
+          @pl, @gb, @val, @pes, @cprot, @fil, @cc,
           @at, @ven, @st, @obs
         ) RETURNING id`,
         {
@@ -45,6 +45,7 @@ module.exports = (app) => ({
           num: numero,
           pl: trim(b.plano) || null,
           gb: b.franquia_gb != null && b.franquia_gb !== '' ? Number(b.franquia_gb) : null,
+          val: b.valor_mensal != null && b.valor_mensal !== '' ? Number(b.valor_mensal) : null,
           pes: trim(b.pessoa) || null,
           cprot: trim(b.codigo_protheus) || null,
           fil: trim(b.filial) || null,

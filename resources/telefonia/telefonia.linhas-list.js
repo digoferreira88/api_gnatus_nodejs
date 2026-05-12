@@ -44,7 +44,7 @@ module.exports = (app) => ({
 
     try {
       const linhas = await Pg.connectAndQuery(`
-        SELECT l.id, l.numero_telefone, l.plano, l.franquia_gb,
+        SELECT l.id, l.numero_telefone, l.plano, l.franquia_gb, l.valor_mensal,
                l.pessoa, l.codigo_protheus, l.filial, l.centro_custo,
                l.data_ativacao, l.data_vencimento, l.status, l.observacoes,
                l.criado_em, l.atualizado_em,
@@ -75,12 +75,15 @@ module.exports = (app) => ({
           COUNT(*) FILTER (WHERE data_vencimento IS NOT NULL
                               AND data_vencimento <= CURRENT_DATE + INTERVAL '30 days'
                               AND status <> 'Cancelada')             AS vencendo_30d,
-          COALESCE(SUM(franquia_gb) FILTER (WHERE status = 'Ativa'), 0) AS gb_total_ativas
+          COALESCE(SUM(franquia_gb)  FILTER (WHERE status = 'Ativa'), 0) AS gb_total_ativas,
+          COALESCE(SUM(valor_mensal) FILTER (WHERE status = 'Ativa'), 0) AS valor_total_ativas,
+          COALESCE(SUM(valor_mensal), 0)                                  AS valor_total_geral
           FROM tab_telefonia_linha`, {});
 
       const porOperadora = await Pg.connectAndQuery(`
         SELECT o.id, o.nome, COUNT(l.id) total,
-               COUNT(*) FILTER (WHERE l.status = 'Ativa') ativas
+               COUNT(*) FILTER (WHERE l.status = 'Ativa') ativas,
+               COALESCE(SUM(l.valor_mensal) FILTER (WHERE l.status = 'Ativa'), 0) AS valor_ativas
           FROM tab_operadora o
           LEFT JOIN tab_telefonia_linha l ON l.id_operadora = o.id
          GROUP BY o.id, o.nome

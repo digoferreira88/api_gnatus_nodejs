@@ -15,6 +15,7 @@ const CAMPOS = [
   ['numero_telefone', 'numero_telefone', (v) => trim(v).replace(/\D/g, '') || null],
   ['plano',           'plano',           (v) => trim(v) || null],
   ['franquia_gb',     'franquia_gb',     (v) => v == null || v === '' ? null : Number(v)],
+  ['valor_mensal',    'valor_mensal',    (v) => v == null || v === '' ? null : Number(v)],
   ['pessoa',          'pessoa',          (v) => trim(v) || null],
   ['codigo_protheus', 'codigo_protheus', (v) => trim(v) || null],
   ['filial',          'filial',          (v) => trim(v) || null],
