@@ -11,17 +11,17 @@
 -- ficam imutaveis depois do dia 5 do mes seguinte. Mes corrente eh atualizado
 -- diariamente.
 
-INSERT INTO tab_intranet_permissoes (id, nome, modulo) VALUES
+INSERT INTO tab_intranet_permissoes (id_permissao, nome, modulo) VALUES
   (11004, 'Controladoria - Estoque (Dashboards)', 'Controladoria')
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id_permissao) DO NOTHING;
 
 -- Atribui automaticamente ao admin (usuario id=1) caso nao tenha
-INSERT INTO tab_intranet_usr_permissoes (id_usuario, id_permissao)
+INSERT INTO tab_intranet_usr_permissoes (id_user, id_permissao)
 SELECT 1, 11004
  WHERE EXISTS (SELECT 1 FROM tab_intranet_usr WHERE id = 1)
    AND NOT EXISTS (
      SELECT 1 FROM tab_intranet_usr_permissoes
-      WHERE id_usuario = 1 AND id_permissao = 11004
+      WHERE id_user = 1 AND id_permissao = 11004
    );
 
 CREATE TABLE IF NOT EXISTS tab_estoque_snapshot_mensal (
