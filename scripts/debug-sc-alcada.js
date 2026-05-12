@@ -10,6 +10,7 @@
 //
 // Roda no diretorio do backend (/home/intranet/backend).
 
+require('dotenv').config();
 const Protheus = require('../services/protheus');
 
 const numero = String(process.argv[2] || '').trim();
