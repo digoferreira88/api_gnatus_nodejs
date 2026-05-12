@@ -36,7 +36,7 @@ if (!numero || !usrCod) {
   console.log(`\n========== SAL010 — Usuario ${usrCod} ==========`);
   const sal = await Protheus.connectAndQuery(`
     SELECT RTRIM(AL_COD) grupo, RTRIM(AL_DESC) descr, RTRIM(AL_USER) usr,
-           AL_VALIA limiteValor, RTRIM(AL_DOCSC) docSC, RTRIM(AL_DOCPC) docPC
+           RTRIM(AL_DOCSC) docSC, RTRIM(AL_DOCPC) docPC
       FROM SAL010 WITH (NOLOCK)
      WHERE D_E_L_E_T_ <> '*' AND AL_FILIAL = '01' AND AL_USER = @usr`,
     { usr: usrCod });
