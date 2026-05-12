@@ -39,7 +39,7 @@ module.exports = (app) => ({
 
     try {
       // Re-consulta Protheus pro tipo correto (fonte unica da verdade)
-      const candidatos = await Scheduler.buscarTitulos(Protheus, cfg.delta, cfg.mode);
+      const candidatos = await Scheduler.buscarTitulos(Protheus, cfg.delta, cfg.mode, cfg.deltaMax);
       const elegiveis = candidatos.filter(c => chavesSolicitadas.has(chaveTitulo(c)));
 
       const stats = {

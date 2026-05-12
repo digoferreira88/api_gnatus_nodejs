@@ -18,12 +18,13 @@ const jobs = {};
 const CRON_DIARIO = '0 9 * * *';  // 09:00 todo dia
 
 // Tipos de disparo + delta de dias e modo de comparacao do vencimento.
-//   mode 'exato' = E1_VENCREA exatamente igual a (hoje + delta)
-//   mode 'desde' = E1_VENCREA <= (hoje + delta)  — "X ou mais dias atras"
+//   mode 'exato'  = E1_VENCREA exatamente igual a (hoje + delta)
+//   mode 'janela' = E1_VENCREA BETWEEN (hoje+delta) E (hoje+deltaMax)
+//                  delta = limite mais antigo (negativo), deltaMax = mais recente
 const TIPOS = [
-  { tipo: 'D-1', delta: 1,  mode: 'exato', desc: 'lembrete amanha' },     // amanha
-  { tipo: 'D0',  delta: 0,  mode: 'exato', desc: 'vencimento hoje' },     // hoje
-  { tipo: 'D+3', delta: -3, mode: 'desde', desc: 'atraso 3+ dias' }        // venceu ha 3+ dias
+  { tipo: 'D-1', delta: 1,  mode: 'exato',  desc: 'lembrete amanha' },               // amanha
+  { tipo: 'D0',  delta: 0,  mode: 'exato',  desc: 'vencimento hoje' },               // hoje
+  { tipo: 'D+3', delta: -3, deltaMax: -1, mode: 'janela', desc: 'atraso 1 a 3 dias' } // venceu ha 1, 2 ou 3 dias
 ];
 
 const fmtDataBR = (ymd) => {
@@ -43,13 +44,20 @@ function ymdComOffset(deltaDias) {
 
 // Busca titulos no Protheus pra um delta especifico.
 //   mode 'exato' (default): E1_VENCREA EXATAMENTE igual a (hoje + delta)
-//   mode 'desde': E1_VENCREA <= (hoje + delta)  — pra D+3 (3 ou mais dias atrasado)
-//                 Inclui DATEDIFF como dias_atraso pra ordenar/filtrar no JS.
-async function buscarTitulos(Protheus, deltaDias, mode = 'exato') {
+//   mode 'janela': E1_VENCREA BETWEEN (hoje+delta) AND (hoje+deltaMax)
+//                  ex: delta=-3, deltaMax=-1 -> titulos com 1, 2 ou 3 dias de atraso
+//   Inclui DATEDIFF como dias_atraso pra ordenar/exibir.
+async function buscarTitulos(Protheus, deltaDias, mode = 'exato', deltaMax = null) {
   const ymd = ymdComOffset(deltaDias);
-  const condVenc = mode === 'desde'
-    ? `CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, @ymd, 112)`
-    : `CONVERT(date, se1.E1_VENCREA, 112)  = CONVERT(date, @ymd, 112)`;
+  const params = { ymd };
+  let condVenc;
+  if (mode === 'janela') {
+    const ymdFim = ymdComOffset(deltaMax);
+    params.ymdFim = ymdFim;
+    condVenc = `CONVERT(date, se1.E1_VENCREA, 112) BETWEEN CONVERT(date, @ymd, 112) AND CONVERT(date, @ymdFim, 112)`;
+  } else {
+    condVenc = `CONVERT(date, se1.E1_VENCREA, 112) = CONVERT(date, @ymd, 112)`;
+  }
   return Protheus.connectAndQuery(`
     SELECT
       RTRIM(se1.E1_FILIAL)  filial,
@@ -79,7 +87,7 @@ async function buscarTitulos(Protheus, deltaDias, mode = 'exato') {
       AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
       AND ${condVenc}
     ORDER BY se1.E1_VENCREA, se1.E1_CLIENTE`,
-    { ymd }
+    params
   );
 }
 
@@ -140,7 +148,7 @@ async function rodarDisparo(app, { force = false } = {}) {
   for (const cfg of TIPOS) {
     const tipoStat = { encontrados: 0, enviados: 0, erros: 0, sem_telefone: 0, ja_enviados: 0 };
     try {
-      const titulos = await buscarTitulos(Protheus, cfg.delta, cfg.mode);
+      const titulos = await buscarTitulos(Protheus, cfg.delta, cfg.mode, cfg.deltaMax);
       tipoStat.encontrados = titulos.length;
 
       for (const t of titulos) {

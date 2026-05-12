@@ -45,7 +45,7 @@ module.exports = (app) => ({
     try {
       // Busca paralela das 3 listas no Protheus
       const buscas = Scheduler.TIPOS.map(cfg =>
-        Scheduler.buscarTitulos(Protheus, cfg.delta, cfg.mode)
+        Scheduler.buscarTitulos(Protheus, cfg.delta, cfg.mode, cfg.deltaMax)
           .then(rows => ({ tipo: cfg.tipo, rows }))
           .catch(err => ({ tipo: cfg.tipo, rows: [], erro: err.message }))
       );
