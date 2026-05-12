@@ -99,7 +99,9 @@ const tests = [
   console.log(`Endpoint: ${url}`);
   console.log(`Auth: ${user}:${'*'.repeat(pass.length)}\n`);
 
-  let pass = 0, fail = 0;
+  // Contadores renomeados pra evitar colisao com a const `pass` (senha) do topo
+  // do arquivo — declarar `let pass` aqui criava TDZ que sombreava a senha.
+  let nPass = 0, nFail = 0;
   for (const t of tests) {
     try {
       const r = await fetch(url, { method: 'POST', headers: t.headers, body: t.body });
@@ -121,14 +123,14 @@ const tests = [
       if (!verdict) console.log(`        body: ${txt.slice(0, 200)}`);
       console.log();
 
-      if (verdict) pass++; else fail++;
+      if (verdict) nPass++; else nFail++;
     } catch (err) {
       console.log(`✗ FAIL  ${t.nome}`);
       console.log(`        erro de rede/conexao: ${err.message}\n`);
-      fail++;
+      nFail++;
     }
   }
   console.log(`────────────────────────────────`);
-  console.log(`Resultado: ${pass} PASS · ${fail} FAIL · total ${tests.length}`);
-  process.exit(fail > 0 ? 1 : 0);
+  console.log(`Resultado: ${nPass} PASS · ${nFail} FAIL · total ${tests.length}`);
+  process.exit(nFail > 0 ? 1 : 0);
 })();
