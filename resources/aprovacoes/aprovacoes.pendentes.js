@@ -94,17 +94,23 @@ module.exports = (app) => ({
               AND RTRIM(ISNULL(scr.CR_LIBAPRO, '')) = ''
               AND scr.CR_TIPO IN ('SC','PC','IP')
               AND (
+                -- Caso 1: aprovador NOMEADO direto na SCR — so esse user pode aprovar
                 scr.CR_USER = @cod
-                OR EXISTS (
-                  SELECT 1 FROM SAL010 sal WITH (NOLOCK)
-                   WHERE sal.D_E_L_E_T_ <> '*'
-                     AND sal.AL_FILIAL = '01'
-                     AND sal.AL_COD    = scr.CR_GRUPO
-                     AND sal.AL_USER   = @cod
-                     AND (
-                       (scr.CR_TIPO = 'SC' AND RTRIM(sal.AL_DOCSC) <> 'B')
-                       OR (scr.CR_TIPO = 'PC' AND RTRIM(sal.AL_DOCPC) <> 'B')
-                     )
+                -- Caso 2: SCR sem aprovador nomeado (CR_USER vazio) -> alcada aberta
+                -- ao grupo. Lista pra qualquer membro do grupo via SAL010.
+                OR (
+                  RTRIM(ISNULL(scr.CR_USER, '')) = ''
+                  AND EXISTS (
+                    SELECT 1 FROM SAL010 sal WITH (NOLOCK)
+                     WHERE sal.D_E_L_E_T_ <> '*'
+                       AND sal.AL_FILIAL = '01'
+                       AND sal.AL_COD    = scr.CR_GRUPO
+                       AND sal.AL_USER   = @cod
+                       AND (
+                         (scr.CR_TIPO = 'SC' AND RTRIM(sal.AL_DOCSC) <> 'B')
+                         OR (scr.CR_TIPO = 'PC' AND RTRIM(sal.AL_DOCPC) <> 'B')
+                       )
+                  )
                 )
               )
             ORDER BY scr.CR_DATALIB DESC, scr.CR_NUM DESC`,
