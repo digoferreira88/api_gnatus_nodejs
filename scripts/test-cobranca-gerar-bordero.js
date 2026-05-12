@@ -27,17 +27,21 @@ const bodyValido = {
 };
 
 const tests = [
+  // Testes 01 e 02: o AccessControl do AppServer Protheus bloqueia ANTES
+  // do metodo AdvPL ser chamado, entao o body vem como JSON generico do
+  // framework ({"message":"The request requires authentication..."}). So
+  // checamos o status 401 — codigo_erro customizado nao se aplica aqui.
   {
     nome: '01) Sem Authorization',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bodyValido),
-    esperaStatus: 401, esperaCodigo: 'NAO_AUTENTICADO'
+    esperaStatus: 401
   },
   {
     nome: '02) Basic Auth errado',
     headers: { 'Content-Type': 'application/json', Authorization: authInvalido },
     body: JSON.stringify(bodyValido),
-    esperaStatus: 401, esperaCodigo: 'NAO_AUTENTICADO'
+    esperaStatus: 401
   },
   {
     nome: '03) Body vazio',
