@@ -62,3 +62,10 @@ COMMENT ON TABLE tab_estoque_snapshot_mensal IS
     'Cache mensal de saldo + saidas por produto e armazem. Populado por cron diario.';
 COMMENT ON TABLE tab_estoque_parametros IS
     'Parametros de calculo de qualidade de estoque (lead time, nivel de servico, janela). NULL em tipo_produto = padrao global.';
+
+-- Grants pro usuario do API (role "intranet"). Idempotente — pode rodar
+-- multiplas vezes sem efeito colateral.
+GRANT SELECT, INSERT, UPDATE, DELETE ON tab_estoque_snapshot_mensal TO intranet;
+GRANT SELECT, INSERT, UPDATE, DELETE ON tab_estoque_parametros      TO intranet;
+GRANT USAGE, SELECT ON SEQUENCE tab_estoque_snapshot_mensal_id_seq TO intranet;
+GRANT USAGE, SELECT ON SEQUENCE tab_estoque_parametros_id_seq      TO intranet;
