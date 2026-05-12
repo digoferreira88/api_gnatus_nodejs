@@ -234,6 +234,10 @@ async function registrarEnvio(Pg, titulo, tipo, info) {
 // nao competir conexao Protheus/PG, e antes do horario comercial.
 const CRON_CONTRATOS = '30 8 * * *';  // 08:30 todo dia
 
+// Snapshot de estoque -> tab_estoque_snapshot_mensal (refaz mes corrente).
+// Madrugada pra nao concorrer com cobranca/contratos.
+const CRON_ESTOQUE_SNAPSHOT = '0 3 * * *';  // 03:00 todo dia
+
 function start(app) {
   if (jobs.cobranca) jobs.cobranca.cancel();
   jobs.cobranca = schedule.scheduleJob(CRON_DIARIO, async () => {
@@ -259,6 +263,20 @@ function start(app) {
     }
   });
   console.log(`[scheduler] contratos agendado: cron "${CRON_CONTRATOS}"`);
+
+  // Estoque - snapshot mensal (refaz mes corrente)
+  if (jobs.estoqueSnapshot) jobs.estoqueSnapshot.cancel();
+  jobs.estoqueSnapshot = schedule.scheduleJob(CRON_ESTOQUE_SNAPSHOT, async () => {
+    console.log('[scheduler] estoque-snapshot iniciado:', new Date().toISOString());
+    try {
+      const EstoqueSnapshot = require('./estoqueSnapshot');
+      const stats = await EstoqueSnapshot.atualizar(app, { meses: 1 });
+      console.log('[scheduler] estoque-snapshot concluido:', stats);
+    } catch (err) {
+      console.error('[scheduler] erro no estoque-snapshot:', err.message);
+    }
+  });
+  console.log(`[scheduler] estoque-snapshot agendado: cron "${CRON_ESTOQUE_SNAPSHOT}"`);
 }
 
 function stop() {
