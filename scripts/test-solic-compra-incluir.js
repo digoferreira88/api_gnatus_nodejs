@@ -56,35 +56,53 @@ const tests = [
     validar: (s) => ({ ok: s === 401, msg: `HTTP esperado 401, recebido ${s}` })
   },
   // Validacoes de campo (pre-AdvPL) — esperamos 400 com codigo_erro
+  // Validacoes de campo — Develsoft padronizou em INCONSISTENCIAS[] em vez
+  // de codigo_erro no root (mais consistente com o formato MIT072 — TODO erro
+  // vai pro mesmo array, validacao ou item).
   {
     nome: '03) Body vazio',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: '',
-    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
+    validar: (s, j) => ({
+      ok: s === 400 && j?.INCONSISTENCIAS?.[0]?.codigo_erro === 'BODY_INVALIDO',
+      msg: `400 + INCONSISTENCIAS[0].codigo_erro=BODY_INVALIDO, veio ${s} ${j?.INCONSISTENCIAS?.[0]?.codigo_erro || '(vazio)'}`
+    })
   },
   {
     nome: '04) JSON invalido',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: '{filial:"01",sem_aspas}',
-    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
+    validar: (s, j) => ({
+      ok: s === 400 && j?.INCONSISTENCIAS?.[0]?.codigo_erro === 'JSON_INVALIDO',
+      msg: `400 + INCONSISTENCIAS[0].codigo_erro=JSON_INVALIDO, veio ${s} ${j?.INCONSISTENCIAS?.[0]?.codigo_erro || '(vazio)'}`
+    })
   },
   {
     nome: '05) Sem filial',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: JSON.stringify({ solicitante: 'INTRANET', itens: [itemMin(produtoReal, 1)] }),
-    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
+    validar: (s, j) => ({
+      ok: s === 400 && j?.INCONSISTENCIAS?.[0]?.codigo_erro === 'FILIAL_OBRIGATORIA',
+      msg: `400 + INCONSISTENCIAS[0].codigo_erro=FILIAL_OBRIGATORIA, veio ${s} ${j?.INCONSISTENCIAS?.[0]?.codigo_erro || '(vazio)'}`
+    })
   },
   {
     nome: '06) Sem solicitante',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: JSON.stringify({ filial: '01', itens: [itemMin(produtoReal, 1)] }),
-    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
+    validar: (s, j) => ({
+      ok: s === 400 && j?.INCONSISTENCIAS?.[0]?.codigo_erro === 'SOLICITANTE_OBRIGATORIO',
+      msg: `400 + INCONSISTENCIAS[0].codigo_erro=SOLICITANTE_OBRIGATORIO, veio ${s} ${j?.INCONSISTENCIAS?.[0]?.codigo_erro || '(vazio)'}`
+    })
   },
   {
     nome: '07) itens array vazio',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: JSON.stringify({ filial: '01', solicitante: 'INTRANET', itens: [] }),
-    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
+    validar: (s, j) => ({
+      ok: s === 400 && j?.INCONSISTENCIAS?.[0]?.codigo_erro === 'SEM_ITENS',
+      msg: `400 + INCONSISTENCIAS[0].codigo_erro=SEM_ITENS, veio ${s} ${j?.INCONSISTENCIAS?.[0]?.codigo_erro || '(vazio)'}`
+    })
   },
   // Erros de item — esperamos 200 + INCONSISTENCIAS preenchido
   {
@@ -107,8 +125,8 @@ const tests = [
       itens: [{ produto: produtoReal, quantidade: 0, local: '01', centro_custo: ccReal }]
     }),
     validar: (s, j) => ({
-      ok: (s === 400 && j?.codigo_erro) || (s === 200 && (j?.INCONSISTENCIAS?.length || 0) > 0),
-      msg: `400+codigo_erro OU 200+INCONSISTENCIA esperado, veio ${s} ${j?.codigo_erro || `INC=${j?.INCONSISTENCIAS?.length}`}`
+      ok: s === 200 && j?.INCONSISTENCIAS?.[0]?.codigo_erro === 'QUANTIDADE_INVALIDA' && (j?.SC_GERADAS?.length || 0) === 0,
+      msg: `200 + INCONSISTENCIAS[0].codigo_erro=QUANTIDADE_INVALIDA + SC_GERADAS=[], veio ${s} ${j?.INCONSISTENCIAS?.[0]?.codigo_erro || `INC=${j?.INCONSISTENCIAS?.length}`}`
     })
   },
   // Sucesso — tem que criar SC real (precisa de produto e CC reais)
