@@ -24,16 +24,17 @@ module.exports = (app) => ({
     }
 
     try {
+      // CTT010 pode ter o mesmo CTT_CUSTO em multiplas filiais (chave composta
+      // CTT_FILIAL+CTT_CUSTO). DISTINCT colapsa em 1 linha por (codigo, descricao).
       const rows = await Protheus.connectAndQuery(`
-        SELECT TOP 200
+        SELECT DISTINCT TOP 200
                RTRIM(CTT_CUSTO)   codigo,
-               RTRIM(CTT_DESC01)  descricao,
-               RTRIM(CTT_BLOQ)    bloqueado
+               RTRIM(CTT_DESC01)  descricao
           FROM CTT010 WITH (NOLOCK)
          WHERE D_E_L_E_T_ <> '*'
            AND (CTT_BLOQ IS NULL OR RTRIM(CTT_BLOQ) <> '1')
            ${where}
-         ORDER BY CTT_CUSTO`,
+         ORDER BY RTRIM(CTT_CUSTO)`,
         params
       );
       return res.json({
