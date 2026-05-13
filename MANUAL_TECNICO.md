@@ -146,6 +146,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - UNIQUE em `(id_operadora, numero_telefone)` garante idempotência da importação
 - CRUD completo + filtros (operadora/status/depto/busca/vencimento) + KPIs (total/ativas/suspensas/canceladas/estoque/vencendo)
 - Drawer com histórico completo de mudanças
+- **Custo mensal** ([migration 37](database/postgres/37-telefonia-valor.sql)): coluna `valor_mensal numeric(10,2)` em `tab_telefonia_linha`. KPI verde "Custo mensal (ativas)" + coluna "Valor/mês" na tabela + totalizador do filtro atual no header. Soma agrupada por operadora aparece na linha de resumo
 
 #### Auditoria (logs centralizados) · `/tecnologia/auditoria` · perm 1032
 - **Página**: [Auditoria.tsx](../frontend_intranet_react/src/pages/Auditoria/Auditoria.tsx)
@@ -165,10 +166,14 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 #### Ranking de Vendedores · `/vendas/ranking` · perm 2001
 - **Página**: [VendasRanking.tsx](../frontend_intranet_react/src/pages/VendasRanking/VendasRanking.tsx)
 - Pódio top 3 (medalhas) + lista. Avatares em `public/avatars/vendedores/{cod}.png` com fallback.
+- **Filtro por BU** (dropdown populado com `SC5.C5_ZTIPO` → `SX5.X5_DESCRI` X5_TABELA='Z1' do período). O dropdown lista TODAS as BUs do período mesmo com filtro ativo (response devolve `bus[]` à parte do `ranking` filtrado)
+- **Input de Cód. Vendedor** alternativo ao dropdown (compartilha mesmo state — digitar é mais rápido que rolar lista)
+- **Export XLSX** (3 abas: Resumo / Ranking / Por BU) — mesma pegada visual dos outros dashboards
 
 #### Relatório de Faturamento · `/vendas/faturamento` · perm 2002
 - **Página**: [FaturamentoRelatorio.tsx](../frontend_intranet_react/src/pages/FaturamentoRelatorio/FaturamentoRelatorio.tsx)
 - 73 colunas via `exceljs`. Preview paginado + export `.xlsx`.
+- **Filtros adicionados (2026-05)**: BU (dropdown populado pelo response, ordenado por faturamento) + Cód. Vendedor (input alternativo ao dropdown). Backend aceita `?bu=` e `?vendedor=` (filtra `SC5.C5_ZTIPO` e `SC5.C5_VEND1/2/3`)
 
 #### Vendas Analítico · `/vendas/analitico` · perm 2003
 - **Página**: [VendasAnalitico.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/VendasAnalitico.tsx)
@@ -190,11 +195,12 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 #### Minhas Aprovações · `/compras/aprovacoes` · perm 13001
 - **Página**: [Aprovacoes.tsx](../frontend_intranet_react/src/pages/Compras/Aprovacoes.tsx)
-- Pega documentos pendentes pra aprovador logado (cruza `req.user.codigoProtheus` com `SC1_USERAPRO`/`C7_USERAPRO`)
+- Pega documentos pendentes pra aprovador logado consultando SCR010 (fila de aprovação Protheus) cruzado com SAL010 (cadastro de aprovadores por grupo)
 - Aprova/rejeita via API REST custom Gnatus do Protheus (`POST http://protheus.gnatus.com.br:8081/rest/AprovaCompras/aprovar` — Basic Auth, **não** TOTVS REST padrão)
 - Pedido também traz observações (C7_OBS/OBSM/OBSFOR) e anexos via TOTVS Documents (base64 `EncodeDocument`)
 - Auditoria registra cada APPROVE/REJECT com severidade CRITICO (módulo `Compras/Aprovacoes`)
 - ⚠️ Variáveis na rotina de auditoria: usar `tipoIntranet` e `justificativa` (não `tipo`/`observacao` — bug corrigido em 2026-05)
+- **Fix de alçada (2026-05-13)**: query do `pendentes.js` listava SCs pra qualquer membro do grupo SAL, mesmo quando a SCR tinha aprovador NOMEADO em `CR_USER`. O Protheus rejeitava com 403 ("não faz parte da alçada"). Caso real: SC 175950 tinha `CR_USER='000256','000070'` mas a Intranet listava pra Demer (membro do grupo PCP). Regra atualizada: **só usar alçada por grupo se `CR_USER` estiver vazio**. Script de diagnóstico em [scripts/debug-sc-alcada.js](scripts/debug-sc-alcada.js) (`node scripts/debug-sc-alcada.js <numero> <usr_codigo>`)
 
 #### MCL — Compras Mínimas Lucrativas · `/compras/mcl` · perm 4003
 - **Páginas**: [MCL.tsx](../frontend_intranet_react/src/pages/MCL/MCL.tsx) (dashboard) + [Apresentacao.tsx](../frontend_intranet_react/src/pages/MCL/Apresentacao.tsx) (slideshow pra diretoria)
@@ -264,7 +270,8 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - `tab_cobranca_comentario` — notas internas (não vão pro cliente)
 - `tab_cobranca_status_cliente` — status comercial atual
 - `tab_cobranca_atribuicao` — carteira manual por cliente (NORMAL/JURIDICO/NEGOCIACAO/OUTROS) [migration 10]
-- `tab_cobranca_bu_equipe` — mapeamento BU → Equipe (substitui aba "apoio" da planilha) [migration 11]
+- `tab_cobranca_bu_equipe` — mapeamento BU → Equipe (substitui aba "apoio" da planilha) [migration 11]. Coluna `perfil` adicionada em [migration 40](database/postgres/40-cobranca-meta-perfil.sql) classifica equipes em **Corporativo / Atacado / Assistência Técnica / Varejo** pra cruzar com metas
+- `tab_cobranca_meta_perfil` — metas de inadimplência por perfil (faixa min/max + flag tolerância zero) [migration 40]
 - `tab_cobranca_whatsapp_*` — config + envios + log do disparo de WhatsApp ([migration 25](database/postgres/25-cobranca-whatsapp.sql))
 
 **Status válidos** ([cobranca.status.js](resources/cobranca/cobranca.status.js)):
@@ -309,13 +316,14 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Fila do analista logado. Scope `pendentes` (promessas em aberto) ou `todas`
 
 #### Envio WhatsApp (curadoria) · `/cobranca/envio-whatsapp` · perm 9004
-- **Página**: [WhatsAppEnvio.tsx](../frontend_intranet_react/src/pages/Cobranca/WhatsAppEnvio.tsx)
-- Permite ao operador **curar** o disparo: mostra os candidatos do dia (D-1, D0, D+3) com checkbox por título, antes de enviar
+- **Página**: [CobrancaWhatsApp.tsx](../frontend_intranet_react/src/pages/CobrancaWhatsApp/CobrancaWhatsApp.tsx)
+- Permite ao operador **curar** o disparo: mostra os candidatos do dia (D-1, D0, D+1..D+3) com checkbox por título, antes de enviar
 - Filtros: forma de pagamento (mostra só boletos / cartão / etc), busca, "ja enviado hoje"
 - "Marcar todos" respeita o filtro de forma de pagamento
 - Backend: [GET /cobranca/whatsapp-preview](resources/cobranca/cobranca.whatsapp-preview.js) e [POST /cobranca/whatsapp-enviar](resources/cobranca/cobranca.whatsapp-enviar.js)
 - Mostra "última cobrança em" + status do envio anterior
 - Idempotência diária: bloqueia reenvio do mesmo título no mesmo dia
+- **Regra D+3 corrigida (2026-05-13)**: antes a janela era "atraso ≥ 3 dias" (`mode: 'desde'`), pegando até 1000+ dias de atraso. Agora é **janela 1 a 3 dias** (`mode: 'janela'`, `delta=-3, deltaMax=-1` em [services/scheduler.js:TIPOS](services/scheduler.js)). O label da aba foi atualizado pra "Atraso 1 a 3 dias". Cron das 09:00 e botão "Disparar agora" respeitam a nova janela. Histórico de envios mantém `tipo='D+3'` por idempotência.
 
 #### Faturamento × Inadimplência (mensal) · perm 9001
 - **Página**: [FaturamentoVsInadimplencia.tsx](../frontend_intranet_react/src/pages/Cobranca/FaturamentoVsInadimplencia.tsx)
@@ -328,6 +336,29 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Cruza Faturamento × Inadimplência **agregado por equipe** (1 linha por equipe)
 - **Filtro mês/ano** (`mesIni`/`mesFim` no formato `YYYYMM`) com retrocompat pra `anoMin`/`anoMax`
 - Equipe deriva da BU via `tab_cobranca_bu_equipe`
+- **Cada equipe tem `perfil`** (Corporativo / Atacado / AT / Varejo) e o response inclui `meta_min_pct`, `meta_max_pct`, `tolerancia_zero` e `status` (`dentro` / `abaixo` / `acima` / `tolerancia_violada` / `sem_meta`). Resposta também tem `resumoPerfis[]` agregado pros 4 cards do topo no frontend
+- **UI** ([DashboardCobranca.tsx aba Equipes](../frontend_intranet_react/src/pages/Cobranca/DashboardCobranca.tsx)): 4 cards-resumo coloridos por status + 3 colunas novas na tabela (Perfil / Meta / Status badge)
+
+#### Metas de Inadimplência por Perfil · perm 9001
+- **Endpoints**: [GET /cobranca/meta-perfil](resources/cobranca/cobranca.meta-perfil.js) e [PUT /cobranca/meta-perfil/:perfil](resources/cobranca/cobranca.meta-perfil-upsert.js)
+- 4 perfis seed (configurável):
+
+| Perfil | Meta | Tolerância zero |
+|---|---|---|
+| Corporativo | 0% | sim (qualquer % > 0 vira "tolerancia_violada") |
+| Atacado | até 2% | não |
+| Assistência Técnica | até 2% | não |
+| Varejo (longo prazo) | 6% a 8% | não — fora da faixa = "abaixo" ou "acima" |
+
+- **Mapeamento equipe → perfil** definido em `tab_cobranca_bu_equipe.perfil` (seed na migration 40)
+
+#### Borderô (integração com Protheus) — em construção
+- **Endpoint Protheus** (custom Develsoft): `POST http://protheus.gnatus.com.br:8081/rest/Cobranca/gerar-bordero`
+- Auth Basic (`admin:Gn@tu5` — mesmas credenciais do AprovaCompras)
+- **Spec do contrato**: validações 400/413, payload `{filial, banco, operador, observacao, titulos[]}`, response `{ok, qtd_processados, qtd_rejeitados, lote, detalhes:[{prefixo, numero, parcela, cliente, loja, status, codigo_erro?, mensagem?}]}`
+- **Script de teste**: [scripts/test-cobranca-gerar-bordero.js](scripts/test-cobranca-gerar-bordero.js) — 10 cenários (auth/validações/payload válido). Roda com `node scripts/test-cobranca-gerar-bordero.js`
+- **Status atual** (2026-05-13): stub validado 10/10. `ProcBord` real implementado mas com pequeno ajuste pendente (echo de `prefixo/numero/parcela/cliente/loja` em `detalhes[]` mesmo nos erros, pra Intranet conseguir casar a rejeição com o item enviado)
+- **Integração com a Intranet**: pendente. Plano: service `services/protheus-cobranca.js` + endpoint `POST /cobranca/bordero-enviar` + botão "Enviar ao Protheus" na tela de Envio de Boleto
 
 #### Recuperados (tab no Dashboard) · perm 9001
 - **Endpoint**: [GET /cobranca/recuperados](resources/cobranca/cobranca.recuperados.js)
@@ -452,6 +483,86 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - **Migrations relacionadas**:
   - [33-pt-novas-colunas.sql](database/postgres/33-pt-novas-colunas.sql) — adiciona `atualizado_em_planilha` (date) e `novo_vencimento_obs` (varchar 200)
   - [34-pt-pedido-venda-amplo.sql](database/postgres/34-pt-pedido-venda-amplo.sql) — amplia `pedido_venda` pra varchar(200) (fiscal usa pra anotação livre tipo "RETORNO VIRTUAL, BAIXA COMO PERDA")
+
+#### Estoque · Dashboards (Valor / Qualidade / Tendência) · perm 11004
+3 dashboards de gestão analítica de estoque, todos sob a mesma permissão `11004`. Compartilham infraestrutura e drill-down.
+
+**Pasta de páginas**: [src/pages/Controladoria/EstoqueDashboards/](../frontend_intranet_react/src/pages/Controladoria/EstoqueDashboards/)
+- `EstoqueValor.tsx` — `/controladoria/estoque-valor`
+- `EstoqueQualidade.tsx` — `/controladoria/estoque-qualidade`
+- `EstoqueTendencia.tsx` — `/controladoria/estoque-tendencia`
+- `components/` — `KpiCard`, `ChartCard`, `FiltrosEstoque`, `DrillDownDrawer` (compartilhados)
+
+**Endpoints backend** ([resources/Controladoria/](resources/Controladoria/)):
+- `GET /controladoria/estoque-valor` — KPIs + serie 12m + ABC + sem giro
+- `GET /controladoria/estoque-qualidade` — giro/segurança/excesso/ruptura por produto
+- `GET /controladoria/estoque-tendencia` — pedidos colocados × consumo + projeção
+- `GET /controladoria/estoque-produto/:cod` — drill-down universal (ficha + saldo + histórico + últimas compras/vendas)
+- `GET /controladoria/estoque-dominios` — listas pra filtros (tipos, armazéns NNR010, ano-mês disponíveis no snapshot)
+- `GET/PUT /controladoria/estoque-parametros[/:tipo]` — CRUD lead time / nível de serviço / janela
+- `POST /controladoria/estoque-snapshot-rodar?meses=N` — bootstrap manual do cache
+
+**Cache PG** ([migration 38](database/postgres/38-estoque-dashboards.sql)):
+- `tab_estoque_snapshot_mensal` — 1 row por (ano_mes, cod_produto, armazem) com saldo + saídas (vendas SD2 + consumo SD3) do mês
+- `tab_estoque_parametros` — lead time / z (nível de serviço) / janela de demanda. NULL em `tipo_produto` = padrão global; sobrescreve por tipo
+
+**Cache de metadados** ([migration 39](database/postgres/39-estoque-produto-meta.sql)):
+- `tab_estoque_produto_meta` — 1 row por produto com `lead_time_dias` (B1_PE), descrição, tipo, grupo, unidade. Evita bater Protheus por produto em toda chamada do dashboard. **Atualizado pelo cron de snapshot.**
+
+**Cron diário** ([services/scheduler.js:CRON_ESTOQUE_SNAPSHOT](services/scheduler.js)) — `0 3 * * *`:
+- Roda `services/estoqueSnapshot.js` com `meses: 1` (refaz mês corrente)
+- Bootstrap inicial precisa ser manual: `POST /controladoria/estoque-snapshot-rodar?meses=12` ou `node scripts/rodar-snapshot-estoque.js 12` (60-90s pra ~4k produtos)
+
+**Service de cálculo** ([services/estoqueCalculo.js](services/estoqueCalculo.js)) — helpers puros:
+- `classificarABC(itens, getValor)` — corte 80/15/5
+- `calcularGiroAnual(saidas12m, estoqueMedio)` + `calcularCoberturaDias(giro)`
+- `estatisticasDemanda(saidasMensais)` — média + desvio padrão populacional
+- `calcularSegurancaEIdeal({demandaMedia, desvioPadrao, leadTimeDias, z})`
+- `classificarCriticidade({qtdAtual, estoqueSeguranca, estoqueIdeal})` → `ruptura | risco | ideal | excesso`
+- `classificarTendencia(consumoMedio, pedidosColocados)` → `aumento | reducao | neutro` (corte ratio 1.1/0.9)
+- `projecaoLinear(serie, periodosFuturos)` — regressão linear simples
+- `ultimosAnoMes(N)`, `anoMesCorrente()`, `anoMesAnterior(am)`
+
+**Módulo VALOR** — KPIs financeiros + giro:
+- KPIs: valor total, qtd itens, giro anual (12m rolling), cobertura em dias, Δ vs mês ant.
+- ComposedChart 12m (barras valor + linha giro mensal)
+- Curva ABC (line chart % acumulado) + cards por classe
+- BarChart top 10 produtos por valor
+- Tabelas: top sem giro (3/6/12 meses configurável) + classe A com giro abaixo da mediana
+- Drawer drill-down ao clicar produto
+- Export XLSX 5 abas + PDF
+
+**Módulo QUALIDADE** — equilíbrio do estoque:
+- Fórmulas:
+  - `consumo_lead_time = demanda_média × (lead_time / 30)`
+  - `estoque_segurança = z × desvio_padrão × √(lead_time / 30)` (default z=1.65 ≈ 95%)
+  - `estoque_ideal = consumo_lead_time + estoque_segurança`
+  - Critérios: `qtd_atual=0` → ruptura · `< segurança` → risco · `> ideal × 1.10` → excesso · senão ideal
+- KPIs clicáveis (filtram a tabela): Total / Ruptura / Risco / Ideal / R$ em excesso
+- Heatmap tipo × criticidade (cores proporcionais), célula clicável
+- BarChart R$ excesso por tipo
+- Tabela com badge de criticidade
+- Modal de **Parâmetros** pra editar lead time / z / janela por tipo ou global (`tab_estoque_parametros`)
+- Lead time real vem de `B1_PE` quando >0; senão usa parâmetro do tipo, fallback global
+
+**Módulo TENDÊNCIA** — projeção:
+- Pedidos colocados = SC7 (compras emitidas) + SC2 (ordens de produção)
+- Recebimentos previstos = SC7 com `C7_DATPRF` no mês (`C7_QUANT - C7_QUJE > 0`)
+- Consumo = saídas do snapshot (SD2 vendas + SD3 RE0/RE1/RE5)
+- Banner colorido com tendência: AUMENTO (laranja) · REDUÇÃO (verde) · NEUTRO (cinza)
+- LineChart 3 séries (pedidos / consumo / recebimentos) com `ReferenceLine` "hoje" + projeção 3m tracejada
+- AreaChart de saldo projetado 3 meses (saldo_atual + Σ delta_proj)
+- Tabela "risco overstock" — produtos com pedidos pendentes > 6 meses de consumo
+- Drawer drill-down
+
+**Decisões de regra** (locked com user em 2026-05-12):
+- Filtrar por **B1_TIPO** (PA/MP/EM/etc) e separar por armazém (NNR010)
+- Lead time: **B1_PE** (Protheus) com fallback no parâmetro
+- z padrão **1.65** (95%), janela demanda **6 meses**
+- "Sem giro" configurável: 3/6/12 meses
+- Consumo Tendência inclui MP (SD3) + vendas (SD2)
+- Pedidos Tendência inclui SC2 (produção) + SC7 (compras)
+- 1 perm única **11004** pros 3 dashboards
 
 ---
 
@@ -640,12 +751,13 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 ## 4½. Crons (scheduler)
 
-[services/scheduler.js](services/scheduler.js) usa `node-schedule` e roda 2 jobs:
+[services/scheduler.js](services/scheduler.js) usa `node-schedule` e roda 3 jobs:
 
 | Cron | Horário | Job | Descrição |
 |---|---|---|---|
-| `0 9 * * *` | 09:00 todo dia | `cobranca-whatsapp` | Dispara WhatsApp pra clientes em D-1, D0, D+3 (via SURI/Fluig). Verifica flag `automacao_ativa` em `tab_cobranca_whatsapp_config` |
+| `0 9 * * *` | 09:00 todo dia | `cobranca-whatsapp` | Dispara WhatsApp pra clientes em D-1, D0 e **D+1..D+3** (janela 1 a 3 dias de atraso). Verifica flag `automacao_ativa` em `tab_cobranca_whatsapp_config` |
 | `30 8 * * *` | 08:30 todo dia | `contratos` | Cron de alertas D-90/D-60/D-30 do vencimento de contratos (e-mail pro responsável). Idempotente via UNIQUE em `tab_contrato_alerta` |
+| `0 3 * * *` | 03:00 todo dia | `estoque-snapshot` | Refaz o snapshot do mês corrente em `tab_estoque_snapshot_mensal` + atualiza `tab_estoque_produto_meta` (lead time / unidade). Bootstrap inicial (12 meses) precisa ser manual: `node scripts/rodar-snapshot-estoque.js 12` |
 
 Inicializado no `index.js` via `app.services.Scheduler.start(app)`.
 
@@ -751,6 +863,20 @@ sudo tail -f /var/log/nginx/error.log
 sudo -u postgres psql -d intranet -c "\dt"
 ```
 
+### Scripts úteis ([scripts/](scripts/))
+```bash
+# Snapshot de estoque (bootstrap manual dos N meses) — depois eh automatico no cron 03:00
+node scripts/rodar-snapshot-estoque.js 12
+
+# Diagnostico de alcada de SC/PC: por que apareceu pra usuario X?
+node scripts/debug-sc-alcada.js <numero> <usr_codigo>
+# ex: node scripts/debug-sc-alcada.js 175950 000346
+
+# Test bordero Protheus (10 cenarios — auth/validacoes/payload valido)
+node scripts/test-cobranca-gerar-bordero.js
+# Roda sem args usa http://protheus.gnatus.com.br:8081/rest/Cobranca/gerar-bordero
+```
+
 ---
 
 ## 7. Convenções de código
@@ -796,6 +922,10 @@ Resumo dos principais:
 - **Aprovações: `tipoIntranet` e `justificativa`** nos calls de auditoria (não `tipo`/`observacao` — bug histórico já fixado)
 - **Importer XLSX**: planilha do fiscal pode ter Date solta em coluna A — `trim()` defensivo deve retornar null pra Date (não `String(Date)` que vira string ICU enorme estourando varchar curto)
 - **PG `psql -U intranet`** exige senha — passar `PGPASSWORD` do `.env` antes (peer auth do user `postgres` vs senha do `intranet`)
+- **Aprovações de SC: alçada por grupo só vale se `CR_USER` estiver vazio** (2026-05-13). Se a SCR tem aprovador nomeado, só ele aprova — qualquer outro membro do grupo recebe 403 do Protheus ("não faz parte da alçada")
+- **WhatsApp D+3 = janela 1 a 3 dias**, não "≥ 3 dias" (corrigido em 2026-05-12). `mode: 'janela'` no `services/scheduler.js TIPOS` com `delta=-3, deltaMax=-1`. Antes pegava títulos de 1000+ dias atrás
+- **Estoque snapshot precisa GRANT explícito**: as tabelas criadas como `postgres` não dão permissão automática pro role `intranet`. Sempre rodar a migration via psql que inclui `GRANT SELECT/INSERT/UPDATE/DELETE ON ... TO intranet` (ver migrations 38/39/40 como exemplo). Sem isso o backend dá `permission denied for table`
+- **Cobrança Borderô (Develsoft)**: validações 400/413 do stub funcionam mas o 401 vem com body genérico do AppServer (`{"message":"The request requires authentication..."}`) porque o `AccessControl` bloqueia ANTES da função AdvPL rodar. O test script aceita 401 só pelo status code, sem checar `codigo_erro`
 
 ---
 
