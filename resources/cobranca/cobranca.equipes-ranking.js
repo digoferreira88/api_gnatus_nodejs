@@ -67,12 +67,23 @@ module.exports = (app) => ({
     const cfopList  = CFOPS_VENDA.map(c => `'${c}'`).join(',');
 
     try {
-      // Mapeamento BU label -> equipe (do PG)
-      const buEqRows = await Pg.connectAndQuery(
-        `SELECT bu_codigo, equipe FROM tab_cobranca_bu_equipe`, {}
-      );
+      // Mapeamento BU label -> { equipe, perfil } (do PG) + metas por perfil
+      const [buEqRows, perfisRows] = await Promise.all([
+        Pg.connectAndQuery(`SELECT bu_codigo, equipe, perfil FROM tab_cobranca_bu_equipe`, {}),
+        Pg.connectAndQuery(`SELECT perfil, meta_min_pct, meta_max_pct, tolerancia_zero FROM tab_cobranca_meta_perfil`, {})
+      ]);
       const mapBuEquipe = new Map();
-      buEqRows.forEach(r => mapBuEquipe.set(trim(r.bu_codigo), trim(r.equipe)));
+      const mapEquipePerfil = new Map();
+      buEqRows.forEach(r => {
+        mapBuEquipe.set(trim(r.bu_codigo), trim(r.equipe));
+        if (r.perfil) mapEquipePerfil.set(trim(r.equipe), trim(r.perfil));
+      });
+      const mapMetaPerfil = new Map();
+      perfisRows.forEach(p => mapMetaPerfil.set(trim(p.perfil), {
+        meta_min_pct: toN(p.meta_min_pct),
+        meta_max_pct: toN(p.meta_max_pct),
+        tolerancia_zero: !!p.tolerancia_zero
+      }));
 
       // 1) Faturamento por BU (NF saida)
       const fatRows = await Protheus.connectAndQuery(`
@@ -144,15 +155,74 @@ module.exports = (app) => ({
       const totalFat  = [...porEquipe.values()].reduce((s, e) => s + e.faturamento, 0);
       const totalInad = [...porEquipe.values()].reduce((s, e) => s + e.inadimplencia, 0);
 
-      const ranking = [...porEquipe.values()].map(e => ({
-        equipe: e.equipe,
-        faturamento: Number(e.faturamento.toFixed(2)),
-        inadimplencia: Number(e.inadimplencia.toFixed(2)),
-        pctInadimplencia: e.faturamento > 0 ? Number(((e.inadimplencia / e.faturamento) * 100).toFixed(2)) : 0,
-        pctFaturamentoTotal: totalFat > 0 ? Number(((e.faturamento / totalFat) * 100).toFixed(2)) : 0,
-        pctInadimplenciaTotal: totalInad > 0 ? Number(((e.inadimplencia / totalInad) * 100).toFixed(2)) : 0,
-        qtdTitulosVencidos: e.qtdTitulosVencidos
-      })).sort((a, b) => b.faturamento - a.faturamento);
+      const ranking = [...porEquipe.values()].map(e => {
+        const pct = e.faturamento > 0 ? Number(((e.inadimplencia / e.faturamento) * 100).toFixed(2)) : 0;
+        const perfil = mapEquipePerfil.get(e.equipe) || null;
+        const meta = perfil ? mapMetaPerfil.get(perfil) : null;
+        // Status: dentro, abaixo, acima, tolerancia_violada (corp)
+        let status = 'sem_meta';
+        if (meta) {
+          if (meta.tolerancia_zero) {
+            status = pct > 0 ? 'tolerancia_violada' : 'dentro';
+          } else if (pct < meta.meta_min_pct) {
+            status = 'abaixo';
+          } else if (pct > meta.meta_max_pct) {
+            status = 'acima';
+          } else {
+            status = 'dentro';
+          }
+        }
+        return {
+          equipe: e.equipe,
+          perfil,
+          meta_min_pct: meta?.meta_min_pct ?? null,
+          meta_max_pct: meta?.meta_max_pct ?? null,
+          tolerancia_zero: meta?.tolerancia_zero ?? false,
+          status,
+          faturamento: Number(e.faturamento.toFixed(2)),
+          inadimplencia: Number(e.inadimplencia.toFixed(2)),
+          pctInadimplencia: pct,
+          pctFaturamentoTotal: totalFat > 0 ? Number(((e.faturamento / totalFat) * 100).toFixed(2)) : 0,
+          pctInadimplenciaTotal: totalInad > 0 ? Number(((e.inadimplencia / totalInad) * 100).toFixed(2)) : 0,
+          qtdTitulosVencidos: e.qtdTitulosVencidos
+        };
+      }).sort((a, b) => b.faturamento - a.faturamento);
+
+      // Agregacao por PERFIL (resumo das metas)
+      const porPerfil = new Map();
+      ranking.forEach(r => {
+        const k = r.perfil || 'Sem perfil';
+        if (!porPerfil.has(k)) porPerfil.set(k, {
+          perfil: k, faturamento: 0, inadimplencia: 0,
+          meta_min_pct: r.meta_min_pct, meta_max_pct: r.meta_max_pct, tolerancia_zero: r.tolerancia_zero,
+          equipes: 0
+        });
+        const p = porPerfil.get(k);
+        p.faturamento += r.faturamento;
+        p.inadimplencia += r.inadimplencia;
+        p.equipes += 1;
+      });
+      const resumoPerfis = [...porPerfil.values()].map(p => {
+        const pct = p.faturamento > 0 ? Number(((p.inadimplencia / p.faturamento) * 100).toFixed(2)) : 0;
+        let status = 'sem_meta';
+        if (p.meta_min_pct != null) {
+          if (p.tolerancia_zero) status = pct > 0 ? 'tolerancia_violada' : 'dentro';
+          else if (pct < p.meta_min_pct) status = 'abaixo';
+          else if (pct > p.meta_max_pct) status = 'acima';
+          else status = 'dentro';
+        }
+        return {
+          perfil: p.perfil,
+          faturamento: Number(p.faturamento.toFixed(2)),
+          inadimplencia: Number(p.inadimplencia.toFixed(2)),
+          pctInadimplencia: pct,
+          meta_min_pct: p.meta_min_pct,
+          meta_max_pct: p.meta_max_pct,
+          tolerancia_zero: p.tolerancia_zero,
+          status,
+          qt_equipes: p.equipes
+        };
+      }).sort((a, b) => b.faturamento - a.faturamento);
 
       return res.json({
         periodo,
@@ -162,6 +232,7 @@ module.exports = (app) => ({
           pctInadimplencia: totalFat > 0 ? Number(((totalInad / totalFat) * 100).toFixed(2)) : 0,
           qtEquipes: ranking.length
         },
+        resumoPerfis,
         ranking,
         geradoEm: new Date().toISOString()
       });
