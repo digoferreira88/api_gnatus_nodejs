@@ -35,7 +35,7 @@ module.exports = (app) => ({
   middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
-    const { Pg } = app.services;
+    const { Pg, Protheus } = app.services;
     const user = req.user && req.user[0];
     const b = req.body || {};
 
@@ -78,13 +78,39 @@ module.exports = (app) => ({
     const operadorEmail = trim(user.EMAIL) || `id_${user.ID}`;
     const operadorNome  = trim(user.NOME)  || operadorEmail;
 
+    // Solicitante = USR_CODIGO do Protheus (login, 6 chars max no C1_USER do SC1).
+    // Antes mandavamos email (16+ chars) que estourava o tamanho do campo e o
+    // AdvPL crashava com HTTP 500 generico. Mesmo padrao do AprovaCompras:
+    // CODIGO_PROTHEUS (USR_ID) -> SYS_USR.USR_CODIGO.
+    const codProth = trim(user.CODIGO_PROTHEUS);
+    if (!codProth) {
+      return res.status(403).json({
+        message: 'Seu usuário não tem CÓDIGO PROTHEUS cadastrado. Solicite à TI antes de criar SC.'
+      });
+    }
+    let solicitanteProtheus = '';
+    try {
+      const r = await Protheus.connectAndQuery(
+        `SELECT TOP 1 RTRIM(USR_CODIGO) login FROM SYS_USR WHERE USR_ID = @cod`,
+        { cod: codProth }
+      );
+      solicitanteProtheus = trim(r[0]?.login);
+    } catch (e) {
+      console.error('sc-criar: erro ao consultar SYS_USR:', e.message);
+    }
+    if (!solicitanteProtheus) {
+      return res.status(400).json({
+        message: `Código Protheus ${codProth} não localizado em SYS_USR. Verifique cadastro na TI.`
+      });
+    }
+
     // Monta payload Protheus
     const payload = {
       filial: '01',
-      solicitante: operadorEmail,
+      solicitante: solicitanteProtheus,
       data_emissao: undefined,  // deixa o service preencher com hoje
       data_necessaria: dataNecessaria,
-      observacao: trim(b.observacao) || `SC via Intranet por ${operadorNome}`,
+      observacao: trim(b.observacao) || `SC via Intranet por ${operadorNome} (${operadorEmail})`,
       itens: b.itens.map(it => ({
         produto:      trim(it.produto),
         quantidade:   N(it.quantidade),
@@ -146,8 +172,8 @@ module.exports = (app) => ({
         acao: 'CRIAR_SC', severidade: r.status === 'SUCESSO' ? 'CRITICO' : 'ALERTA',
         req, entidade: 'sc', entidadeId: r.sc_numero || `log_${logId}`,
         descricao: r.status === 'SUCESSO'
-          ? `Criou SC ${r.sc_numero} no Protheus (${b.itens.length} item(ns), ${anexos.length} anexo(s), solicitante ${operadorEmail})`
-          : `Falha ao criar SC: ${r.mensagem || r.status} (${b.itens.length} item(ns) tentado)`,
+          ? `Criou SC ${r.sc_numero} no Protheus (${b.itens.length} item(ns), ${anexos.length} anexo(s), solicitante ${solicitanteProtheus}/${operadorEmail})`
+          : `Falha ao criar SC: ${r.mensagem || r.status} (${b.itens.length} item(ns) tentado, solicitante ${solicitanteProtheus})`,
         meta: {
           status: r.status,
           sc_numero: r.sc_numero,
