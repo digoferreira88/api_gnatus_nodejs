@@ -1,113 +1,132 @@
 // Script de validacao do endpoint REST SolicCompra/incluir (WSRESTFUL custom Develsoft)
 //
 // Roda 10 cenarios contra o endpoint e imprime PASS/FAIL pra cada um.
-// Uso: `node test-solic-compra-incluir.js [url] [user] [pass]`
-//      default: http://protheus.gnatus.com.br:8081/rest/SolicCompra/incluir
-//               admin:Gn@tu5
+// Uso: `node test-solic-compra-incluir.js [url] [user] [pass] [produtoReal] [ccReal]`
+//      default url:  http://protheus.gnatus.com.br:8081/rest/SolicCompra/incluir
+//              auth: admin:Gn@tu5
+//
+// IMPORTANTE: o cenario 10 (payload valido) PRECISA de codigo de produto
+// e centro de custo REAIS pra criar a SC com sucesso. Passe via argv:
+//   node test-solic-compra-incluir.js '' '' '' MEU_PRODUTO MEU_CC
 //
 // Pre-requisito: Node 18+ (usa fetch nativo).
+//
+// Formato do response (padrao MIT072 TOTVS):
+//   sucesso -> 200 { STATUS:{TOTAL,ATUALIZADOS,NAO_ATUALIZADOS,DURACAO}, INCONSISTENCIAS:[], SC_GERADAS:["099823"] }
+//   erro de validacao -> 400 { codigo_erro:"...", mensagem:"..." }
+//   erro item -> 200 { STATUS:{...,NAO_ATUALIZADOS:N}, INCONSISTENCIAS:[{linha,campo,mensagem}], SC_GERADAS:[] }
 
 const URL_DEFAULT = 'http://protheus.gnatus.com.br:8081/rest/SolicCompra/incluir';
 const url  = process.argv[2] || URL_DEFAULT;
 const user = process.argv[3] || 'admin';
 const pass = process.argv[4] || 'Gn@tu5';
+const produtoReal = process.argv[5] || 'PRODUTO_REAL_1';
+const ccReal      = process.argv[6] || 'CC_REAL';
 
 const authValido = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
 const authInvalido = 'Basic ' + Buffer.from('wrong:credentials').toString('base64');
 
-const itemValido = {
-  produto: 'TESTE-ITEM-001',
-  quantidade: 10,
-  local: '01',
-  centro_custo: 'CC_TESTE',
+const itemMin = (p, q) => ({
+  produto: p, quantidade: q, local: '01', centro_custo: ccReal,
   observacao: 'Item de teste'
-};
+});
 
 const bodyValido = {
   filial: '01',
   solicitante: 'INTRANET',
   data_emissao: '20260513',
   data_necessaria: '20260520',
-  observacao: 'Teste de validacao do endpoint SolicCompra',
-  itens: [itemValido]
+  observacao: 'Teste automatizado test-solic-compra-incluir',
+  itens: [itemMin(produtoReal, 1)]
 };
 
+// `validar` recebe (status, json, text) e devolve { ok: bool, msg?: string }
 const tests = [
-  // Testes 01 e 02 — AccessControl do AppServer Protheus bloqueia antes do
-  // metodo AdvPL rodar (igual no bordero), entao body do 401 vem generico.
-  // So validamos status code.
+  // Auth — 401 generico do AppServer (igual no bordero)
   {
     nome: '01) Sem Authorization',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bodyValido),
-    esperaStatus: 401
+    validar: (s) => ({ ok: s === 401, msg: `HTTP esperado 401, recebido ${s}` })
   },
   {
     nome: '02) Basic Auth errado',
     headers: { 'Content-Type': 'application/json', Authorization: authInvalido },
     body: JSON.stringify(bodyValido),
-    esperaStatus: 401
+    validar: (s) => ({ ok: s === 401, msg: `HTTP esperado 401, recebido ${s}` })
   },
+  // Validacoes de campo (pre-AdvPL) — esperamos 400 com codigo_erro
   {
     nome: '03) Body vazio',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: '',
-    esperaStatus: 400, esperaCodigo: 'BODY_INVALIDO'
+    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
   },
   {
     nome: '04) JSON invalido',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: '{filial:"01",sem_aspas}',
-    esperaStatus: 400, esperaCodigo: 'JSON_INVALIDO'
+    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
   },
   {
     nome: '05) Sem filial',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
-    body: JSON.stringify({ solicitante: 'INTRANET', itens: [itemValido] }),
-    esperaStatus: 400, esperaCodigo: 'FILIAL_OBRIGATORIA'
+    body: JSON.stringify({ solicitante: 'INTRANET', itens: [itemMin(produtoReal, 1)] }),
+    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
   },
   {
     nome: '06) Sem solicitante',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
-    body: JSON.stringify({ filial: '01', itens: [itemValido] }),
-    esperaStatus: 400, esperaCodigo: 'SOLICITANTE_OBRIGATORIO'
+    body: JSON.stringify({ filial: '01', itens: [itemMin(produtoReal, 1)] }),
+    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
   },
   {
     nome: '07) itens array vazio',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: JSON.stringify({ filial: '01', solicitante: 'INTRANET', itens: [] }),
-    esperaStatus: 400, esperaCodigo: 'SEM_ITENS'
+    validar: (s, j) => ({ ok: s === 400 && j?.codigo_erro, msg: `400 + codigo_erro esperado, veio ${s} ${j?.codigo_erro || '(sem codigo)'}` })
   },
+  // Erros de item — esperamos 200 + INCONSISTENCIAS preenchido
   {
-    nome: '08) item sem produto',
+    nome: '08) Item com produto inexistente (espera INCONSISTENCIA)',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: JSON.stringify({
-      filial: '01', solicitante: 'INTRANET',
-      itens: [{ quantidade: 1, local: '01', centro_custo: 'CC' }]
+      ...bodyValido,
+      itens: [itemMin('PRODUTO_FAKE_XXX_999', 1)]
     }),
-    esperaStatus: 400, esperaCodigo: 'PRODUTO_OBRIGATORIO'
+    validar: (s, j) => ({
+      ok: s === 200 && Array.isArray(j?.INCONSISTENCIAS) && j.INCONSISTENCIAS.length > 0 && (j?.SC_GERADAS?.length || 0) === 0,
+      msg: `200 + INCONSISTENCIAS>0 + SC_GERADAS=[] esperado, veio ${s} ATU=${j?.STATUS?.ATUALIZADOS} INC=${j?.INCONSISTENCIAS?.length} SC=${j?.SC_GERADAS?.length || 0}`
+    })
   },
   {
-    nome: '09) item com quantidade zero',
+    nome: '09) Item com quantidade zero',
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: JSON.stringify({
-      filial: '01', solicitante: 'INTRANET',
-      itens: [{ produto: 'X', quantidade: 0, local: '01', centro_custo: 'CC' }]
+      ...bodyValido,
+      itens: [{ produto: produtoReal, quantidade: 0, local: '01', centro_custo: ccReal }]
     }),
-    esperaStatus: 400, esperaCodigo: 'QUANTIDADE_INVALIDA'
+    validar: (s, j) => ({
+      ok: (s === 400 && j?.codigo_erro) || (s === 200 && (j?.INCONSISTENCIAS?.length || 0) > 0),
+      msg: `400+codigo_erro OU 200+INCONSISTENCIA esperado, veio ${s} ${j?.codigo_erro || `INC=${j?.INCONSISTENCIAS?.length}`}`
+    })
   },
+  // Sucesso — tem que criar SC real (precisa de produto e CC reais)
   {
-    nome: '10) Payload valido (produto fake — deve rejeitar com PRODUTO_NAO_ENCONTRADO)',
+    nome: `10) Payload valido (produto=${produtoReal}, CC=${ccReal}) — espera SC criada`,
     headers: { 'Content-Type': 'application/json', Authorization: authValido },
     body: JSON.stringify(bodyValido),
-    esperaStatus: 200,  // ok=true mas com qtd_rejeitados
-    esperaOk: true
+    validar: (s, j) => ({
+      ok: s === 200 && j?.STATUS?.ATUALIZADOS >= 1 && Array.isArray(j?.SC_GERADAS) && j.SC_GERADAS.length >= 1 && (j?.INCONSISTENCIAS?.length || 0) === 0,
+      msg: `200 + ATUALIZADOS>=1 + SC_GERADAS preenchido + sem INCONSISTENCIAS, veio ${s} ATU=${j?.STATUS?.ATUALIZADOS} SC=${JSON.stringify(j?.SC_GERADAS)} INC=${j?.INCONSISTENCIAS?.length}`
+    })
   }
 ];
 
 (async () => {
   console.log(`Endpoint: ${url}`);
-  console.log(`Auth: ${user}:${'*'.repeat(pass.length)}\n`);
+  console.log(`Auth: ${user}:${'*'.repeat(pass.length)}`);
+  console.log(`Produto real: ${produtoReal} · CC real: ${ccReal}\n`);
 
   let nPass = 0, nFail = 0;
   for (const t of tests) {
@@ -117,22 +136,20 @@ const tests = [
       let json = null;
       try { json = JSON.parse(txt); } catch {}
 
-      const statusOk = r.status === t.esperaStatus;
-      const codigoOk = t.esperaCodigo ? (json?.codigo_erro === t.esperaCodigo) : true;
-      const okOk     = t.esperaOk    !== undefined ? (json?.ok === t.esperaOk) : true;
-
-      const verdict = statusOk && codigoOk && okOk;
-      const icon = verdict ? '✓ PASS' : '✗ FAIL';
+      const v = t.validar(r.status, json, txt);
+      const icon = v.ok ? '✓ PASS' : '✗ FAIL';
       console.log(`${icon}  ${t.nome}`);
-      console.log(`        HTTP ${r.status} (esperado ${t.esperaStatus})`);
-      if (t.esperaCodigo) console.log(`        codigo: ${json?.codigo_erro || '(vazio)'} (esperado ${t.esperaCodigo})`);
-      if (t.esperaOk !== undefined) console.log(`        ok: ${json?.ok} (esperado ${t.esperaOk})`);
-      if (json?.mensagem) console.log(`        mensagem: ${String(json.mensagem).slice(0, 80)}`);
-      if (json?.sc_numero) console.log(`        sc_numero: ${json.sc_numero}`);
-      if (!verdict) console.log(`        body: ${txt.slice(0, 300)}`);
+      if (!v.ok) console.log(`        ${v.msg}`);
+      if (json?.SC_GERADAS?.length) console.log(`        SC criada: ${json.SC_GERADAS.join(', ')}`);
+      if (json?.STATUS) console.log(`        STATUS: ATU=${json.STATUS.ATUALIZADOS} NAO=${json.STATUS.NAO_ATUALIZADOS} DURACAO=${json.STATUS.DURACAO}`);
+      if (json?.INCONSISTENCIAS?.length) {
+        console.log(`        INCONSISTENCIAS:`);
+        json.INCONSISTENCIAS.slice(0, 3).forEach(i => console.log(`          ${JSON.stringify(i).slice(0, 200)}`));
+      }
+      if (!v.ok && !json) console.log(`        body cru: ${txt.slice(0, 200)}`);
       console.log();
 
-      if (verdict) nPass++; else nFail++;
+      if (v.ok) nPass++; else nFail++;
     } catch (err) {
       console.log(`✗ FAIL  ${t.nome}`);
       console.log(`        erro de rede/conexao: ${err.message}\n`);
