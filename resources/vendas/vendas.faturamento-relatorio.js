@@ -32,7 +32,7 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Protheus } = app.services;
-    const { inicio, fim, vendedor, bu, cliente } = req.query;
+    const { inicio, fim, vendedor, bu } = req.query;
 
     const dtInicio = toProtheusDate(inicio);
     const dtFim = toProtheusDate(fim);
@@ -47,10 +47,6 @@ module.exports = (app) => ({
       : '';
     const condBu = bu
       ? `AND RTRIM(SC5.C5_ZTIPO) = @bu`
-      : '';
-    // Cliente: aceita codigo exato (6 digitos) OU prefixo (LIKE).
-    const condCliente = cliente
-      ? `AND SD2.D2_CLIENTE LIKE @cliente + '%'`
       : '';
 
     const sql = `
@@ -160,7 +156,6 @@ module.exports = (app) => ({
         AND SD2.D2_EMISSAO BETWEEN @inicio AND @fim
         ${condVendedor}
         ${condBu}
-        ${condCliente}
       ORDER BY SD2.D2_EMISSAO, SD2.D2_DOC, SD2.D2_ITEM
     `;
 
@@ -168,7 +163,6 @@ module.exports = (app) => ({
       const params = { inicio: dtInicio, fim: dtFim };
       if (vendedor) params.vendedor = String(vendedor);
       if (bu)       params.bu       = String(bu).trim();
-      if (cliente)  params.cliente  = String(cliente).trim();
 
       // BUs disponiveis no periodo (sem aplicar filtro de BU, pro dropdown
       // listar todas as opcoes independente do filtro ativo).
@@ -311,8 +305,7 @@ module.exports = (app) => ({
         periodo: { inicio: dtInicio, fim: dtFim },
         filtros: {
           vendedor: vendedor ? String(vendedor) : null,
-          bu: bu ? String(bu).trim() : null,
-          cliente: cliente ? String(cliente).trim() : null
+          bu: bu ? String(bu).trim() : null
         },
         bus: busRows.map((b) => ({
           codigo: trim(b.codigo),
