@@ -1,15 +1,17 @@
 // GET /vendas/ranking-vendas?inicio=YYYY-MM-DD&fim=YYYY-MM-DD&vendedor=&bu=
 //
-// Ranking de vendedores por VENDAS EM ABERTO (pedidos com saldo a faturar).
-// Diferente do ranking-faturamento (NF/SD2), aqui olhamos SC5/SC6 — pedidos
-// que existem mas ainda nao foram totalmente faturados.
+// Ranking de vendedores por VENDAS COLOCADAS no periodo. "Venda" aqui = todo
+// pedido emitido no intervalo, *independente* de ter sido ou nao faturado.
+// Por isso o numero NAO bate com o ranking de faturamento (SD2/NF):
+//   - pedido emitido em jan e faturado em fev:
+//       conta no ranking de Vendas em janeiro
+//       conta no ranking de Faturamento em fevereiro
 //
 // Regras:
-//   - WHERE C6_QTDVEN > C6_QTDENT (existe saldo a faturar)
 //   - C6_BLQ = ' '  (item nao bloqueado)
 //   - C5_ZTIPO <> 'RED' (exclui redespacho)
 //   - CFOPs de venda (mesma lista do ranking-faturamento)
-//   - Valor = (C6_QTDVEN - C6_QTDENT) * C6_PRCVEN * (1 + B1_IPI/100)
+//   - Valor = C6_QTDVEN * C6_PRCVEN * (1 + B1_IPI/100)
 //   - Periodo aplicado em C5_EMISSAO (data do pedido)
 //
 // Retorna `bus[]` com todas as BUs do periodo (sem filtro de bu) pro dropdown
@@ -62,12 +64,14 @@ module.exports = (app) => ({
        AND bu_sx5.D_E_L_E_T_ <> '*'
     `;
 
-    // Soma por vendedor — saldo aberto (qt vendida - qt entregue) * preco c/ IPI
+    // Soma por vendedor — todos os pedidos do periodo (qt total vendida * preco c/ IPI)
+    // NAO filtra por saldo aberto: queremos TODOS os pedidos colocados no periodo,
+    // faturados ou nao. Por isso este ranking nao bate com o de Faturamento (SD2/NF).
     const sql = `
       SELECT
         RTRIM(sc5.C5_VEND1) cod_vendedor,
         MAX(RTRIM(sa3.A3_NOME)) nome,
-        CAST(SUM((sc6.C6_QTDVEN - sc6.C6_QTDENT) * sc6.C6_PRCVEN
+        CAST(SUM(sc6.C6_QTDVEN * sc6.C6_PRCVEN
                  * (1 + ISNULL(sb1.B1_IPI, 0) / 100.0)) AS DECIMAL(15,2)) total
       FROM SC6010 sc6 WITH (NOLOCK)
       LEFT JOIN SC5010 sc5 WITH (NOLOCK)
@@ -84,11 +88,10 @@ module.exports = (app) => ({
         AND sc6.C6_CF IN (${cfopList})
         AND sc6.C6_BLQ = ' '
         AND RTRIM(sc5.C5_ZTIPO) <> 'RED'
-        AND sc6.C6_QTDVEN > sc6.C6_QTDENT
         ${condVendedor}
         ${condBu}
       GROUP BY sc5.C5_VEND1
-      ORDER BY SUM((sc6.C6_QTDVEN - sc6.C6_QTDENT) * sc6.C6_PRCVEN
+      ORDER BY SUM(sc6.C6_QTDVEN * sc6.C6_PRCVEN
                   * (1 + ISNULL(sb1.B1_IPI, 0) / 100.0)) DESC
     `;
 
@@ -96,7 +99,7 @@ module.exports = (app) => ({
     const sqlBus = `
       SELECT ${EXPR_BU_LABEL} bu_label,
              RTRIM(MAX(sc5.C5_ZTIPO)) bu_codigo,
-             SUM((sc6.C6_QTDVEN - sc6.C6_QTDENT) * sc6.C6_PRCVEN
+             SUM(sc6.C6_QTDVEN * sc6.C6_PRCVEN
                  * (1 + ISNULL(sb1.B1_IPI, 0) / 100.0)) total
       FROM SC6010 sc6 WITH (NOLOCK)
       LEFT JOIN SC5010 sc5 WITH (NOLOCK)
@@ -111,9 +114,8 @@ module.exports = (app) => ({
         AND sc6.C6_CF IN (${cfopList})
         AND sc6.C6_BLQ = ' '
         AND RTRIM(sc5.C5_ZTIPO) <> 'RED'
-        AND sc6.C6_QTDVEN > sc6.C6_QTDENT
       GROUP BY ${EXPR_BU_LABEL}
-      ORDER BY SUM((sc6.C6_QTDVEN - sc6.C6_QTDENT) * sc6.C6_PRCVEN
+      ORDER BY SUM(sc6.C6_QTDVEN * sc6.C6_PRCVEN
                   * (1 + ISNULL(sb1.B1_IPI, 0) / 100.0)) DESC
     `;
 
