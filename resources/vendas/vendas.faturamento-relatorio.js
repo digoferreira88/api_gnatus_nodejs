@@ -32,7 +32,7 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Protheus } = app.services;
-    const { inicio, fim, vendedor } = req.query;
+    const { inicio, fim, vendedor, bu, cliente } = req.query;
 
     const dtInicio = toProtheusDate(inicio);
     const dtFim = toProtheusDate(fim);
@@ -44,6 +44,13 @@ module.exports = (app) => ({
     const cfopList = CFOPS.map((c) => `'${c}'`).join(',');
     const condVendedor = vendedor
       ? `AND (SC5.C5_VEND1 = @vendedor OR SC5.C5_VEND2 = @vendedor OR SC5.C5_VEND3 = @vendedor)`
+      : '';
+    const condBu = bu
+      ? `AND RTRIM(SC5.C5_ZTIPO) = @bu`
+      : '';
+    // Cliente: aceita codigo exato (6 digitos) OU prefixo (LIKE).
+    const condCliente = cliente
+      ? `AND SD2.D2_CLIENTE LIKE @cliente + '%'`
       : '';
 
     const sql = `
@@ -152,14 +159,41 @@ module.exports = (app) => ({
         AND SD2.D2_CF IN (${cfopList})
         AND SD2.D2_EMISSAO BETWEEN @inicio AND @fim
         ${condVendedor}
+        ${condBu}
+        ${condCliente}
       ORDER BY SD2.D2_EMISSAO, SD2.D2_DOC, SD2.D2_ITEM
     `;
 
     try {
       const params = { inicio: dtInicio, fim: dtFim };
       if (vendedor) params.vendedor = String(vendedor);
+      if (bu)       params.bu       = String(bu).trim();
+      if (cliente)  params.cliente  = String(cliente).trim();
 
-      const rows = await Protheus.connectAndQuery(sql, params);
+      // BUs disponiveis no periodo (sem aplicar filtro de BU, pro dropdown
+      // listar todas as opcoes independente do filtro ativo).
+      const sqlBus = `
+        SELECT RTRIM(SC5.C5_ZTIPO) codigo,
+               MAX(RTRIM(X5.X5_DESCRI)) label,
+               SUM(SD2.D2_VALBRUT - SD2.D2_VALDEV) total
+          FROM SD2010 SD2 WITH (NOLOCK)
+          LEFT JOIN SC5010 SC5 WITH (NOLOCK)
+            ON SC5.C5_FILIAL = SD2.D2_FILIAL AND SC5.C5_NUM = SD2.D2_PEDIDO
+           AND ISNULL(SC5.D_E_L_E_T_, ' ') = ' '
+          LEFT JOIN SX5010 X5 WITH (NOLOCK)
+            ON X5.X5_TABELA = 'Z1' AND RTRIM(X5.X5_CHAVE) = RTRIM(SC5.C5_ZTIPO)
+           AND ISNULL(X5.D_E_L_E_T_, ' ') = ' '
+         WHERE ISNULL(SD2.D_E_L_E_T_, ' ') = ' '
+           AND SD2.D2_FILIAL = '01'
+           AND SD2.D2_CF IN (${cfopList})
+           AND SD2.D2_EMISSAO BETWEEN @inicio AND @fim
+         GROUP BY SC5.C5_ZTIPO
+         ORDER BY SUM(SD2.D2_VALBRUT - SD2.D2_VALDEV) DESC`;
+
+      const [rows, busRows] = await Promise.all([
+        Protheus.connectAndQuery(sql, params),
+        Protheus.connectAndQuery(sqlBus, { inicio: dtInicio, fim: dtFim })
+      ]);
 
       // Pós-processamento: totais por documento, margens, região
       const porDocumento = {};
@@ -275,6 +309,16 @@ module.exports = (app) => ({
 
       return res.json({
         periodo: { inicio: dtInicio, fim: dtFim },
+        filtros: {
+          vendedor: vendedor ? String(vendedor) : null,
+          bu: bu ? String(bu).trim() : null,
+          cliente: cliente ? String(cliente).trim() : null
+        },
+        bus: busRows.map((b) => ({
+          codigo: trim(b.codigo),
+          label: trim(b.label) || trim(b.codigo) || '—',
+          total: toNumber(b.total)
+        })),
         totalRegistros: dados.length,
         dados
       });
