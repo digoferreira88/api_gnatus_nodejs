@@ -31,7 +31,18 @@ module.exports = (app) => ({
           ORDER BY vencimento ASC, cliente_nome`, { id }
       );
 
-      return res.json({ lote: cab[0], titulos });
+      // Retornos do banco (Onda 3): status sincronizado por titulo
+      let retornos = [];
+      try {
+        retornos = await Pg.connectAndQuery(
+          `SELECT * FROM tab_boleto_envio_lote_retorno WHERE id_lote = @id`, { id }
+        );
+      } catch (e) {
+        // Tabela pode nao existir se migration 44 nao foi rodada — tolerante
+        if (!String(e.message).includes('does not exist')) throw e;
+      }
+
+      return res.json({ lote: cab[0], titulos, retornos });
     } catch (err) {
       console.error('boleto-lote-detail:', err);
       return res.status(500).json({ message: 'Erro: ' + err.message });
