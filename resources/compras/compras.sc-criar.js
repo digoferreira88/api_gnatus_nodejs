@@ -6,8 +6,13 @@
 // Body: {
 //   data_necessaria: 'YYYY-MM-DD' (obrigatorio),
 //   observacao?: string,
-//   itens: [{ produto, quantidade, local?, centro_custo, observacao?, fornecedor?, loja? }, ...]
+//   itens: [{ produto, quantidade, local?, centro_custo, observacao?, fornecedor?, loja? }, ...],
+//   anexos?: [{ nome, descricao?, base64, item? }, ...]
 // }
+//
+// Anexos: max 10 arquivos · 10MB total · base64 do conteudo cru (sem prefixo
+// data:...;base64,). Item omitido = anexo do cabecalho; com item = anexo do
+// item N.
 //
 // Permissao 4004.
 
@@ -53,6 +58,23 @@ module.exports = (app) => ({
       if (!trim(it.centro_custo)) return res.status(400).json({ message: `Item ${i + 1}: centro de custo obrigatorio.` });
     }
 
+    // Valida anexos (opcional): max 10 arquivos, 10MB total em base64
+    const anexos = Array.isArray(b.anexos) ? b.anexos : [];
+    if (anexos.length > 10) {
+      return res.status(400).json({ message: 'Maximo de 10 anexos por SC.' });
+    }
+    let tamanhoTotal = 0;
+    for (let i = 0; i < anexos.length; i++) {
+      const a = anexos[i];
+      if (!trim(a.nome))   return res.status(400).json({ message: `Anexo ${i + 1}: nome obrigatorio.` });
+      if (!trim(a.base64)) return res.status(400).json({ message: `Anexo ${i + 1}: conteudo (base64) obrigatorio.` });
+      tamanhoTotal += a.base64.length;
+    }
+    // base64 expande ~33%; 10MB binario ~= 13.3M chars base64
+    if (tamanhoTotal > 14 * 1024 * 1024) {
+      return res.status(413).json({ message: `Anexos somam mais de 10MB. Reduza o tamanho dos arquivos.` });
+    }
+
     const operadorEmail = trim(user.EMAIL) || `id_${user.ID}`;
     const operadorNome  = trim(user.NOME)  || operadorEmail;
 
@@ -71,7 +93,15 @@ module.exports = (app) => ({
         observacao:   trim(it.observacao),
         fornecedor:   trim(it.fornecedor),
         loja:         trim(it.loja)
-      }))
+      })),
+      ...(anexos.length > 0 ? {
+        anexos: anexos.map(a => ({
+          nome: trim(a.nome),
+          descricao: trim(a.descricao) || trim(a.nome),
+          base64: trim(a.base64),
+          ...(a.item ? { item: N(a.item) } : {})
+        }))
+      } : {})
     };
 
     let logId = null;
@@ -116,13 +146,15 @@ module.exports = (app) => ({
         acao: 'CRIAR_SC', severidade: r.status === 'SUCESSO' ? 'CRITICO' : 'ALERTA',
         req, entidade: 'sc', entidadeId: r.sc_numero || `log_${logId}`,
         descricao: r.status === 'SUCESSO'
-          ? `Criou SC ${r.sc_numero} no Protheus (${b.itens.length} item(ns), solicitante ${operadorEmail})`
+          ? `Criou SC ${r.sc_numero} no Protheus (${b.itens.length} item(ns), ${anexos.length} anexo(s), solicitante ${operadorEmail})`
           : `Falha ao criar SC: ${r.mensagem || r.status} (${b.itens.length} item(ns) tentado)`,
         meta: {
           status: r.status,
           sc_numero: r.sc_numero,
           httpStatus: r.httpStatus,
           qt_itens: b.itens.length,
+          qt_anexos: anexos.length,
+          anexos_gravados: r.anexos_gravados,
           duracao_ms: r.duracao_ms,
           inconsistencias: r.body?.INCONSISTENCIAS?.slice(0, 5)
         }
@@ -135,6 +167,7 @@ module.exports = (app) => ({
         mensagem: r.mensagem,
         httpStatus: r.httpStatus,
         inconsistencias: r.body?.INCONSISTENCIAS || [],
+        anexos_gravados: r.anexos_gravados || 0,
         log_id: logId,
         duracao_ms: r.duracao_ms
       });

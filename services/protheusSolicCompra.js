@@ -13,13 +13,15 @@
 //   validacao     -> 400 { STATUS:{...}, INCONSISTENCIAS:[{codigo_erro,mensagem}], SC_GERADAS:[] }
 //   erro sistema  -> 500 / timeout / sem resposta JSON
 
-const TIMEOUT_MS = 60000;
+// Timeout maior pq anexos podem inflar payload (10MB base64 = ~13MB no fio + processing AdvPL)
+const TIMEOUT_MS = 180000;
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
 
 /**
- * Cria SC no Protheus via REST custom Develsoft.
+ * Cria SC no Protheus via REST custom Develsoft. Opcionalmente envia anexos
+ * (grava em AC9010/ACB010 — "Conhecimento" no Protheus).
  *
  * @param {object} args
  * @param {string} args.filial            — '01'
@@ -28,12 +30,15 @@ const N = (v) => Number(v || 0);
  * @param {string} args.data_necessaria   — 'YYYYMMDD' (obrigatorio)
  * @param {string} args.observacao        — texto livre
  * @param {Array}  args.itens             — [{produto, quantidade, local, centro_custo, observacao?, fornecedor?, loja?}]
- * @returns {Promise<{httpStatus, body, status, sc_numero, mensagem, duracao_ms}>}
+ * @param {Array}  [args.anexos]          — opcional: [{nome, descricao?, base64, item?}]
+ *                                          item omitido = anexo do cabecalho
+ * @returns {Promise<{httpStatus, body, status, sc_numero, mensagem, duracao_ms, anexos_gravados}>}
  *   status: 'SUCESSO' | 'REJEITADA' | 'ERRO_SISTEMA'
  *   sc_numero: string|null     — preenchido em SUCESSO
  *   mensagem: string|null      — resumo curto do erro (em REJEITADA/ERRO_SISTEMA)
+ *   anexos_gravados: number    — campo ANEXOS_GRAVADOS do response (0 se nao houver)
  */
-async function criarSC({ filial, solicitante, data_emissao, data_necessaria, observacao, itens }) {
+async function criarSC({ filial, solicitante, data_emissao, data_necessaria, observacao, itens, anexos }) {
   const apiUrl  = process.env.PROTHEUS_API_URL;
   const apiUser = process.env.PROTHEUS_API_USER;
   const apiPass = process.env.PROTHEUS_API_PASS;
@@ -77,7 +82,15 @@ async function criarSC({ filial, solicitante, data_emissao, data_necessaria, obs
       centro_custo: trim(it.centro_custo),
       observacao: trim(it.observacao),
       ...(trim(it.fornecedor) ? { fornecedor: trim(it.fornecedor), loja: trim(it.loja) || '01' } : {})
-    }))
+    })),
+    ...(Array.isArray(anexos) && anexos.length > 0 ? {
+      anexos: anexos.map(a => ({
+        nome: trim(a.nome),
+        descricao: trim(a.descricao) || trim(a.nome),
+        base64: trim(a.base64),
+        ...(a.item ? { item: N(a.item) } : {})
+      }))
+    } : {})
   };
 
   const ctrl = new AbortController();
@@ -129,12 +142,14 @@ function interpretar(httpStatus, body, duracao_ms) {
   const scs = Array.isArray(body?.SC_GERADAS) ? body.SC_GERADAS : [];
   const incs = Array.isArray(body?.INCONSISTENCIAS) ? body.INCONSISTENCIAS : [];
   const naoAtu = N(body?.STATUS?.NAO_ATUALIZADOS);
+  const anexosGravados = N(body?.ANEXOS_GRAVADOS);
 
   if (scs.length > 0) {
     return {
       httpStatus, body, duracao_ms,
       status: 'SUCESSO',
       sc_numero: trim(scs[0]),
+      anexos_gravados: anexosGravados,
       mensagem: null
     };
   }
@@ -143,6 +158,7 @@ function interpretar(httpStatus, body, duracao_ms) {
       httpStatus, body, duracao_ms,
       status: 'REJEITADA',
       sc_numero: null,
+      anexos_gravados: 0,
       mensagem: incs[0]?.mensagem || `Rejeitada com ${naoAtu} inconsistencia(s).`
     };
   }
@@ -150,6 +166,7 @@ function interpretar(httpStatus, body, duracao_ms) {
     httpStatus, body, duracao_ms,
     status: 'ERRO_SISTEMA',
     sc_numero: null,
+    anexos_gravados: 0,
     mensagem: incs[0]?.mensagem || `Erro inesperado (HTTP ${httpStatus}).`
   };
 }
