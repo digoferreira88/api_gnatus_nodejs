@@ -1,22 +1,22 @@
-// GET /financeiro/boleto-elegiveis — titulos do SE1 elegiveis pra envio a banco.
-// Filtros via query: busca, dataIni, dataFim (vencimento), valorMin,
-//   banco (E1_PORTADO), formaPgto (E1_FORMAPG, aceita lista CSV),
-//   emissaoIni, emissaoFim (E1_EMISSAO).
+// GET /financeiro/boleto-elegiveis — titulos do SE1 SEM portador, prontos pra
+// serem enviados a um banco escolhido pelo operador.
 //
-// REGRA NOVA (Mai/2026): mostra APENAS titulos que JA TEM portador
-// definido no Protheus (E1_PORTADO preenchido com um banco comercial).
-// O fluxo real eh: financeiro define o portador no ESF050 do Protheus
-// primeiro, e o operador da Intranet escolhe quais desses ir pro lote.
-// Titulos sem portador (carteira CP/RF ou vazio) nao entram aqui — sao
-// tratados em outro fluxo.
+// REGRA (Mai/2026 — atualizada): mostra APENAS titulos SEM portador definido
+// no Protheus (E1_PORTADO vazio/NULL). O fluxo eh:
+//   1. Operador lista os titulos sem portador
+//   2. Seleciona quantidade + banco pra qual enviar
+//   3. Intranet chama Protheus pra gerar arquivo (ja temos integracao via
+//      services/protheusCobranca.js + endpoint /financeiro/boleto-lote/:id/enviar-protheus)
+//   4. Operador envia arquivo ao banco e aguarda retorno
+//   5. (futuro) Le retorno + dispara boleto via WhatsApp/email
+//
+// Filtros via query: busca, dataIni/dataFim (vencimento), valorMin,
+//   formaPgto (E1_FORMAPG, aceita lista CSV), emissaoIni/emissaoFim.
+// Nao tem mais filtro por banco (todos os titulos aqui estao sem portador).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const trim = (v) => String(v || '').trim();
 const toN  = (v) => Number(v || 0);
-
-// Bancos comerciais que efetivamente recebem boleto (mesma lista do endpoint
-// /boleto-bancos). FIDCs/cartao/aplicacao ficam de fora.
-const BANCOS_COBRANCA = ['001', '033', '104', '237', '341', '422', '748', '756'];
 
 // Formas de pagamento elegiveis pra boleto bancario na Gnatus.
 // Default explicito caso o operador nao filtre: cod 4 (Boleto), A (Futuro
@@ -52,7 +52,7 @@ module.exports = (app) => ({
       params.df = String(req.query.dataFim);
       conds.push(`AND se1.E1_VENCREA <= @df`);
     }
-    // Emissao (novo)
+    // Emissao
     if (req.query.emissaoIni && /^\d{8}$/.test(String(req.query.emissaoIni))) {
       params.ei = String(req.query.emissaoIni);
       conds.push(`AND se1.E1_EMISSAO >= @ei`);
@@ -64,11 +64,6 @@ module.exports = (app) => ({
     if (req.query.valorMin && Number(req.query.valorMin) > 0) {
       params.vmin = Number(req.query.valorMin);
       conds.push(`AND se1.E1_SALDO >= @vmin`);
-    }
-    // Filtro por banco (E1_PORTADO) — se o operador escolheu, restringe a esse
-    if (req.query.banco) {
-      params.banco = String(req.query.banco);
-      conds.push(`AND RTRIM(se1.E1_PORTADO) = @banco`);
     }
     // Filtro por forma de pgto — aceita CSV ("4,A,B") ou um cod so. Sem param,
     // aplica o default (4, A, B) — boletos efetivos.
@@ -82,7 +77,6 @@ module.exports = (app) => ({
       conds.push(`AND RTRIM(se1.E1_FORMAPG) IN (${formaIn})`);
     }
 
-    const bancosIn = BANCOS_COBRANCA.map(c => `'${c}'`).join(',');
     const sql = `
       SELECT TOP ${limit}
         RTRIM(se1.E1_PREFIXO) prefixo,
@@ -112,8 +106,8 @@ module.exports = (app) => ({
         AND se1.E1_FILIAL = '01'
         AND se1.E1_SALDO > 0
         AND RTRIM(se1.E1_TIPO) IN ('NF','NFS','BOL','DUP')
-        -- Portador JA preenchido com banco comercial (financeiro ja decidiu pra qual banco)
-        AND RTRIM(se1.E1_PORTADO) IN (${bancosIn})
+        -- SO titulos SEM portador definido — operador escolhe o banco no envio
+        AND (se1.E1_PORTADO IS NULL OR RTRIM(se1.E1_PORTADO) = '')
         -- Sem bordero ainda (ainda nao foi pro CNAB)
         AND (se1.E1_NUMBOR IS NULL OR RTRIM(se1.E1_NUMBOR) = '')
         ${conds.join(' ')}
