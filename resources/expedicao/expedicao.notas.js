@@ -14,12 +14,28 @@ module.exports = (app) => ({
     const { Protheus, Pg } = app.services;
     const dataMinima = trim(req.query.dataMinima) || '20200301';
     const busca = trim(req.query.busca).toUpperCase();
+    // 3 abas:
+    //   pendentes     -> sem expedicao registrada (default, comportamento legado)
+    //   sem_rastreio  -> expedida mas sem numero de rastreio
+    //   expedidas     -> expedida + com rastreio
+    const ABAS_VALIDAS = new Set(['pendentes', 'sem_rastreio', 'expedidas']);
+    const aba = ABAS_VALIDAS.has(req.query.aba) ? req.query.aba : 'pendentes';
 
     const params = { dataMinima };
     const conds = [];
     if (busca) {
       params.busca = busca;
       conds.push(`AND (UPPER(sa1.A1_NOME) LIKE '%' + @busca + '%' OR f2.F2_DOC LIKE @busca + '%' OR f2.F2_CLIENTE LIKE @busca + '%')`);
+    }
+
+    // Filtro principal por aba
+    let condAba;
+    if (aba === 'sem_rastreio') {
+      condAba = `AND fe.z1_expedic IS NOT NULL AND (fe.z1_rastrei IS NULL OR RTRIM(fe.z1_rastrei) = '')`;
+    } else if (aba === 'expedidas') {
+      condAba = `AND fe.z1_expedic IS NOT NULL AND fe.z1_rastrei IS NOT NULL AND RTRIM(fe.z1_rastrei) <> ''`;
+    } else {
+      condAba = `AND fe.z1_expedic IS NULL`;
     }
 
     // SX3 da Gnatus: DIFAL = SD2.D2_DIFAL ; FCP Proprio = SD2.D2_VALFECP.
@@ -75,7 +91,7 @@ module.exports = (app) => ({
         AND f2.D_E_L_E_T_ <> '*'
         AND f2.F2_SERIE = '1'
         AND f2.F2_EMISSAO > @dataMinima
-        AND fe.z1_expedic IS NULL
+        ${condAba}
         AND (sa1.A1_COD IS NULL OR sa1.D_E_L_E_T_ <> '*')
         -- Exclui NF que NAO tenha NENHUM item com CFOP de expedicao fisica.
         -- Antes era LEFT JOIN faturamento_cfop, mas a view agrupa por CFOP
@@ -131,6 +147,7 @@ module.exports = (app) => ({
       }));
 
       return res.json({
+        aba,
         totalRegistros: notas.length,
         totalNoBordero: notas.filter(n => n.noBordero).length,
         notas,
