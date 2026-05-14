@@ -208,6 +208,14 @@ module.exports = (app) => ({
       doc.moveTo(40, doc.y + 2).lineTo(555, doc.y + 2).strokeColor('#1a3f82').stroke();
       doc.moveDown(0.5);
 
+      // Encoda URL pra link funcionar no PDF — pdfkit nao escapa espacos/acentos
+      // automaticamente. SharePoint web_url tem "/Producao Intranet/..." que
+      // sem encode vira link quebrado (404 no SP).
+      const safeLink = (u) => {
+        if (!u) return null;
+        try { return encodeURI(u); } catch { return null; }
+      };
+
       if (!anexosRows.length) {
         doc.font('Helvetica-Oblique').fontSize(9).fillColor('#8093ac')
           .text('Nenhum anexo associado a este registro.', 40, doc.y);
@@ -217,11 +225,12 @@ module.exports = (app) => ({
           if (doc.y > 760) doc.addPage();
           const etapaTxt = a.etapa_codigo ? `Etapa ${String(a.etapa_codigo).padStart(2, '0')}` : 'Geral';
           const tipoTxt = a.tipo ? ` [${a.tipo}]` : '';
+          const link = safeLink(a.url);
           doc.font('Helvetica-Bold').text(`• ${etapaTxt}${tipoTxt}: `, 40, doc.y, { continued: true, link: null });
           doc.font('Helvetica').fillColor('#1e5fb5')
-            .text(a.titulo, { link: a.url || null, underline: !!a.url, continued: false });
+            .text(a.titulo, { link, underline: !!link, continued: false });
           doc.fillColor('#5b6b85').font('Helvetica').fontSize(7.5)
-            .text(`   ${a.enviado_por_nome || '-'} · ${fmtDateTime(a.enviado_em)}${a.url ? ' · ' + a.url.slice(0, 90) : ''}`,
+            .text(`   ${a.enviado_por_nome || '-'} · ${fmtDateTime(a.enviado_em)}${link ? ' · ' + link.slice(0, 110) : ''}`,
                   { width: 515 });
           doc.fillColor('#000').fontSize(8.5);
           doc.moveDown(0.3);
