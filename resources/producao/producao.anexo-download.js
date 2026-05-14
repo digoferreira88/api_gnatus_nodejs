@@ -1,11 +1,15 @@
 // Download de anexo. GET /producao/anexo/:anexoId/download
 //
+// Retorna JSON { ok, url, name, mime, size } com URL temporaria de download.
+// O front faz window.open(url) ou cria <a download href={url}> pra disparar.
+// Motivo: retornar 302 nao funciona bem em SPA com JWT — o browser nao
+// inclui Authorization header em redirects subsequentes.
+//
 // Comportamento:
-//   - Anexo origem='sharepoint': resolve URL temporaria via Graph e redireciona
-//     (302). URL eh valida ~1h, conteudo binario vai direto do SP pro browser.
-//   - Anexo origem='url_externa': redireciona pra URL armazenada (link manual
-//     do anexo-add antigo, normalmente apontando pra alguma pasta de rede ou
-//     SharePoint manual).
+//   - Anexo origem='sharepoint': resolve URL temporaria via Graph (curta,
+//     valida ~1h, sem auth — vai direto do SP pro browser).
+//   - Anexo origem='url_externa': retorna a URL armazenada como esta
+//     (link manual do anexo-add antigo).
 //
 // Auditoria registra DOWNLOAD pra rastreabilidade.
 // Permissao: 14001 (operar), 14002 (admin) ou 14003 (dashboard) — qualquer um
@@ -71,7 +75,13 @@ module.exports = (app) => ({
         meta: { origem: a.origem, mime: a.mime_type, tamanho: a.tamanho_bytes }
       });
 
-      return res.redirect(302, target);
+      return res.json({
+        ok: true,
+        url: target,
+        name: a.nome_original || a.titulo,
+        mime: a.mime_type,
+        size: a.tamanho_bytes
+      });
     } catch (err) {
       console.error('Erro producao/anexo-download:', err);
       return res.status(500).json({ message: 'Erro ao baixar anexo: ' + err.message });
