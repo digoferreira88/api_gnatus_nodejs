@@ -76,6 +76,16 @@ module.exports = (app) => ({
       formasLista.forEach((f, i) => { params[`fp${i}`] = f; });
       conds.push(`AND RTRIM(se1.E1_FORMAPG) IN (${formaIn})`);
     }
+    // Filtro por tipo (E1_TIPO) — aceita CSV ("NF,DP") ou unico
+    const tiposInput = trim(req.query.tipo);
+    if (tiposInput) {
+      const tiposLista = tiposInput.split(',').map(s => trim(s)).filter(Boolean);
+      if (tiposLista.length > 0) {
+        const tipoIn = tiposLista.map((_, i) => `@tp${i}`).join(',');
+        tiposLista.forEach((t, i) => { params[`tp${i}`] = t; });
+        conds.push(`AND RTRIM(se1.E1_TIPO) IN (${tipoIn})`);
+      }
+    }
 
     const sql = `
       SELECT TOP ${limit}
@@ -143,12 +153,23 @@ module.exports = (app) => ({
         bordero: trim(r.bordero)
       }));
       const totalSaldo = titulos.reduce((s, t) => s + t.saldo, 0);
+      // Tipos distintos no resultado pra popular o dropdown do frontend
+      const tiposCount = new Map();
+      titulos.forEach(t => {
+        const k = t.tipo || '—';
+        tiposCount.set(k, (tiposCount.get(k) || 0) + 1);
+      });
+      const tipos_disponiveis = [...tiposCount.entries()]
+        .map(([cod, qtd]) => ({ cod, qtd }))
+        .sort((a, b) => b.qtd - a.qtd);
+
       return res.json({
         titulos,
         total: titulos.length,
         totalSaldo: Number(totalSaldo.toFixed(2)),
         truncado: titulos.length === limit,
-        formas_pgto_aceitas: FORMAS_BOLETO_DEFAULT.map(c => ({ cod: c, nome: FORMAS_NOMES[c] }))
+        formas_pgto_aceitas: FORMAS_BOLETO_DEFAULT.map(c => ({ cod: c, nome: FORMAS_NOMES[c] })),
+        tipos_disponiveis
       });
     } catch (err) {
       console.error('boleto-elegiveis:', err);
