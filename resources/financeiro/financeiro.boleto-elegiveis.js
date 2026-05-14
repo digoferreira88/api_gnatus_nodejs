@@ -105,7 +105,11 @@ module.exports = (app) => ({
       WHERE se1.D_E_L_E_T_ <> '*'
         AND se1.E1_FILIAL = '01'
         AND se1.E1_SALDO > 0
-        AND RTRIM(se1.E1_TIPO) IN ('NF','NFS','BOL','DUP')
+        -- Exclui apenas adiantamento (RA) e nota credito cliente (NCC) — sao
+        -- "creditos do cliente" e nao titulos cobraveis. Antes filtravamos
+        -- whitelist (NF, NFS, BOL, DUP) e o tipo DP (duplicata provisoria)
+        -- ficava de fora. Mesma regra do modulo Cobranca.
+        AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
         -- SO titulos SEM portador definido — operador escolhe o banco no envio
         AND (se1.E1_PORTADO IS NULL OR RTRIM(se1.E1_PORTADO) = '')
         -- Sem bordero ainda (ainda nao foi pro CNAB)
