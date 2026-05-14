@@ -134,24 +134,35 @@ module.exports = (app) => ({
       doc.moveTo(40, doc.y + 2).lineTo(555, doc.y + 2).strokeColor('#1a3f82').stroke();
       doc.moveDown(0.5);
 
-      // Pra cada etapa do catalogo + dados gravados
-      ETAPAS.forEach((meta, idx) => {
+      // Pra cada etapa do catalogo + dados gravados.
+      // Importante: posicionamento manual com `y` local, sempre passa
+      // (x, y, opts) explicito e atualiza y = doc.y depois de CADA text()
+      // pra acompanhar o avanco real do PDFKit.
+      ETAPAS.forEach((meta) => {
         const dados = etapasRows.find(x => x.etapa_codigo === meta.codigo) || null;
         const status = dados?.status || 'pendente';
         const cor = corStatus(status);
 
-        // Quebra de pagina se restar pouco espaco
         if (doc.y > 720) doc.addPage();
+        let y = doc.y;
 
-        // Bullet com numero
-        doc.circle(50, doc.y + 6, 8).fillAndStroke(cor, cor);
-        doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9).text(String(meta.codigo), 47, doc.y + 2.5, { lineBreak: false });
+        // Bullet circular com numero
+        doc.circle(50, y + 8, 9).fillAndStroke(cor, cor);
+        doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9)
+          .text(String(meta.codigo), 44, y + 4, { width: 12, align: 'center', lineBreak: false });
 
-        // Nome + status
-        doc.fillColor('#000').font('Helvetica-Bold').fontSize(11).text(meta.nome, 70, doc.y, { lineBreak: false });
-        doc.font('Helvetica').fontSize(8).fillColor(cor).text(`  [${status.toUpperCase()}]`, 70 + doc.widthOfString(meta.nome), doc.y - 14, { lineBreak: false });
+        // Nome da etapa
+        doc.fillColor('#000').font('Helvetica-Bold').fontSize(11)
+          .text(meta.nome, 70, y + 2, { width: 320, lineBreak: false });
 
-        let y = doc.y + 4;
+        // Badge de status (a direita do nome)
+        const badge = `[${status.toUpperCase()}]`;
+        doc.font('Helvetica-Bold').fontSize(8).fillColor(cor)
+          .text(badge, 400, y + 4, { width: 150, align: 'right', lineBreak: false });
+
+        y += 22;
+
+        // Linhas de metadado
         const linhasMeta = [];
         if (dados?.responsavel_nome_atual || dados?.responsavel_nome) {
           linhasMeta.push(`Responsavel: ${dados.responsavel_nome_atual || dados.responsavel_nome}${dados.responsavel_email ? ` (${dados.responsavel_email})` : ''}`);
@@ -160,7 +171,6 @@ module.exports = (app) => ({
         if (dados?.rnc_numero) linhasMeta.push(`RNC: ${dados.rnc_numero}`);
         if (dados?.observacao) linhasMeta.push(`Observacao: ${dados.observacao}`);
 
-        // Dados extras formatados
         const dx = dados?.dados_extras;
         if (dx && typeof dx === 'object' && Object.keys(dx).length > 0) {
           Object.entries(dx).forEach(([k, v]) => {
@@ -175,17 +185,19 @@ module.exports = (app) => ({
 
         doc.font('Helvetica').fontSize(8.5).fillColor('#3a4862');
         linhasMeta.forEach(l => {
-          doc.text(l, 70, y, { width: 480 });
-          y = doc.y;
+          doc.text(l, 70, y, { width: 485 });
+          y = doc.y;   // PDFKit atualiza doc.y depois de text com width — sincronizamos
         });
 
         if (dados?.atualizado_em) {
           doc.font('Helvetica-Oblique').fontSize(7.5).fillColor('#8093ac')
-            .text(`Atualizado em ${fmtDateTime(dados.atualizado_em)}`, 70, y);
+            .text(`Atualizado em ${fmtDateTime(dados.atualizado_em)}`, 70, y, { width: 485 });
           y = doc.y;
         }
 
-        doc.moveTo(40, y + 4).lineTo(555, y + 4).strokeColor('#e0e6f0').stroke();
+        // Separador entre etapas
+        y += 6;
+        doc.moveTo(40, y).lineTo(555, y).strokeColor('#e0e6f0').stroke();
         doc.y = y + 8;
       });
 
