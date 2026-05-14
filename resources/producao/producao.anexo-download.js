@@ -44,7 +44,12 @@ module.exports = (app) => ({
       if (!r.length) return res.status(404).json({ message: 'Anexo nao encontrado.' });
       const a = r[0];
 
-      let target = a.url;
+      // Pra anexos SharePoint, devolve AMBAS:
+      //   download_url = link curto/sem-auth pra baixar binario direto
+      //   web_url      = pagina do SharePoint com preview (Office Online),
+      //                  exige login M365 + acesso ao site Pipefy
+      let download_url = null;
+      let web_url = a.url || null;
 
       if (a.origem === 'sharepoint' && a.sharepoint_drive_id && a.sharepoint_item_id) {
         try {
@@ -52,32 +57,32 @@ module.exports = (app) => ({
             drive_id: a.sharepoint_drive_id,
             item_id: a.sharepoint_item_id
           });
-          if (!dl.url) throw new Error('Graph nao retornou downloadUrl');
-          target = dl.url;
+          if (dl.url) download_url = dl.url;
         } catch (err) {
           console.error('producao/anexo-download Graph erro:', err.response?.data || err.message);
-          // Fallback pra web_url se downloadUrl falhar (vai pedir login no SP)
-          if (!a.url) {
-            return res.status(502).json({
-              message: 'Falha ao obter URL do SharePoint: ' + (err.response?.data?.error?.message || err.message)
-            });
-          }
+          // Sem downloadUrl, ainda temos web_url do SharePoint salvo no PG
         }
+        if (!download_url && !web_url) {
+          return res.status(502).json({ message: 'Falha ao obter URL do SharePoint.' });
+        }
+      } else {
+        // Anexo origem='url_externa' — so tem web_url (a.url)
+        download_url = a.url;
       }
-
-      if (!target) return res.status(500).json({ message: 'Anexo sem URL definida.' });
 
       Auditoria.registrar(app, {
         modulo: 'Producao', submodulo: 'Anexo', acao: 'READ',
         severidade: 'INFO', req,
         entidade: 'prod_registro_anexo', entidadeId: a.id,
-        descricao: `Download anexo "${a.titulo}" (registro #${a.registro_id})`,
+        descricao: `Resolveu URL anexo "${a.titulo}" (registro #${a.registro_id})`,
         meta: { origem: a.origem, mime: a.mime_type, tamanho: a.tamanho_bytes }
       });
 
       return res.json({
         ok: true,
-        url: target,
+        download_url,                   // baixa direto, sem login
+        web_url,                        // preview SharePoint, requer login + permissao
+        url: download_url || web_url,   // compat: front antigo lia "url"
         name: a.nome_original || a.titulo,
         mime: a.mime_type,
         size: a.tamanho_bytes
