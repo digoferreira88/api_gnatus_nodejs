@@ -1,18 +1,22 @@
-// Cliente Microsoft Graph para upload/download/delete de arquivos no OneDrive
-// (server-to-server, client credentials). Usado pelo modulo de Producao pra
-// guardar anexos no mesmo destino que o Zapier hoje usa: OneDrive da conta
-// pipefy@gnatus.com.br, pasta "Pipefy compartilhada".
+// Cliente Microsoft Graph para upload/download/delete de arquivos num site
+// SharePoint. Usado pelo modulo de Producao pra guardar anexos dos cards.
 //
-// Mesma App Registration "Intranet GNATUS - Reserva de Salas" do m365.js,
-// requer permission de APLICATIVO `Files.ReadWrite.All` com admin consent.
+// IMPORTANTE: usa SharePoint SITE (Communication/Team site), nao OneDrive
+// pessoal. Tentamos OneDrive pessoal da pipefy@gnatus.com.br inicialmente mas
+// Application permissions nao acessam personal sites de forma confiavel.
+// O destino agora eh um site dedicado: https://gnatus.sharepoint.com/sites/Pipefy
+//
+// Requer permission de APLICATIVO `Files.ReadWrite.All` (ou idealmente
+// `Sites.Selected` + grant restrito ao site Pipefy) com admin consent no app
+// "Intranet GNATUS - Reserva de Salas".
 //
 // .env:
 //   M365_TENANT_ID / M365_CLIENT_ID / M365_CLIENT_SECRET (ja existem)
-//   GRAPH_STORAGE_UPN  — UPN da conta cujo OneDrive armazena os anexos
-//                        (default: pipefy@gnatus.com.br)
+//   GRAPH_SP_HOSTNAME   (default: gnatus.sharepoint.com)
+//   GRAPH_SP_SITE_PATH  (default: /sites/Pipefy)
 //
 // Limite: arquivo ate 4MB no PUT direto. Pra >4MB precisa upload session
-// (nao implementado — F1 nao mira nisso, fica pra quando aparecer caso real).
+// (nao implementado — F1 nao mira nisso).
 
 const axios = require('axios');
 const { ConfidentialClientApplication } = require('@azure/msal-node');
@@ -20,9 +24,10 @@ const { ConfidentialClientApplication } = require('@azure/msal-node');
 const TENANT_ID     = process.env.M365_TENANT_ID;
 const CLIENT_ID     = process.env.M365_CLIENT_ID;
 const CLIENT_SECRET = process.env.M365_CLIENT_SECRET;
-const STORAGE_UPN   = process.env.GRAPH_STORAGE_UPN || 'pipefy@gnatus.com.br';
+const SP_HOSTNAME   = process.env.GRAPH_SP_HOSTNAME  || 'gnatus.sharepoint.com';
+const SP_SITE_PATH  = process.env.GRAPH_SP_SITE_PATH || '/sites/Pipefy';
 
-const MAX_SIMPLE_UPLOAD = 4 * 1024 * 1024;  // 4MB — limite Graph PUT simples
+const MAX_SIMPLE_UPLOAD = 4 * 1024 * 1024;
 
 let msal = null;
 const getMsal = () => {
@@ -68,23 +73,34 @@ http.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Drive da conta de armazenamento. Cacheado — drive id nao muda.
+// IDs do site + default drive, cacheados — nao mudam.
+let cachedSiteId = null;
 let cachedDriveId = null;
+
+async function getSiteId() {
+  if (cachedSiteId) return cachedSiteId;
+  const cleanPath = SP_SITE_PATH.startsWith('/') ? SP_SITE_PATH : `/${SP_SITE_PATH}`;
+  const { data } = await http.get(`/sites/${SP_HOSTNAME}:${cleanPath}`);
+  cachedSiteId = data.id;
+  return cachedSiteId;
+}
+
+// Default drive do site = biblioteca "Documentos" (Shared Documents)
 async function getStorageDriveId() {
   if (cachedDriveId) return cachedDriveId;
-  const { data } = await http.get(`/users/${encodeURIComponent(STORAGE_UPN)}/drive`);
+  const siteId = await getSiteId();
+  const { data } = await http.get(`/sites/${siteId}/drive`);
   cachedDriveId = data.id;
   return cachedDriveId;
 }
 
-// Codifica componentes do path mantendo a barra. "Pipefy compartilhada/teste a.txt"
-// vira "Pipefy%20compartilhada/teste%20a.txt".
+// Codifica componentes do path mantendo a barra.
 function encodePath(p) {
   return String(p).split('/').filter(Boolean).map(encodeURIComponent).join('/');
 }
 
 // Upload de arquivo. `path` eh relativo ao root do drive, ex:
-// "Pipefy compartilhada/Producao Intranet/2026/00789801001_0000000001/etapa-03_rotulo.pdf"
+// "Producao Intranet/2026/00789801001_0000000001/etapa-03_rotulo.pdf"
 // Pastas intermediarias sao criadas automaticamente pelo Graph.
 async function uploadFile({ path, buffer, mime = 'application/octet-stream' }) {
   if (!path) throw new Error('path obrigatorio');
@@ -130,13 +146,21 @@ async function deleteFile({ drive_id, item_id }) {
 // Diagnostico — usado pelo script de teste.
 async function testConnection() {
   try {
+    const siteId = await getSiteId();
     const driveId = await getStorageDriveId();
-    return { ok: true, drive_id: driveId, upn: STORAGE_UPN };
+    return {
+      ok: true,
+      hostname: SP_HOSTNAME,
+      site_path: SP_SITE_PATH,
+      site_id: siteId,
+      drive_id: driveId
+    };
   } catch (e) {
     return {
       ok: false,
-      erro: e.response?.data?.error?.message || e.message,
-      upn: STORAGE_UPN
+      hostname: SP_HOSTNAME,
+      site_path: SP_SITE_PATH,
+      erro: e.response?.data?.error?.message || e.message
     };
   }
 }
@@ -145,8 +169,10 @@ module.exports = {
   uploadFile,
   getDownloadUrl,
   deleteFile,
+  getSiteId,
   getStorageDriveId,
   testConnection,
-  STORAGE_UPN,
+  SP_HOSTNAME,
+  SP_SITE_PATH,
   MAX_SIMPLE_UPLOAD
 };

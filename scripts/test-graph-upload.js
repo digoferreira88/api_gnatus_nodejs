@@ -1,6 +1,7 @@
 // Valida o servico Graph (services/graphFiles.js) end-to-end:
-//   1. Obtem token + descobre drive id da conta GRAPH_STORAGE_UPN
-//   2. Faz upload de arquivo TXT pequeno na pasta "Pipefy compartilhada/Producao Intranet/_teste/"
+//   1. Obtem token + resolve site id (gnatus.sharepoint.com:/sites/Pipefy)
+//      e drive id da biblioteca padrao "Documentos"
+//   2. Faz upload de arquivo TXT pequeno na pasta "Producao Intranet/_teste/"
 //   3. Pega download URL e baixa de volta pra confirmar conteudo identico
 //   4. Apaga o arquivo
 //
@@ -17,20 +18,20 @@ const Graph = require('../services/graphFiles');
 const linha = (s = '') => console.log(`\n----- ${s} -----`);
 
 (async () => {
-  linha('1. Test connection / drive discovery');
+  linha('1. Test connection / site + drive discovery');
   const conn = await Graph.testConnection();
   console.log(conn);
   if (!conn.ok) {
     console.error('Falhou na conexao. Verifique:');
     console.error('  - M365_TENANT_ID/CLIENT_ID/CLIENT_SECRET no .env');
     console.error('  - Permission "Files.ReadWrite.All" (Application) com admin consent no app registration');
-    console.error(`  - Conta ${Graph.STORAGE_UPN} existe e tem licenca M365 (OneDrive)`);
+    console.error(`  - Site existe e eh acessivel: https://${Graph.SP_HOSTNAME}${Graph.SP_SITE_PATH}`);
     process.exit(1);
   }
 
   const conteudoOriginal = `Teste graphFiles.js — ${new Date().toISOString()}\nbytes aleatorios: ${Math.random()}`;
   const buf = Buffer.from(conteudoOriginal, 'utf8');
-  const path = `Pipefy compartilhada/Producao Intranet/_teste/test-${Date.now()}.txt`;
+  const path = `Producao Intranet/_teste/test-${Date.now()}.txt`;
 
   linha(`2. Upload "${path}" (${buf.length} bytes)`);
   let up;
