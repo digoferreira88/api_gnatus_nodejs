@@ -175,7 +175,7 @@ module.exports = (app) => ({
         if (dx && typeof dx === 'object' && Object.keys(dx).length > 0) {
           Object.entries(dx).forEach(([k, v]) => {
             let val = v;
-            if (Array.isArray(v)) val = v.map(x => x === true ? '✔' : x === false ? '✗' : String(x)).join(', ');
+            if (Array.isArray(v)) val = v.map(x => x === true ? '[X]' : x === false ? '[ ]' : String(x)).join(', ');
             else if (typeof v === 'object' && v !== null) val = JSON.stringify(v);
             if (val !== '' && val != null) linhasMeta.push(`${k}: ${val}`);
           });
@@ -229,14 +229,20 @@ module.exports = (app) => ({
       }
 
       // ========== Rodape em todas as paginas ==========
+      // Critico: snapshot do count ANTES do loop (escrever rodape pode
+      // criar novas paginas se Y > margem inferior). E desliga autoBreak
+      // por pagina pra evitar overflow virar pagina nova.
       const range = doc.bufferedPageRange();
-      for (let i = range.start; i < range.start + range.count; i++) {
+      const totalPaginas = range.count;
+      const dataStr = fmtDateTime(new Date());
+      for (let i = range.start; i < range.start + totalPaginas; i++) {
         doc.switchToPage(i);
+        doc.page.margins.bottom = 0;   // permite escrever na area de rodape sem trigger autoBreak
         doc.font('Helvetica').fontSize(7.5).fillColor('#8093ac');
-        doc.text(`Intranet GNATUS · OP ${reg.op_protheus} · ${fmtDateTime(new Date())}`,
-          40, 805, { width: 410, align: 'left' });
-        doc.text(`Pagina ${i - range.start + 1} de ${range.count}`,
-          450, 805, { width: 105, align: 'right' });
+        doc.text(`Intranet GNATUS · OP ${reg.op_protheus} · ${dataStr}`,
+          40, 815, { width: 410, align: 'left', lineBreak: false });
+        doc.text(`Pagina ${i - range.start + 1} de ${totalPaginas}`,
+          450, 815, { width: 105, align: 'right', lineBreak: false });
       }
 
       doc.end();
