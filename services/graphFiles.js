@@ -114,6 +114,13 @@ async function uploadFile({ path, buffer, mime = 'application/octet-stream' }) {
   const { data } = await http.put(url, buffer, {
     headers: { 'Content-Type': mime }
   });
+
+  // Faz check-in/publish automatico. Sem isso, bibliotecas com "Require check
+  // out" deixam o arquivo em rascunho — invisivel pra outros usuarios e
+  // 404 no web_url. Tenta os 2 endpoints; ignora erros 4xx (arquivo ja
+  // publicado, lib sem versionamento minor, etc).
+  await publishItem(driveId, data.id);
+
   return {
     drive_id: driveId,
     item_id: data.id,
@@ -123,6 +130,33 @@ async function uploadFile({ path, buffer, mime = 'application/octet-stream' }) {
     name: data.name,
     mime: data.file?.mimeType || mime
   };
+}
+
+// Tenta tornar o item visivel: checkin (se estava em check-out) + publish
+// (se a lib usa minor versions). Erros sao logados mas nao propagam — o
+// upload PUT em si ja teve sucesso.
+async function publishItem(drive_id, item_id) {
+  const tentativas = [
+    { url: `/drives/${drive_id}/items/${item_id}/checkin`, body: { checkInAs: 'published', comment: 'Upload Intranet' } },
+    { url: `/drives/${drive_id}/items/${item_id}/publish`,  body: { comment: 'Upload Intranet' } }
+  ];
+  const resultados = {};
+  for (const t of tentativas) {
+    try {
+      await http.post(t.url, t.body);
+      resultados[t.url] = 'ok';
+    } catch (e) {
+      const code = e.response?.status;
+      const msg = e.response?.data?.error?.message || e.message;
+      resultados[t.url] = `${code} ${msg}`;
+      // 4xx geralmente significa que a operacao nao se aplica (arquivo nao em
+      // check-out, biblioteca sem minor version, etc). Nao bloqueia.
+      if (code && code >= 500) {
+        console.warn(`[graphFiles] publishItem ${t.url} falhou: ${msg}`);
+      }
+    }
+  }
+  return resultados;
 }
 
 // Devolve URL de download direto (curta, valida ~1h, sem auth).
@@ -169,6 +203,7 @@ module.exports = {
   uploadFile,
   getDownloadUrl,
   deleteFile,
+  publishItem,
   getSiteId,
   getStorageDriveId,
   testConnection,
