@@ -38,6 +38,14 @@ module.exports = (app) => ({
     if (!reg.length) return res.status(404).json({ message: 'Registro nao encontrado.' });
     if (reg[0].status === 'concluido') return res.status(409).json({ message: 'Registro ja concluido.' });
 
+    // Snapshot do estado atual da etapa pra detectar mudanca de status (gestao)
+    const etapaAtual = await Pg.connectAndQuery(
+      `SELECT id, status, responsavel_id FROM tab_prod_registro_etapa WHERE registro_id = @id AND etapa_codigo = @cod`,
+      { id, cod: codigo }
+    );
+    const statusAntes = etapaAtual[0]?.status || null;
+    const etapaPgId = etapaAtual[0]?.id || null;
+
     const updates = [];
     const params = { id, cod: codigo };
 
@@ -83,6 +91,19 @@ module.exports = (app) => ({
         UPDATE tab_prod_registro_etapa
            SET ${updates.join(', ')}
          WHERE registro_id = @id AND etapa_codigo = @cod`, params);
+
+      // Log de transicao de status (gestao). Grava se: status mudou OU eh
+      // o primeiro registro de status (status_de = NULL). Permite calcular
+      // tempo entre transicoes (em_andamento -> aprovado etc).
+      if (etapaPgId && 'status' in req.body && params.status !== statusAntes) {
+        const respFinal = 'rid' in params ? params.rid : (etapaAtual[0]?.responsavel_id || null);
+        await Pg.connectAndQuery(`
+          INSERT INTO tab_prod_registro_etapa_log
+            (registro_etapa_id, registro_id, etapa_codigo, status_de, status_para, responsavel_id, mudou_por)
+          VALUES (@eid, @id, @cod, @sde, @spara, @rid, @mp)`,
+          { eid: etapaPgId, id, cod: codigo, sde: statusAntes, spara: params.status, rid: respFinal, mp: user.ID }
+        );
+      }
 
       // Avancar fase: se status=aprovado e for fase atual, avanca pra proxima
       const avancar = req.body.avancarFase === true;
