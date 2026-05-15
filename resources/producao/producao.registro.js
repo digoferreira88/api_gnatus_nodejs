@@ -34,6 +34,19 @@ module.exports = (app) => ({
          WHERE a.registro_id = @id
          ORDER BY a.enviado_em DESC`, { id });
 
+      // Instrucoes de trabalho do produto (catalogo central) — devolve junto
+      // pra UI mostrar dentro de cada accordion de etapa. Linkagem dinamica
+      // via produto_codigo, sempre versao mais recente.
+      const instrucoesRows = await Pg.connectAndQuery(`
+        SELECT id, etapa_codigo, titulo, web_url,
+               sharepoint_drive_id, sharepoint_item_id,
+               nome_original, mime_type, tamanho_bytes, atualizado_em
+          FROM tab_prod_instrucao
+         WHERE produto_codigo = @prod
+         ORDER BY etapa_codigo NULLS FIRST`,
+        { prod: headRows[0].produto_codigo }
+      );
+
       // Junta etapa com metadata do catalogo
       const etapas = ETAPAS.map(meta => {
         const e = etapasRows.find(x => x.etapa_codigo === meta.codigo) || null;
@@ -62,7 +75,8 @@ module.exports = (app) => ({
       return res.json({
         registro: headRows[0],
         etapas,
-        anexos: anexosRows
+        anexos: anexosRows,
+        instrucoes: instrucoesRows
       });
     } catch (err) {
       console.error('Erro producao/registro:', err);
