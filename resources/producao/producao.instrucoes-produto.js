@@ -38,10 +38,10 @@ module.exports = (app) => ({
       let descricao = null;
       try {
         const d = await Protheus.connectAndQuery(
-          `SELECT TOP 1 RTRIM(B1_DESC) desc FROM SB1010 WITH (NOLOCK) WHERE RTRIM(B1_COD) = @cod AND D_E_L_E_T_ <> '*'`,
+          `SELECT TOP 1 RTRIM(B1_DESC) AS descricao FROM SB1010 WITH (NOLOCK) WHERE RTRIM(B1_COD) = @cod AND D_E_L_E_T_ <> '*'`,
           { cod: codigo }
         );
-        descricao = d[0]?.desc || null;
+        descricao = d[0]?.descricao || null;
       } catch { /* protheus offline nao bloqueia */ }
 
       return res.json({

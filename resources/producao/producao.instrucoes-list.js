@@ -37,14 +37,15 @@ module.exports = (app) => ({
       const placeholders = codigos.map((_, i) => `@p${i}`).join(',');
       const params = {};
       codigos.forEach((c, i) => { params[`p${i}`] = c; });
-      const desc = await Protheus.connectAndQuery(`
-        SELECT RTRIM(B1_COD) cod, RTRIM(B1_DESC) desc, RTRIM(B1_TIPO) tipo
+      // Nao usar 'desc' como alias — eh keyword no SQL Server e quebra o parser
+      const descRows = await Protheus.connectAndQuery(`
+        SELECT RTRIM(B1_COD) AS cod, RTRIM(B1_DESC) AS descricao, RTRIM(B1_TIPO) AS tipo
           FROM SB1010 WITH (NOLOCK)
          WHERE D_E_L_E_T_ <> '*'
            AND RTRIM(B1_COD) IN (${placeholders})`,
         params
       );
-      const descMap = new Map(desc.map(d => [d.cod, { descricao: d.desc, tipo: d.tipo }]));
+      const descMap = new Map(descRows.map(d => [d.cod, { descricao: d.descricao, tipo: d.tipo }]));
 
       let produtos = rows.map(r => ({
         produto_codigo: r.produto_codigo,
