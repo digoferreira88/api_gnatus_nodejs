@@ -7,6 +7,9 @@
 
 const trim = (v) => String(v || '').trim();
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6001, 6002]);
+
+// SVG removido — executavel em browser. Outros tipos ativos (html/swf) idem.
 const mimeFromExt = (name) => {
   const ext = (name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
   const map = {
@@ -16,7 +19,7 @@ const mimeFromExt = (name) => {
     xml: 'application/xml',
     json: 'application/json',
     jpg: 'image/jpeg', jpeg: 'image/jpeg',
-    png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+    png: 'image/png', gif: 'image/gif', webp: 'image/webp',
     doc: 'application/msword',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     xls: 'application/vnd.ms-excel',
@@ -28,10 +31,15 @@ const mimeFromExt = (name) => {
   };
   return map[ext] || 'application/octet-stream';
 };
+const SAFE_INLINE = new Set([
+  'application/pdf', 'text/plain; charset=utf-8', 'text/csv',
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp'
+]);
 
 module.exports = (app) => ({
   verb: 'get',
   route: '/anexo/:codObj',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const user = req.user && req.user[0];
@@ -76,10 +84,12 @@ module.exports = (app) => ({
       const mime = mimeFromExt(fileName);
 
       const safeName = fileName.replace(/[^\x20-\x7E]/g, '_');
+      const disposicao = SAFE_INLINE.has(mime) ? 'inline' : 'attachment';
       res.setHeader('Content-Type', mime);
       res.setHeader('Content-Length', buffer.length);
       res.setHeader('Content-Disposition',
-        `inline; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        `${disposicao}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'private, max-age=300');
       return res.end(buffer);
     } catch (err) {

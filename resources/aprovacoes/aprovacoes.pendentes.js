@@ -10,14 +10,26 @@
 const trim = (v) => String(v || '').trim();
 const toN  = (v) => Number(v || 0);
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([13001]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/pendentes',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
-    const { Protheus } = app.services;
+    const { Pg, Protheus } = app.services;
     const user = req.user && req.user[0];
     if (!user) return res.status(401).json({ message: 'Não autenticado.' });
+
+    // Admin "ver todas" baseado em PERMISSAO (0 = admin universal), nao mais
+    // por string de email — comparacao de email permitia bypass se alguem
+    // mudasse o email do proprio user.
+    const isAdminCheck = await Pg.connectAndQuery(
+      `SELECT 1 FROM tab_intranet_usr_permissoes WHERE id_user = @id AND id_permissao = 0 LIMIT 1`,
+      { id: user.ID }
+    );
+    const isAdmin = isAdminCheck.length > 0;
 
     const codProth = trim(user.CODIGO_PROTHEUS);
     if (!codProth) {
@@ -48,10 +60,9 @@ module.exports = (app) => ({
       //      ... outros = não pendentes
       //    Pendente legítimo: CR_STATUS='02' AND CR_LIBAPRO vazio (ninguém liberou ainda)
       //    Visões:
-      //      (a) admin (admin@gnatus.com.br): vê TODAS pendentes (auditoria)
+      //      (a) admin (perm 0): vê TODAS pendentes (auditoria)
       //      (b) aprovador normal: onde CR_USER = codProth (nomeado direto)
       //          OU onde o doc é de grupo SAL onde o user é membro (alçada de grupo)
-      const isAdmin = trim(user.EMAIL).toLowerCase() === 'admin@gnatus.com.br';
       const scrPendentes = await Protheus.connectAndQuery(
         isAdmin
         ? // Admin: vê tudo pendente (sem filtro por usuário/grupo)

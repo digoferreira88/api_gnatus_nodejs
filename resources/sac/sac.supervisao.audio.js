@@ -17,9 +17,12 @@ const checarPerm = async (Pg, idUser) => {
   return r.length > 0;
 };
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6002]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/supervisao/audio/:uniqueid',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg, Falemais } = app.services;

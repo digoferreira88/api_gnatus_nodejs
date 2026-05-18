@@ -1,9 +1,12 @@
 // Remove um mapeamento BU -> Equipe.
 // Body: { buCodigo }
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002]);
+
 module.exports = (app) => ({
   verb: 'delete',
   route: '/bu-equipe',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

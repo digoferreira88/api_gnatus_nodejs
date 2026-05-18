@@ -7,9 +7,12 @@ const STATUS_VALIDOS = [
   'PROTESTO', 'JURIDICO', 'TERCEIRIZADA', 'NEGATIVADO', 'PERDA'
 ];
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002]);
+
 module.exports = (app) => ({
   verb: 'put',
   route: '/status/:cod/:loja',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

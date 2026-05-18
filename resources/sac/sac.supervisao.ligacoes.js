@@ -19,9 +19,12 @@ const diffDias = (a, b) => {
   return Math.floor((db - da) / (24 * 3600 * 1000));
 };
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6002]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/supervisao/ligacoes',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg, Falemais } = app.services;

@@ -5,9 +5,12 @@
 
 const trim = (v) => String(v || '').trim();
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6001]);
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/discar',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg, Falemais } = app.services;

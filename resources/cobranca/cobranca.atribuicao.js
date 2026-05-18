@@ -4,9 +4,12 @@
 // Body: { clienteCod, clienteLoja, carteira?, observacao? }
 // Se uma das chaves nao for enviada, o valor anterior eh preservado (COALESCE).
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002]);
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/atribuicao',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

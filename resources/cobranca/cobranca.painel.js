@@ -31,9 +31,12 @@ const faixaAtraso = (dias) => {
   return { codigo: 'A_90_MAIS', label: '90+ dias', cor: '#4a0e0e' };
 };
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/painel',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Protheus, Pg } = app.services;

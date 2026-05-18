@@ -19,12 +19,15 @@
 
 const { Pool } = require('pg');
 
+if (!process.env.PG_PASSWORD) {
+    throw new Error('PG_PASSWORD nao definido no .env — abortando boot (nao usa fallback hardcoded).');
+}
 const config = {
     host:     process.env.PG_HOST     || 'localhost',
     port:     Number(process.env.PG_PORT || 5432),
     database: process.env.PG_DATABASE || 'intranet',
     user:     process.env.PG_USER     || 'intranet',
-    password: process.env.PG_PASSWORD || 'intranet_dev_2026',
+    password: process.env.PG_PASSWORD,
     max: Number(process.env.PG_POOL_MAX || 10),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 15000

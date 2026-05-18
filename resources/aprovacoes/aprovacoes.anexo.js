@@ -15,6 +15,11 @@
 const trim = (v) => String(v || '').trim();
 const Auditoria = require('../../services/auditoria');
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([13001]);
+
+// SVG/HTML/SWF removidos da whitelist por serem ativos (executam JS no dominio
+// confiavel da intranet). Se necessario no futuro, servir SOMENTE com
+// Content-Disposition: attachment + CSP sandbox.
 const mimeFromExt = (name) => {
   const ext = (name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
   const map = {
@@ -24,7 +29,7 @@ const mimeFromExt = (name) => {
     xml: 'application/xml',
     json: 'application/json',
     jpg: 'image/jpeg', jpeg: 'image/jpeg',
-    png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+    png: 'image/png', gif: 'image/gif', webp: 'image/webp',
     doc: 'application/msword',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     xls: 'application/vnd.ms-excel',
@@ -37,9 +42,17 @@ const mimeFromExt = (name) => {
   return map[ext] || 'application/octet-stream';
 };
 
+// Tipos que abrem preview seguro inline (sao renderizados pelo browser
+// como dados, nao executam codigo). Outros viram attachment.
+const SAFE_INLINE = new Set([
+  'application/pdf', 'text/plain; charset=utf-8', 'text/csv',
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp'
+]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/anexo/:codObj',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const user = req.user && req.user[0];
@@ -86,10 +99,14 @@ module.exports = (app) => ({
 
       // ASCII-safe filename + UTF-8 RFC 5987 (suporta acentos)
       const safeName = fileName.replace(/[^\x20-\x7E]/g, '_');
+      // Tipos seguros (PDF/JPG/PNG/etc) abrem inline; resto forca download
+      const disposicao = SAFE_INLINE.has(mime) ? 'inline' : 'attachment';
       res.setHeader('Content-Type', mime);
       res.setHeader('Content-Length', buffer.length);
       res.setHeader('Content-Disposition',
-        `inline; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        `${disposicao}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+      // X-Content-Type-Options nosniff impede browser de "adivinhar" tipo
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'private, max-age=300');
 
       // Auditoria de acesso a documento (rastreio de quem viu o que)

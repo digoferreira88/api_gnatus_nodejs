@@ -3,9 +3,12 @@
 const trim = (v) => String(v || '').trim();
 const toNumber = (v) => Number(v || 0);
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/minhas-acoes',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;

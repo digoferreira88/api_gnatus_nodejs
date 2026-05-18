@@ -8,9 +8,12 @@
 
 const trim = (v) => String(v || '').trim();
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6001, 6002]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/anexos/:cod/:loja',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;

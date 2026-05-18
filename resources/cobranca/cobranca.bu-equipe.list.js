@@ -1,9 +1,12 @@
 // Lista todos os mapeamentos BU -> Equipe (substitui aba "apoio" da planilha).
 // Tambem retorna a lista distinta de equipes pra autocomplete na UI.
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/bu-equipe',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

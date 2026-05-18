@@ -1,9 +1,12 @@
 // Cria ou atualiza um mapeamento BU -> Equipe.
 // Body: { buCodigo, equipe }
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002]);
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/bu-equipe',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

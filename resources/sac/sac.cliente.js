@@ -13,9 +13,12 @@ const calcStatusPedido = (r) => {
   return { codigo: 'ABERTO', label: 'Em aberto', cor: '#5b9bd5' };
 };
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6001, 6002]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/cliente',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;

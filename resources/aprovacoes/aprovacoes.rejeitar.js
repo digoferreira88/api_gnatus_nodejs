@@ -5,9 +5,12 @@ const trim = (v) => String(v || '').trim();
 const tiposValidos = new Set(['SC', 'PC']);
 const Auditoria = require('../../services/auditoria');
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([13001]);
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/:tipo/:numero/rejeitar',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;

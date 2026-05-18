@@ -1,7 +1,10 @@
 // Adiciona comentário interno (visível apenas para equipe) em um cliente
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002]);
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/comentario',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

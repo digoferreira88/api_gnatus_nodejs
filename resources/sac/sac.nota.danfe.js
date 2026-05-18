@@ -27,9 +27,12 @@ const esc = (s) => String(s || '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6001, 6002]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/nota/danfe',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;

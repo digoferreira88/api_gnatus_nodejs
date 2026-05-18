@@ -23,9 +23,12 @@ const CFOPS_VENDA = [
   '7101','7102','7105','7106','7127','7129','7251','7301','7358','7651','7654','7667'
 ];
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/faturamento-vs-inadimplencia',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Protheus, Pg } = app.services;

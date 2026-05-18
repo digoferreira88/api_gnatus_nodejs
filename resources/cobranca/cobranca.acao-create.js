@@ -2,9 +2,12 @@
 const TIPOS_ACAO = ['LIGACAO','EMAIL','WHATSAPP','VISITA','ACORDO','BAIXA_PARCIAL','OUTRO'];
 const RESULTADOS = ['SEM_CONTATO','PROMESSA_PAGAMENTO','RECUSA','PAGO','ACORDO_FECHADO','OUTRO'];
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002]);
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/acao',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

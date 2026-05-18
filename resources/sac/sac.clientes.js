@@ -3,9 +3,12 @@ const trim = (v) => String(v || '').trim();
 // Remove máscara de CPF/CNPJ deixando só dígitos
 const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6001, 6002]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/clientes',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;

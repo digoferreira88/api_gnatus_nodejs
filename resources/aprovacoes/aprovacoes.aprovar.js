@@ -1,8 +1,8 @@
 // Aprova SC ou Pedido (IP) via API REST do Protheus.
 //
-// Endpoint da Gnatus:
-//   POST http://protheus.gnatus.com.br:8081/rest/AprovaCompras/aprovar
-//   Auth: Basic admin:Gn@tu5
+// Endpoint custom Develsoft:
+//   POST {PROTHEUS_API_URL}/AprovaCompras/aprovar
+//   Auth: Basic (credenciais em .env — NUNCA commitar credenciais reais)
 //   Body: { tipo, filial, numero, login, observacao }
 //
 // Mapeamento tipo:
@@ -12,19 +12,19 @@
 // Login do aprovador: SYS_USR.USR_CODIGO buscado pelo CODIGO_PROTHEUS (USR_ID)
 // do usuário logado.
 //
-// Variáveis .env:
-//   PROTHEUS_API_URL    = http://protheus.gnatus.com.br:8081/rest
-//   PROTHEUS_API_USER   = admin
-//   PROTHEUS_API_PASS   = Gn@tu5
-//   PROTHEUS_API_FILIAL = 01
+// Variáveis .env obrigatórias:
+//   PROTHEUS_API_URL    PROTHEUS_API_USER    PROTHEUS_API_PASS    PROTHEUS_API_FILIAL
 
 const trim = (v) => String(v || '').trim();
 const tiposValidos = new Set(['SC', 'PC']);
 const Auditoria = require('../../services/auditoria');
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([13001]);
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/:tipo/:numero',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;

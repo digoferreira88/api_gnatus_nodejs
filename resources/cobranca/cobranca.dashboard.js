@@ -55,9 +55,12 @@ const semanaIso = (ymd) => {
   return { semana, ano: ref.getUTCFullYear() };
 };
 
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/dashboard',
+  middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
     const { Protheus, Pg } = app.services;
