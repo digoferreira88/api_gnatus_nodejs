@@ -27,10 +27,13 @@ const CFOPS_SAIDA_VENDA = [
   '6401','6402','6403','6404','6651','6652','6653','6654','6655','6656','6667','6932','6933'
 ];
 
-// Tipos de movimentacao SD3 que representam CONSUMO (saida) — RE0 (requisicao
-// de producao) e similares. PR0 = producao (entrada). Pra MP, focamos em RE0/RE.
-// (Lista pode ser ajustada conforme padronizacao Protheus da Gnatus.)
-const TIPOS_SD3_SAIDA = ['RE0', 'RE1', 'RE5'];
+// Tipos de movimentacao SD3 que representam CONSUMO (saida).
+// Padrao Protheus: TM 010-499 = entrada, 500-999 = saida.
+// Gnatus usa 999 (requisicao manual — gigante), 501/502/505 (requisicoes
+// secundarias). Lista confirmada via:
+//   SELECT D3_TM, COUNT(*), SUM(D3_QUANT) FROM SD3010 ... GROUP BY D3_TM
+// Adicionar TMs novas aqui se a contabilidade reclamar de movimentos faltando.
+const TIPOS_SD3_SAIDA = ['999', '501', '502', '505'];
 
 // Le saldo atual de SB2 + ficha B1 (inclui B1_PE = lead time)
 async function lerSaldoAtual(Protheus) {
@@ -91,13 +94,16 @@ async function upsertProdutoMeta(Pg, saldo) {
 }
 
 // Saidas SD2 (vendas) por (cod, armazem) num mes (formato YYYYMM01..YYYYMM31).
+// IMPORTANTE: valor_saidas = CMV (D2_QUANT * D2_CUSTO1), nao faturamento.
+// Antes usava D2_TOTAL (faturamento) — inflava o giro pra produtos com margem
+// alta. Pra giro de estoque, CMV eh o numero correto.
 async function lerSaidasVendas(Protheus, ymdIni, ymdFim) {
   const cfopList = CFOPS_SAIDA_VENDA.map(c => `'${c}'`).join(',');
   return Protheus.connectAndQuery(`
-    SELECT RTRIM(sd2.D2_COD)   cod_produto,
-           RTRIM(sd2.D2_LOCAL) armazem,
-           SUM(sd2.D2_QUANT)   qtd_saidas,
-           SUM(sd2.D2_TOTAL)   valor_saidas
+    SELECT RTRIM(sd2.D2_COD)               cod_produto,
+           RTRIM(sd2.D2_LOCAL)             armazem,
+           SUM(sd2.D2_QUANT)               qtd_saidas,
+           SUM(sd2.D2_QUANT * sd2.D2_CUSTO1) valor_saidas
       FROM SD2010 sd2 WITH (NOLOCK)
      WHERE sd2.D_E_L_E_T_ <> '*'
        AND sd2.D2_FILIAL = '01'
