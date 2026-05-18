@@ -41,15 +41,20 @@ module.exports = (app) => ({
       const params = { qLike: `%${qProth}%` };
       if (usaDigitos) params.qDigLike = `%${qDigitos}%`;
 
-      // SQ3010 e SQB010 podem ter código com leading zero — tenta JOIN tolerante
-      // Busca em TODAS as filiais (Gnatus tem colaboradores em 01 e 02)
+      // Considera ATIVO: nao deletado, sem data de demissao real, e RA_SITFOLH
+      // diferente de 'D' (demitido). Antes o filtro era SITFOLH vazio — o que
+      // tirava da lista colaboradores em ferias (F), auxilio (A), afastamento (G)
+      // ou gestante, que continuam ativos e precisam do termo.
+      // Inclui RA_SITFOLH no retorno pra UI poder mostrar badge "em ferias" etc.
+      // Busca em TODAS as filiais (Gnatus tem colaboradores em 01 e 02).
       const r = await Protheus.connectAndQuery(
         `SELECT TOP 25
-                RTRIM(sra.RA_FILIAL) filial,
-                RTRIM(sra.RA_MAT)    matricula,
-                RTRIM(sra.RA_NOME)   nome,
-                RTRIM(sra.RA_CIC)    cpf,
-                RTRIM(sra.RA_EMAIL)  email,
+                RTRIM(sra.RA_FILIAL)  filial,
+                RTRIM(sra.RA_MAT)     matricula,
+                RTRIM(sra.RA_NOME)    nome,
+                RTRIM(sra.RA_CIC)     cpf,
+                RTRIM(sra.RA_EMAIL)   email,
+                RTRIM(sra.RA_SITFOLH) situacao,
                 RTRIM(sq3.Q3_DESCSUM) cargo,
                 RTRIM(sqb.QB_DESCRIC) departamento
            FROM SRA010 sra WITH (NOLOCK)
@@ -58,7 +63,8 @@ module.exports = (app) => ({
            LEFT JOIN SQB010 sqb WITH (NOLOCK)
              ON RTRIM(sqb.QB_DEPTO) = RTRIM(sra.RA_DEPTO) AND sqb.D_E_L_E_T_ <> '*'
           WHERE sra.D_E_L_E_T_ <> '*'
-            AND (sra.RA_SITFOLH IS NULL OR RTRIM(sra.RA_SITFOLH) = '')
+            AND RTRIM(COALESCE(sra.RA_SITFOLH, '')) <> 'D'
+            AND (sra.RA_DEMISSA IS NULL OR RTRIM(sra.RA_DEMISSA) = '')
             AND (
               UPPER(sra.RA_NOME) LIKE @qLike
               ${condDigitos}
@@ -66,6 +72,12 @@ module.exports = (app) => ({
           ORDER BY sra.RA_NOME, sra.RA_FILIAL`,
         params
       );
+
+      // Decodifica situacao pra label amigavel (UI mostra como badge)
+      const sitLabel = (s) => ({
+        '':  '', 'F': 'Em ferias', 'A': 'Auxilio doenca',
+        'G': 'Afastado', 'T': 'Transferido', 'O': 'Outros'
+      }[trim(s)] || '');
 
       return res.json({
         total: r.length,
@@ -76,7 +88,9 @@ module.exports = (app) => ({
           cpf: trim(x.cpf),
           email: trim(x.email),
           cargo: trim(x.cargo),
-          departamento: trim(x.departamento)
+          departamento: trim(x.departamento),
+          situacao: trim(x.situacao),
+          situacaoLabel: sitLabel(x.situacao)
         }))
       });
     } catch (err) {
