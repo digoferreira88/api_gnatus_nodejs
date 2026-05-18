@@ -160,19 +160,32 @@ module.exports = (app) => ({
       const mapRecebPrev = new Map(recebimentosPrevistos.map(r => [trim(r.ano_mes), N(r.valor_pendente)]));
       const mapOP = new Map(ordensProd.map(r => [trim(r.ano_mes), N(r.valor)]));
 
+      // serie:
+      //   pedidos_colocados = SO compras SC7 (sem misturar com SC2 OP — corrige
+      //                       inflacao de jun em diante reportada pela operacao)
+      //   ordens_producao   = SC2 separado, exibido como info adicional
+      //   consumo           = SD2 vendas (CMV) + SD3 producao (D3_CUSTO1)
+      //   delta             = pedidos_colocados - consumo
       const serie = anosMes.map(am => {
         const consumo = mapConsumo.get(am) || 0;
-        const pedidos = (mapPedidos.get(am) || 0) + (mapOP.get(am) || 0);
+        const pedidos = mapPedidos.get(am) || 0;
+        const opValor = mapOP.get(am) || 0;
         const receb   = mapRecebPrev.get(am) || 0;
         const delta   = pedidos - consumo;
         return {
           ano_mes: am,
           consumo: Number(consumo.toFixed(2)),
           pedidos_colocados: Number(pedidos.toFixed(2)),
+          ordens_producao: Number(opValor.toFixed(2)),
           recebimentos_previstos: Number(receb.toFixed(2)),
           delta: Number(delta.toFixed(2))
         };
       });
+
+      // Medias da janela — exibidas como linha horizontal no grafico do front
+      // pra validar tendencia (ratio = mediaPedidos / mediaConsumo).
+      const medConsumo = serie.reduce((s, r) => s + r.consumo, 0) / Math.max(serie.length, 1);
+      const medPedidos = serie.reduce((s, r) => s + r.pedidos_colocados, 0) / Math.max(serie.length, 1);
 
       // 6) Projecao 3 meses a frente — regressao linear do consumo
       // Pra entradas, projetamos com base nos recebimentos previstos ja conhecidos
@@ -181,11 +194,12 @@ module.exports = (app) => ({
       const consumoArr  = serie.map(s => s.consumo);
       const projConsumo = Calc.projecaoLinear(consumoArr, 3);
 
+      // Projecao usa media dos ULTIMOS 3 meses (mais responsiva a mudanca recente)
       const ultimos3Pedidos = serie.slice(-3).map(s => s.pedidos_colocados);
-      const mediaPedidos = ultimos3Pedidos.length > 0
+      const mediaPedidosUlt3 = ultimos3Pedidos.length > 0
         ? ultimos3Pedidos.reduce((s, v) => s + v, 0) / ultimos3Pedidos.length
         : 0;
-      const projPedidos = Array(3).fill(Number(mediaPedidos.toFixed(2)));
+      const projPedidos = Array(3).fill(Number(mediaPedidosUlt3.toFixed(2)));
 
       // Anos-mes projetados
       const projAnosMes = [];
@@ -213,20 +227,18 @@ module.exports = (app) => ({
       const ultPedidos = serie[serie.length - 1]?.pedidos_colocados || 0;
       const ultConsumo = serie[serie.length - 1]?.consumo || 0;
       const ultReceb   = serie[serie.length - 1]?.recebimentos_previstos || 0;
-
-      const mediaConsumo = serie.reduce((s, r) => s + r.consumo, 0) / Math.max(serie.length, 1);
-      const tend = Calc.classificarTendencia(mediaConsumo, mediaPedidos);
+      const tend = Calc.classificarTendencia(medConsumo, medPedidos);
 
       const kpis = {
         pedidos_colocados_mes_atual: Number(ultPedidos.toFixed(2)),
         recebimento_previsto_mes_atual: Number(ultReceb.toFixed(2)),
         consumo_mes_atual: Number(ultConsumo.toFixed(2)),
-        consumo_medio_janela: Number(mediaConsumo.toFixed(2)),
-        pedidos_medio_janela: Number(mediaPedidos.toFixed(2)),
+        consumo_medio_janela: Number(medConsumo.toFixed(2)),
+        pedidos_medio_janela: Number(medPedidos.toFixed(2)),
         saldo_atual: Number(saldoAtual.toFixed(2)),
         tendencia: tend.tendencia,                // 'aumento' | 'reducao' | 'neutro'
         tendencia_ratio: tend.ratio,
-        delta_mensal_medio: Number((mediaPedidos - mediaConsumo).toFixed(2))
+        delta_mensal_medio: Number((medPedidos - medConsumo).toFixed(2))
       };
 
       // 8) Top produtos com risco de overstock futuro

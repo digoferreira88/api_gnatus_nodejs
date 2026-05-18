@@ -98,15 +98,20 @@ module.exports = (app) => ({
       const giroAnual = Calc.calcularGiroAnual(saidasAcum, estoqueMedio);
       const coberturaDias = Calc.calcularCoberturaDias(giroAnual);
 
-      // Serie no formato pro Recharts
+      // Serie no formato pro Recharts.
+      // dias_cobertura = quantos dias o estoque do mes duraria no ritmo de saida
+      //                  daquele mes. = 30 / (saidas/estoque).
+      // Se saidas=0 -> sem giro -> null (renderiza como "—" no front).
       const serie_12m = ultimos12.map(r => {
         const v = Number(r.valor_estoque || 0);
         const s = Number(r.valor_saidas || 0);
+        const giroMensal = v > 0 && s > 0 ? s / v : 0;
         return {
           anoMes: r.ano_mes,
           valor_estoque: Number(v.toFixed(2)),
           valor_saidas: Number(s.toFixed(2)),
-          giro_mensal: v > 0 ? Number((s / v).toFixed(3)) : 0
+          giro_mensal: Number(giroMensal.toFixed(3)),
+          dias_cobertura: giroMensal > 0 ? Math.round(30 / giroMensal) : null
         };
       });
 

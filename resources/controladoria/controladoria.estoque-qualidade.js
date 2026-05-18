@@ -93,14 +93,21 @@ module.exports = (app) => ({
         saidasPorCod.get(cod).set(r.ano_mes, N(r.qtd_saidas));
       });
 
-      // 3) Lead time real (B1_PE) — vem do cache PG populado pelo cron diario
-      // (services/estoqueSnapshot.js -> tab_estoque_produto_meta). Zero round-trip
-      // ao Protheus por chamada do dashboard.
-      const metaRows = await Pg.connectAndQuery(
-        `SELECT cod_produto, lead_time_dias FROM tab_estoque_produto_meta`, {}
+      // 3) Lead time + overrides manuais — vem do cache PG (tab_estoque_produto_meta).
+      // Override manual (lead_time_override / demanda_mensal_manual / estoque_seguranca_manual)
+      // tem prioridade sobre o calculo automatico.
+      const metaRows = await Pg.connectAndQuery(`
+        SELECT cod_produto, lead_time_dias, lead_time_override,
+               demanda_mensal_manual, estoque_seguranca_manual
+          FROM tab_estoque_produto_meta`, {}
       );
-      const leadTimeProd = new Map();
-      metaRows.forEach(r => leadTimeProd.set(trim(r.cod_produto), N(r.lead_time_dias)));
+      const metaProd = new Map();
+      metaRows.forEach(r => metaProd.set(trim(r.cod_produto), {
+        leadTimeB1: N(r.lead_time_dias),
+        leadTimeOver: r.lead_time_override != null ? N(r.lead_time_override) : null,
+        demandaManual: r.demanda_mensal_manual != null ? N(r.demanda_mensal_manual) : null,
+        segurancaManual: r.estoque_seguranca_manual != null ? N(r.estoque_seguranca_manual) : null
+      }));
 
       // 4) Calcula metricas por produto
       const produtos = saldoAtual.map(s => {
@@ -108,18 +115,31 @@ module.exports = (app) => ({
         const tipoProd = trim(s.tipo_produto);
         const par = paramPorTipo.get(tipoProd) || paramGlobal;
         const z = N(par.nivel_servico);
+        const meta = metaProd.get(cod) || { leadTimeB1: 0, leadTimeOver: null, demandaManual: null, segurancaManual: null };
 
-        // Lead time: prefere B1_PE (>0), fallback parametro do tipo, fallback global
-        const ltProtheus = N(leadTimeProd.get(cod));
-        const leadTime = ltProtheus > 0 ? ltProtheus : N(par.lead_time_dias);
+        // Lead time: override manual > B1_PE > parametro do tipo
+        let leadTime, leadTimeFonte;
+        if (meta.leadTimeOver != null) { leadTime = meta.leadTimeOver; leadTimeFonte = 'manual'; }
+        else if (meta.leadTimeB1 > 0)  { leadTime = meta.leadTimeB1;   leadTimeFonte = 'B1_PE'; }
+        else                            { leadTime = N(par.lead_time_dias); leadTimeFonte = 'parametro'; }
 
-        // Demanda historica: array da janela (preenche zero pros meses sem saida)
+        // Demanda historica calculada (sempre, pra mostrar comparativo)
         const mapaSaidas = saidasPorCod.get(cod);
         const arrDemanda = anosMesJanela.map(am => mapaSaidas ? (mapaSaidas.get(am) || 0) : 0);
-        const { media, desvioPadrao } = Calc.estatisticasDemanda(arrDemanda);
-        const { consumoLeadTime, estoqueSeguranca, estoqueIdeal } = Calc.calcularSegurancaEIdeal({
+        const { media: mediaCalc, desvioPadrao } = Calc.estatisticasDemanda(arrDemanda);
+
+        // Demanda usada nos calculos: manual > calculada
+        const media = meta.demandaManual != null ? meta.demandaManual : mediaCalc;
+        const demandaFonte = meta.demandaManual != null ? 'manual' : 'calculada';
+
+        // Estoque seguranca: manual > formula z*sigma*sqrt(lt)
+        const { consumoLeadTime, estoqueSeguranca: segCalc, estoqueIdeal: idealCalc } = Calc.calcularSegurancaEIdeal({
           demandaMedia: media, desvioPadrao, leadTimeDias: leadTime, z
         });
+        const estoqueSeguranca = meta.segurancaManual != null ? meta.segurancaManual : segCalc;
+        const segurancaFonte = meta.segurancaManual != null ? 'manual' : 'calculada';
+        const estoqueIdeal = meta.segurancaManual != null ? (consumoLeadTime + meta.segurancaManual) : idealCalc;
+
         const qtdAtual = N(s.qtd_atual);
         const cm = N(s.custo_medio);
         const crit = Calc.classificarCriticidade({ qtdAtual, estoqueSeguranca, estoqueIdeal });
@@ -135,11 +155,13 @@ module.exports = (app) => ({
           valor_atual: N(s.valor_atual),
           custo_medio: cm,
           lead_time_dias: leadTime,
-          lead_time_fonte: ltProtheus > 0 ? 'B1_PE' : 'parametro',
+          lead_time_fonte: leadTimeFonte,
           demanda_media: media,
+          demanda_fonte: demandaFonte,
           desvio_padrao: desvioPadrao,
           consumo_lead_time: consumoLeadTime,
           estoque_seguranca: estoqueSeguranca,
+          estoque_seguranca_fonte: segurancaFonte,
           estoque_ideal: estoqueIdeal,
           excesso_qtd: Number(excessoQtd.toFixed(2)),
           excesso_valor: Number((excessoQtd * cm).toFixed(2)),

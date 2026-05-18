@@ -35,7 +35,10 @@ const CFOPS_SAIDA_VENDA = [
 // Adicionar TMs novas aqui se a contabilidade reclamar de movimentos faltando.
 const TIPOS_SD3_SAIDA = ['999', '501', '502', '505'];
 
-// Le saldo atual de SB2 + ficha B1 (inclui B1_PE = lead time)
+// Le saldo atual de SB2 + ficha B1 (inclui B1_PE = lead time).
+// IMPORTANTE: B2_QATU > 0 — alinha com a aba Estoque (controladoria.estoque.js),
+// que tambem filtra positivo. Antes o snapshot somava produtos com saldo
+// zerado ou negativo (ajustes de inventario) e divergia do valor da aba Estoque.
 async function lerSaldoAtual(Protheus) {
   return Protheus.connectAndQuery(`
     SELECT RTRIM(sb2.B2_COD)   cod_produto,
@@ -52,7 +55,8 @@ async function lerSaldoAtual(Protheus) {
       LEFT JOIN SB1010 sb1 WITH (NOLOCK)
         ON sb1.B1_COD = sb2.B2_COD AND sb1.D_E_L_E_T_ <> '*'
      WHERE sb2.D_E_L_E_T_ <> '*'
-       AND sb2.B2_FILIAL = '01'`,
+       AND sb2.B2_FILIAL = '01'
+       AND sb2.B2_QATU > 0`,
     {}
   );
 }

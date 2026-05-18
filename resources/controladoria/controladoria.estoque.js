@@ -39,6 +39,7 @@ module.exports = (app) => ({
           LEFT JOIN NNR010 nnr WITH (NOLOCK)
             ON nnr.NNR_CODIGO = sb2.B2_LOCAL AND nnr.D_E_L_E_T_ <> '*'
          WHERE sb2.D_E_L_E_T_ <> '*'
+           AND sb2.B2_FILIAL = '01'
            AND sb2.B2_QATU > 0
            ${conds.join(' ')}
       `;
