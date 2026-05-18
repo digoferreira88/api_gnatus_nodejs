@@ -8,6 +8,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const cors = require('cors');
+const helmet = require('helmet');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,14 +18,28 @@ const server = http.createServer(app);
 // Confiamos so no PRIMEIRO proxy (Nginx local) — nao no header em si vindo de fora.
 app.set('trust proxy', 1);
 
+// Helmet — adiciona headers de seguranca (HSTS, X-Frame-Options, nosniff,
+// X-DNS-Prefetch-Control, Referrer-Policy etc). CSP fica DESLIGADA aqui
+// porque a API so retorna JSON/arquivos; o front (React/Vite) gerencia seu
+// proprio CSP via nginx. crossOriginResourcePolicy desligado tambem porque
+// servimos PDFs/imagens que o front abre em outras abas.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: false
+}));
+
+// Em PROD exigimos Origin valido sempre. Em dev tolera missing pra facilitar
+// curl/testes locais.
+const IS_PROD = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
 // CORS — whitelist por env (CSV). Em dev libera localhost:5173 por padrao.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ||
   'http://localhost:5173,http://localhost:3000,https://intranew.gnatus.com.br'
 ).split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
   origin: (origin, cb) => {
-    // Sem origin (curl, server-to-server) liberamos. Browser sempre manda Origin.
-    if (!origin) return cb(null, true);
+    // Em dev, sem Origin (curl, server-to-server) liberamos.
+    if (!origin) return IS_PROD ? cb(new Error('CORS: Origin obrigatorio em producao.')) : cb(null, true);
     if (CORS_ORIGINS.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS: origem nao permitida (${origin})`));
   },
@@ -33,8 +48,12 @@ app.use(cors({
   allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
 }));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: false, limit: '50mb' }));
+// Body limits reduzidos. JSON 50mb era trivialmente DoS-avel.
+// 16mb cobre compras/sc-criar com ate ~10MB de anexos base64 (limitado no
+// proprio endpoint). Multer (uploads file) tem limit proprio (4MB) e
+// nao passa por aqui.
+app.use(express.json({ limit: '16mb' }));
+app.use(express.urlencoded({ extended: false, limit: '16mb' }));
 
 const loader = require('./config/loader');
 

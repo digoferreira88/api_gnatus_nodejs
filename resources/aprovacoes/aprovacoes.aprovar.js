@@ -68,6 +68,48 @@ module.exports = (app) => ({
       return res.status(503).json({ ok: false, message: msg, configured: false });
     }
 
+    // ===== Pre-check de elegibilidade =====
+    // Antes de bater no Protheus, confere que ESTE usuario eh aprovador valido
+    // pra ESTE documento especifico. Sem isso, qualquer user com perm 13001
+    // poderia aprovar SC/PC de qualquer outro aprovador (cross-BU).
+    // Admin (perm 0) bypass — auditoria abrange.
+    const admCheck = await Pg.connectAndQuery(
+      `SELECT 1 FROM tab_intranet_usr_permissoes WHERE id_user = @id AND id_permissao = 0 LIMIT 1`,
+      { id: user.ID }
+    );
+    const isAdmin = admCheck.length > 0;
+
+    if (!isAdmin) {
+      // SCR no Protheus: tipo SC ou IP (para PC), status 02, sem aprovacao
+      const tipoFiltro = tipoIntranet === 'PC' ? 'IP' : 'SC';
+      const elegivel = await Protheus.connectAndQuery(`
+        SELECT TOP 1 1 elegivel
+          FROM SCR010 scr WITH (NOLOCK)
+          LEFT JOIN SAL010 sal WITH (NOLOCK)
+            ON sal.AL_FILIAL = '01' AND sal.AL_COD = scr.CR_GRUPO
+           AND sal.AL_USER = @cod AND sal.D_E_L_E_T_ <> '*'
+         WHERE scr.D_E_L_E_T_ <> '*'
+           AND scr.CR_FILIAL = '01'
+           AND scr.CR_NUM = @num
+           AND scr.CR_TIPO = @tipo
+           AND scr.CR_STATUS = '02'
+           AND RTRIM(ISNULL(scr.CR_LIBAPRO, '')) = ''
+           AND (scr.CR_USER = @cod OR sal.AL_USER = @cod)`,
+        { cod: codProth, num: numero, tipo: tipoFiltro }
+      );
+      if (!elegivel.length) {
+        const msg = `Sem alcada pra aprovar ${tipoIntranet} ${numero} (nao consta na sua fila).`;
+        await logar(false, msg);
+        Auditoria.registrar(app, {
+          modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'APPROVE_DENIED', severidade: 'ALERTA',
+          req, entidade: tipoIntranet === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
+          descricao: `BLOQUEADO: usuario codProth=${codProth} tentou aprovar ${tipoIntranet} ${numero} sem alcada`,
+          meta: { tipo: tipoIntranet, numero, codProth }
+        });
+        return res.status(403).json({ ok: false, message: msg });
+      }
+    }
+
     // Resolve o login (USR_CODIGO) a partir do CODIGO_PROTHEUS (USR_ID)
     let login = '';
     try {
