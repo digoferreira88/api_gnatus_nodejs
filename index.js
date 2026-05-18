@@ -28,18 +28,16 @@ app.use(helmet({
   crossOriginResourcePolicy: false
 }));
 
-// Em PROD exigimos Origin valido sempre. Em dev tolera missing pra facilitar
-// curl/testes locais.
-const IS_PROD = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-
 // CORS — whitelist por env (CSV). Em dev libera localhost:5173 por padrao.
+// IMPORTANTE: browsers NAO enviam header Origin em requests SAME-ORIGIN
+// (so cross-origin). Entao `!origin` = same-origin do nginx OU server-to-server.
+// Em qualquer caso eh seguro liberar — a auth do JWT cobre.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ||
   'http://localhost:5173,http://localhost:3000,https://intranew.gnatus.com.br'
 ).split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
   origin: (origin, cb) => {
-    // Em dev, sem Origin (curl, server-to-server) liberamos.
-    if (!origin) return IS_PROD ? cb(new Error('CORS: Origin obrigatorio em producao.')) : cb(null, true);
+    if (!origin) return cb(null, true);                   // same-origin ou server-to-server
     if (CORS_ORIGINS.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS: origem nao permitida (${origin})`));
   },
