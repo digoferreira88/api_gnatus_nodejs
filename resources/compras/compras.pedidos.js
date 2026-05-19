@@ -109,6 +109,8 @@ module.exports = (app) => ({
       const numeros = [...new Set(rows.map(r => trim(r.numero)).filter(Boolean))];
       const aprovacoesPorNum = new Map();
       const usuariosCods = new Set();
+      // Inclui codigo do COMPRADOR (C7_USER) na busca de nomes em SYS_USR
+      rows.forEach(r => { const u = trim(r.usuario); if (u) usuariosCods.add(u); });
       const BATCH = 500;
       for (let i = 0; i < numeros.length; i += BATCH) {
         const slice = numeros.slice(i, i + BATCH);
@@ -342,6 +344,7 @@ module.exports = (app) => ({
             origemSCItem: r.origemSCItem,
             centroCusto: r.centroCusto,
             usuario: r.usuario,
+            usuarioNome: nomesUsr.get(trim(r.usuario)) || '',
             condPag: r.condPag,
             observacao: r.observacao,
             status: st,

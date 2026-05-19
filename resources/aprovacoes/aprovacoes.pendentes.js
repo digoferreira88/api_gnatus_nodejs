@@ -244,6 +244,27 @@ module.exports = (app) => ({
         } catch (e) { console.warn('PC info batch err:', e.message); }
       }
 
+      // 3b) Resolve nome do COMPRADOR (C7_USER) via SYS_USR — pra exibir nome
+      // em vez do codigo "000349" no card de aprovacao.
+      // (C1_SOLICIT da SC ja vem como texto/nome, nao precisa lookup.)
+      const compradoresCods = new Set();
+      pcInfo.forEach(v => { const u = trim(v.comprador); if (u) compradoresCods.add(u); });
+      const nomesComprador = new Map();
+      const compArr = [...compradoresCods];
+      for (let i = 0; i < compArr.length; i += BATCH) {
+        const slice = compArr.slice(i, i + BATCH);
+        const inC = slice.map((_, k) => `@c${k}`).join(',');
+        const p = {};
+        slice.forEach((c, k) => { p[`c${k}`] = c; });
+        try {
+          const usrs = await Protheus.connectAndQuery(
+            `SELECT RTRIM(USR_ID) id, RTRIM(USR_NOME) nome FROM SYS_USR WHERE USR_ID IN (${inC})`,
+            p
+          );
+          usrs.forEach(u => nomesComprador.set(trim(u.id), trim(u.nome)));
+        } catch (e) { console.warn('PC nomes comprador err:', e.message); }
+      }
+
       // 4) Anexos (Conhecimento — AC9010 + ACB010)
       // AC9_ENTIDA: 'SC1' = solicitação, 'SC7' = pedido
       // AC9_CODENT formato: filial(2) + num(6) + item(4) → 12 chars
@@ -295,6 +316,10 @@ module.exports = (app) => ({
             niveis: [],
             emissao: info ? trim(info.emissao) : '',
             solicitanteOuComprador: tipo === 'SC' ? (info ? trim(info.solicitante) : '') : (info ? trim(info.comprador) : ''),
+            // Nome amigavel: solicitante (SC) vem como texto livre, comprador (PC) eh codigo -> lookup SYS_USR
+            solicitanteOuCompradorNome: tipo === 'SC'
+              ? (info ? trim(info.solicitante) : '')
+              : (info ? (nomesComprador.get(trim(info.comprador)) || trim(info.comprador)) : ''),
             fornecedor: tipo === 'PC' && info ? trim(info.fornecedor) : '',
             qtdItens: info ? toN(info.qtdItens) : itens.length,
             totalDoc: (info && toN(info.total)) ? toN(info.total) : toN(s.valor),
