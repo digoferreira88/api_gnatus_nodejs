@@ -163,23 +163,60 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 ### 3.2 Faturamento
 
-#### Ranking de Vendedores · `/vendas/ranking` · perm 2001
-- **Página**: [VendasRanking.tsx](../frontend_intranet_react/src/pages/VendasRanking/VendasRanking.tsx)
+#### Ranking de Vendedores (Faturamento NF) · `/vendas/ranking` · perm 2001
+- **Página**: [VendasRanking.tsx](../frontend_intranet_react/src/pages/VendasRanking/VendasRanking.tsx) (modo padrão = `faturamento`)
+- **Endpoint**: [GET /vendas/ranking-faturamento](resources/vendas/vendas.ranking-faturamento.js)
 - Pódio top 3 (medalhas) + lista. Avatares em `public/avatars/vendedores/{cod}.png` com fallback.
 - **Filtro por BU** (dropdown populado com `SC5.C5_ZTIPO` → `SX5.X5_DESCRI` X5_TABELA='Z1' do período). O dropdown lista TODAS as BUs do período mesmo com filtro ativo (response devolve `bus[]` à parte do `ranking` filtrado)
 - **Input de Cód. Vendedor** alternativo ao dropdown (compartilha mesmo state — digitar é mais rápido que rolar lista)
 - **Export XLSX** (3 abas: Resumo / Ranking / Por BU) — mesma pegada visual dos outros dashboards
+
+#### Ranking de Vendas (Pedidos em aberto) · `/vendas/ranking-vendas` · perm 2005
+- **Página**: [VendasRanking.tsx](../frontend_intranet_react/src/pages/VendasRanking/VendasRanking.tsx) com prop `modo="vendas"` ([migration 41](database/postgres/41-vendas-ranking-perm.sql) cria perm 2005)
+- **Endpoint**: [GET /vendas/ranking-vendas](resources/vendas/vendas.ranking-vendas.js)
+- Distinto do Ranking de Faturamento: usa SC5/SC6 (pedidos em aberto, ainda NÃO faturados — `C6_BLQ <> 'R'`, `C6_QTDVEN > C6_QTDENT`)
+- Mesma UI (pódio + filtros) mas KPI são pedidos colocados, não NFs
 
 #### Relatório de Faturamento · `/vendas/faturamento` · perm 2002
 - **Página**: [FaturamentoRelatorio.tsx](../frontend_intranet_react/src/pages/FaturamentoRelatorio/FaturamentoRelatorio.tsx)
 - 73 colunas via `exceljs`. Preview paginado + export `.xlsx`.
 - **Filtros adicionados (2026-05)**: BU (dropdown populado pelo response, ordenado por faturamento) + Cód. Vendedor (input alternativo ao dropdown). Backend aceita `?bu=` e `?vendedor=` (filtra `SC5.C5_ZTIPO` e `SC5.C5_VEND1/2/3`)
 
-#### Vendas Analítico · `/vendas/analitico` · perm 2003
-- **Página**: [VendasAnalitico.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/VendasAnalitico.tsx)
-- Análise multidimensional com TES → categoria de operação ([migration 21](database/postgres/21-vendas-tes-categoria.sql))
-- Permite drill por categoria, vendedor, equipe, BU, cliente, produto
-- Histórico anual em [HistoricoAnual.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/HistoricoAnual.tsx)
+#### Vendas Analítico (5 sub-páginas) · perms 2003/2004
+> Migrado do legado PHP. Cada análise vira página própria sob `/vendas/...`. Compartilham helper `_cfops.js` (CFOPs de venda hardcoded).
+
+##### Curva ABC · `/vendas/curva-abc` · perm 2004/2002
+- **Página**: [CurvaABC.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/CurvaABC.tsx)
+- **Endpoint**: [GET /vendas/curva-abc](resources/vendas/vendas.curva-abc.js)
+- Curva ABC por **produto**: SD2 + SB1 no período filtrado por CFOP de venda, subtrai devoluções proporcionais
+- Categoria A: ≤80% acumulado · B: 80-95% · C: 95-100%
+- Ordenação DESC por valor total. Tabela + chart de Pareto
+
+##### Carteira de Pedidos · `/vendas/carteira` · perm 2004/2002
+- **Página**: [Carteira.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/Carteira.tsx)
+- **Endpoint**: [GET /vendas/carteira](resources/vendas/vendas.carteira.js)
+- Pipeline de pedidos abertos por BU (`C5_ZTIPO`). Saldo = `(C6_QTDVEN - C6_QTDENT) × preço unitário com IPI`
+- Buckets de entrega (`C6_ENTREG`): **atrasada** (< 1º dia mês) · **mês_atual** · **mês_p1** · **mês_p2** · **futuro** (≥ mês+3)
+- Filtros: vendedor
+
+##### Itens sem Movimento · `/vendas/itens-sem-movimento` · perm 2004/2002
+- **Página**: [ItensSemMovimento.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/ItensSemMovimento.tsx)
+- **Endpoint**: [GET /vendas/itens-sem-movimento](resources/vendas/vendas.itens-sem-movimento.js)
+- Usa **views customizadas no Protheus** (legado): `itens_diassemvenda` (D2_COD, dias desde última saída) + `itens_saldoarmazem` (B2_COD, saldo disponível, B2_CM1) + `nnr010` (descrição armazém)
+- Filtros: `dias` (default 180), `armazem`
+- Calcula valor parado = qtd × custo médio
+
+##### Histórico Anual · `/vendas/historico-anual` · perm 2004/2002
+- **Página**: [HistoricoAnual.tsx](../frontend_intranet_react/src/pages/VendasAnalitico/HistoricoAnual.tsx)
+- **Endpoint**: [GET /vendas/historico-anual](resources/vendas/vendas.historico-anual.js)
+- Comparativo ano a ano de faturamento por mês (12 meses × N anos)
+- Drill por vendedor/equipe/BU/cliente/produto
+
+##### Saídas Diversas · `/planejamento/saidas-diversas` · perm 2003/2002
+- **Página**: [SaidasDiversas.tsx](../frontend_intranet_react/src/pages/SaidasDiversas/SaidasDiversas.tsx)
+- **Endpoint**: [GET /vendas/saidas-diversas](resources/vendas/vendas.saidas-diversas.js)
+- Cruza TES de "acompanhar" (538/546/540/559) e "diversos" (539/543/585/566/595/606/607) — lista vem de `tab_vendas_tes_categoria` (migration 21)
+- 3 seções: **acompanhamento** (TES acompanhar, valor mês + acumulado de TODO histórico) · **diversosMes** (TES diversos no período) · **diversosAcumulado** (mesmas TES sem filtro de início, ≤ fim)
 
 ---
 
@@ -188,6 +225,21 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 #### Solicitações de Compra · `/compras/solicitacoes` · perm 4001
 - **Página**: [SolicitacoesCompra.tsx](../frontend_intranet_react/src/pages/Compras/SolicitacoesCompra.tsx)
 - SC1010 do Protheus, decoders de status, auto-refresh 30s
+
+#### Nova Solicitação de Compra · `/compras/nova-sc` · perm 4004
+- **Página**: [NovaSolicitacaoCompra.tsx](../frontend_intranet_react/src/pages/Compras/NovaSolicitacaoCompra.tsx)
+- **Endpoint**: [POST /compras/sc-criar](resources/compras/compras.sc-criar.js)
+- **Service**: [services/protheusSolicCompra.js](services/protheusSolicCompra.js) — wrapper de `POST {PROTHEUS_API_URL}/SolicCompra/incluir` (REST custom Develsoft, formato MIT072)
+- Permite abrir SC pela Intranet sem precisar logar no Protheus. Após criada, **aparece em "Minhas Aprovações"** pra quem tem alçada (fluxo SCR/SAL idêntico ao processo do ERP)
+- **Body**: `{ data_necessaria (YYYY-MM-DD), observacao?, itens: [{produto, quantidade, local?, centro_custo, observacao?, fornecedor?, loja?}], anexos?: [{nome, descricao?, base64, item?}] }`
+- Limites: max 50 itens · max 10 anexos · 10MB total de anexos (base64 expandido ~13MB) · timeout 180s
+- **Solicitante**: deriva de `CODIGO_PROTHEUS` (USR_ID) → SYS_USR.USR_CODIGO (login Protheus, 6 chars). Email/nome direto estouravam C1_USER e crashavam o AdvPL com 500 genérico
+- **Anexos opcionais**: gravados em AC9010/ACB010 ("Conhecimento" do Protheus). Item omitido = anexo do cabeçalho; com `item: N` = anexo do item N
+- **Endpoints auxiliares**:
+  - [GET /compras/produto-buscar?q=...](resources/compras/compras.produto-buscar.js) — busca SB1 por código/descrição (autocomplete)
+  - [GET /compras/centros-custo](resources/compras/compras.centros-custo.js) — lista CTT010 (centros de custo válidos)
+- **Log**: cada tentativa em `tab_sc_intranet_log` ([migration 43](database/postgres/43-compras-solicitar.sql)) com payload, response, http_status, sc_numero, status (SUCESSO/REJEITADA/ERRO_SISTEMA), mensagem_erro, duração ms
+- Auditoria CRITICO em SUCESSO, ALERTA em REJEITADA. ⚠️ A SC vive no Protheus (SC1010) — esta tabela é só histórico/auditoria, não fonte de verdade
 
 #### Pedidos de Compra · `/compras/pedidos` · perm 4002
 - **Página**: [PedidosCompra.tsx](../frontend_intranet_react/src/pages/Compras/PedidosCompra.tsx)
@@ -244,19 +296,48 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Combina SE1 (a receber) + SE2 (a pagar) projetando saldo dia a dia
 - Filtros: cliente, equipe, BU, forma de pagamento
 
-#### Envio de Boleto (curadoria de bordero) · `/financeiro/envio-boleto` · perm 8005
+#### Envio de Boleto (curadoria + bordero + retorno banco) · `/financeiro/envio-boleto` · perm 8005
 - **Página**: [EnvioBoleto.tsx](../frontend_intranet_react/src/pages/Financeiro/EnvioBoleto.tsx)
-- **Tabelas** ([migration 35](database/postgres/35-financeiro-envio-boleto.sql)):
-  - `tab_boleto_envio_lote` (cabeçalho — banco, qt, valor total, status, observação)
-  - `tab_boleto_envio_lote_titulo` (itens do lote)
-- **5 endpoints** em `resources/financeiro/financeiro.boleto-*.js`: bancos · elegíveis · lote-create · lote-list · lote-detail
+- **Tabelas**:
+  - [migration 35](database/postgres/35-financeiro-envio-boleto.sql) — `tab_boleto_envio_lote` (cabeçalho) + `tab_boleto_envio_lote_titulo` (itens)
+  - [migration 42](database/postgres/42-boleto-bordero-protheus.sql) — adiciona em `tab_boleto_envio_lote`: `lote_protheus`, `enviado_em`, `enviado_por_email`, `qt_processados`, `qt_rejeitados`, `protheus_resposta jsonb`
+  - [migration 44](database/postgres/44-boleto-retorno.sql) — `tab_boleto_envio_lote_retorno` (1 row por título com status do banco) + colunas de contadores no lote (`sincronizado_em`, `qt_registrados`, `qt_liquidados`, `qt_rejeitados_banco`, `qt_pendentes_banco`)
+- **Endpoints** em `resources/financeiro/financeiro.boleto-*.js`: bancos · elegíveis · lote-create · lote-list · lote-detail · **lote-enviar-protheus** · **lote-sincronizar**
 - **Bancos comerciais** (filtro hardcoded): `001` BB · `033` Santander · `104` CEF · `237` Bradesco · `341` Itaú · `422` Safra · `748` Sicredi · `756` Sicoob — exclui FIDCs/cartões/aplicações dos 156 cadastros do SA6010
 - **Formas de pagamento elegíveis** (default): `4` Boleto · `A` Futuro Garantido · `B` Antecipação Parcelada
 - **Regra do filtro de portador (importante)**: lista APENAS títulos com `E1_PORTADO` JÁ preenchido (banco já decidido pelo financeiro). Antes mostrava títulos sem portador, contradizendo o fluxo real. Resultado: ~285 títulos / R$ 1,77M elegíveis hoje.
 - Operador **seleciona títulos** com checkbox + footer sticky com **valor total selecionado** (KPI grande verde)
 - "Banco do lote" derivado dos títulos selecionados (se 2+ bancos sem filtrar, bloqueia com aviso vermelho)
-- Cria lote → registra na Intranet pra rastreio. **NÃO** envia ao Protheus ainda (Onda 1 do módulo). Operador roda ESF050 separadamente
-- **Onda 2 prevista**: chamar endpoint REST custom no Protheus (`POST /rest/Cobranca/gerar-bordero`) — spec técnica em [docs/spec-protheus-rest-cobranca-bordero.md](../docs/spec-protheus-rest-cobranca-bordero.md) pra Develsoft
+
+##### Fluxo de status do lote
+| Status | Quem dispara | O que aconteceu |
+|---|---|---|
+| `CRIADO` | Operador (POST lote-create) | Lote registrado na Intranet, ainda não enviado |
+| `ENVIADO_PROTHEUS` | POST lote-enviar-protheus | Develsoft devolveu `ok:true`, ProcBord rodou (pode ter rejeições parciais) |
+| `ERRO_PROTHEUS` | POST lote-enviar-protheus | HTTP não-2xx ou `body.ok:false` (falha geral, não roda parcial) |
+| `RETORNADO` | POST lote-sincronizar | Todos os títulos do lote já têm retorno do banco (sem PENDENTE) |
+| `DISPARADO` | Onda 3.4-3.6 (planejado) | Boleto disparado por WhatsApp/email |
+
+##### Onda 2 — Envio ao Protheus (implementado em 2026-05-13)
+- **Service**: [services/protheusCobranca.js](services/protheusCobranca.js) — wrapper de `POST {PROTHEUS_API_URL}/Cobranca/gerar-bordero` (REST custom Develsoft)
+- **Endpoint**: [POST /financeiro/boleto-lote/:id/enviar-protheus](resources/financeiro/financeiro.boleto-lote-enviar-protheus.js)
+- Pre-condição: lote em status `CRIADO` (não reenvia)
+- Auth Basic com `PROTHEUS_API_USER/PROTHEUS_API_PASS` (mesmas creds do AprovaCompras). Timeout 60s, max 500 títulos/chamada
+- Response grava `lote_protheus` (nº do bordero), contadores e `protheus_resposta` completa em jsonb pra auditoria. Audita CRITICO em sucesso, ALERTA em falha
+- Sucesso parcial (`qt_rejeitados > 0` mas `qt_processados > 0`) **continua** `ENVIADO_PROTHEUS` — operador vê o detalhe na resposta
+
+##### Onda 3 — Sincronização do retorno bancário (implementado)
+- **Endpoint**: [POST /financeiro/boleto-lote/:id/sincronizar](resources/financeiro/financeiro.boleto-lote-sincronizar.js)
+- Operador roda **FINA130/140** no Protheus pra processar o arquivo CNAB `.RET` do banco → atualiza E1_OCORREN, E1_NUMBOR, E1_NUMBCO, E1_BAIXA
+- A Intranet **apenas consulta** SE1 (não parseia CNAB) em batches de 100 OR-clauses (limite ~2100 params do MSSQL)
+- Mapeamento `MAP_OCORRENCIA` (E1_OCORREN → status interno): `02` REGISTRADO · `03/12/13/32/33/34` REJEITADO · `06/15/17` LIQUIDADO · `09/10` BAIXADO · `11/14/20/23/24` REGISTRADO. Códigos não mapeados viram `DESCONHECIDO` (operador investiga)
+- Lógica de classificação: se `E1_BAIXA` preenchida E `E1_VALLIQ > 0` → LIQUIDADO independente do ocorren
+- Vira `RETORNADO` quando todos títulos têm retorno (sem PENDENTE/NAO_ENCONTRADO/DESCONHECIDO)
+- Audita INFO com stats por status
+
+##### Onda 3.4-3.6 (planejado)
+- Disparar boleto por WhatsApp/email a partir de `status_banco = 'REGISTRADO'`
+- Gerar PDF do boleto próprio (não depende do ESF050)
 
 ---
 
@@ -532,6 +613,24 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Drawer drill-down ao clicar produto
 - Export XLSX 5 abas + PDF
 
+##### Fórmula de Giro e Cobertura (dias de estoque)
+> Documento de negócio (linguagem não-técnica): [docs/explicacao-dias-de-estoque.md](../docs/explicacao-dias-de-estoque.md) — versão pronta pra enviar a suprimentos.
+
+**Helpers**: [services/estoqueCalculo.js](services/estoqueCalculo.js) `calcularGiroAnual` + `calcularCoberturaDias`. **Endpoint**: [controladoria.estoque-valor.js](resources/controladoria/controladoria.estoque-valor.js).
+
+- **Giro anual** (KPI card): `giro = Σ CMV_12m / estoque_médio_12m`
+  - `Σ CMV_12m` = soma do CMV dos últimos 12 meses (`valor_saidas_mes`)
+  - `estoque_médio_12m` = média de `valor_estoque` dos 12 meses
+- **Cobertura em dias** (KPI card): `cobertura = 360 / giro_anual`
+- **Equivalência**: `360 / (ΣCMV_12m / estoque_médio)` ≡ `30 / (CMV_médio_mensal / estoque_médio)` — pois `ΣCMV_12m = 12 × CMV_médio_mensal`. As duas formas dão o mesmo número.
+- **CMV (não faturamento)**: `valor_saidas_mes` = `SD2.D2_QUANT × D2_CUSTO1` (vendas) + `SD3.D3_CUSTO1` (consumo produção). Comentário no código documenta a troca de D2_TOTAL → CMV (faturamento inflava o giro).
+- **Estoque** valorado a custo: `SB2.B2_VATU1`.
+
+⚠️ **Limitações conhecidas** (verificadas 2026-05-20):
+1. **Série mensal do gráfico usa 1 mês isolado**, não média móvel: cada ponto = `30 / (CMV_do_mês / estoque_do_mês)`. Só o **card de KPI** usa a média de 12 meses.
+2. **Estoque histórico é proxy**: o Protheus não guarda saldo histórico, então TODOS os 12 meses do snapshot usam a fotografia atual do SB2 (ver [estoqueSnapshot.js:7-9](services/estoqueSnapshot.js)). Como os 12 valores de estoque são idênticos, a "média de estoque" colapsa pro valor corrente — só o CMV varia mês a mês. Reconstruir saldo real exigiria refazer via SD3 (fora de escopo F1).
+3. **Duplo arredondamento**: giro arredondado a 2 casas antes de `360/giro`, depois `Math.round`. Pequena imprecisão em produtos de giro muito alto/baixo.
+
 **Módulo QUALIDADE** — equilíbrio do estoque:
 - Fórmulas:
   - `consumo_lead_time = demanda_média × (lead_time / 30)`
@@ -564,32 +663,141 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Pedidos Tendência inclui SC2 (produção) + SC7 (compras)
 - 1 perm única **11004** pros 3 dashboards
 
+##### Parâmetros Manuais por Produto (Override) · `/controladoria/estoque-parametros-manuais` · perm 11004
+- **Página**: [EstoqueParametrosManuais.tsx](../frontend_intranet_react/src/pages/Controladoria/EstoqueDashboards/EstoqueParametrosManuais.tsx)
+- **Migration**: [48-estoque-produto-meta-override.sql](database/postgres/48-estoque-produto-meta-override.sql) — estende `tab_estoque_produto_meta` com `lead_time_override`, `demanda_mensal_manual`, `estoque_seguranca_manual`, `observacao_manual`, `atualizado_por`, `manual_em`
+- **Endpoints**:
+  - [GET /controladoria/estoque-override-list](resources/controladoria/controladoria.estoque-override-list.js) — lista produtos com override ativo
+  - [GET /controladoria/estoque-override-get/:cod](resources/controladoria/controladoria.estoque-override-get.js)
+  - [POST /controladoria/estoque-override-upsert](resources/controladoria/controladoria.estoque-override-upsert.js)
+  - [DELETE /controladoria/estoque-override-delete/:cod](resources/controladoria/controladoria.estoque-override-delete.js)
+  - [GET /controladoria/produtos-busca?q=...](resources/controladoria/controladoria.produtos-busca.js) — autocomplete SB1
+- **Estratégia**: estende `tab_estoque_produto_meta` (já mantida pelo cron) com colunas `*_override`/`*_manual`. Cron diário continua atualizando `lead_time_dias` do B1_PE; backend usa o **override se ≠ NULL**, fallback no automático
+- Permite cadastro manual de lead time / demanda média mensal / estoque de segurança por produto + observação livre
+- Usado quando o cálculo automático (B1_PE + média do snapshot) não reflete a realidade (ex: produto novo sem histórico, item sazonal, política comercial diferente)
+
 ---
 
 ### 3.10 Produção
 
-#### Registro de Produção · `/producao/registro` · perm 14001
-- **Página**: [Producao.tsx](../frontend_intranet_react/src/pages/Producao/Producao.tsx)
-- **Tabelas** ([migrations 17/18](database/postgres/17-producao-registro.sql)):
-  - `tab_producao_registro` (apontamentos de produção pelo PCP)
-  - `tab_producao_op` (Ordens de Produção sincronizadas do Protheus)
-- Endpoints: `producao.registro-criar`, `producao.ops-disponiveis`, `producao.sync` (sincroniza do Protheus)
+> Substitui o **Pipefy "01 | REGISTRO HISTÓRICO DO PRODUTO"** (Develsoft). Cada Ordem de Produção (OP) percorre 12 etapas. Cada etapa tem responsável, status, campos específicos, anexos (SharePoint) e log de transições pra cálculo de tempos/produtividade.
 
-#### Dashboard de Produção · `/producao/dashboard` · perm 14002
-- KPIs de produção (ops em andamento, atrasadas, eficiência)
+**Permissões**:
+- `14001` Produção - Registro (operador comum: cria registros, atualiza etapas atribuídas)
+- `14002` Produção - Admin / Gestão (gestores: vê todas OPs, dashboard de gestão, cadastra instruções)
+- `14003` Produção - Dashboard (visualização do dashboard apenas)
+
+**Tabelas**:
+- [migrations 17/18](database/postgres/17-producao-registro.sql) — `tab_producao_registro`/`tab_producao_op` (legado, mantido)
+- Tabelas novas do fluxo 12-etapas (criadas em migrations sub-numeradas anteriormente):
+  - `tab_prod_registro` (cabeçalho da OP — produto, lote, OP_Protheus, status: aberto/concluido/cancelado)
+  - `tab_prod_registro_etapa` (1 row por etapa por registro — código, status, responsavel_id, dados_extras jsonb)
+  - `tab_prod_registro_anexo` (anexos da etapa — ver migração 45 abaixo)
+  - `tab_prod_registro_etapa_log` ([migration 46](database/postgres/46-producao-gestao.sql)) — log de transições de status (de → para, mudou_por, mudou_em). Popula sempre que etapa-update muda status. Etapas existentes NÃO geram histórico retroativo.
+  - `tab_prod_instrucao` ([migration 47](database/postgres/47-producao-instrucoes.sql)) — Instruções de Trabalho (1 doc SharePoint por produto/etapa)
+
+**12 etapas** (catálogo em [resources/producao/_etapas.js](resources/producao/_etapas.js) — `_` prefix faz o resource loader ignorar):
+1. Separação de Materiais (`tipo_separacao`, `materiais_falta`)
+2. Impressão do Rótulo (`rotulagem_url`)
+3. **Liberação de Início de Processo** (checklist de 8 requisitos: limpeza, ferramentas, calibração, docs, instruções, treinamento, ambiente — anti-erro de bypass)
+4. Montagem
+5. Inspeção e Teste Montagem
+6. Inspeção e Testes Finais
+7. Embalagem e Rotulagem
+8. Inspeção da Embalagem e Rotulagem
+9. Liberação Final
+10. Apontamento Protheus (SD3)
+11. Aguardando Coleta (`armazem`, `localizacao` — `00` PA / `12` AT)
+12. Concluído
+
+#### Registros de Produção · `/producao/registros` + `/producao/registros/:id` · perm 14001/14002
+- **Listagem**: [RegistrosProducao.tsx](../frontend_intranet_react/src/pages/Producao/RegistrosProducao.tsx)
+- **Detalhe (kanban de etapas)**: [RegistroProducao.tsx](../frontend_intranet_react/src/pages/Producao/RegistroProducao.tsx)
+- **Endpoints**:
+  - [GET /producao/registros](resources/producao/producao.registros.js) — lista todas OPs com filtros
+  - [GET /producao/registro/:id](resources/producao/producao.registro.js) — detalhe (cabeçalho + 12 etapas + responsável + anexos + instruções linkadas pelo produto)
+  - [POST /producao/registro-criar](resources/producao/producao.registro-criar.js) — abre nova OP
+  - [DELETE /producao/registro-delete](resources/producao/producao.registro-delete.js) — cancela OP
+  - [POST /producao/etapa-update](resources/producao/producao.etapa-update.js) — muda status/responsável/dados de uma etapa (gera log)
+  - [GET /producao/ops-disponiveis](resources/producao/producao.ops-disponiveis.js) — OPs do Protheus SC2010 prontas pra abrir registro
+  - [GET /producao/usuarios-equipe](resources/producao/producao.usuarios-equipe.js) — lista de colaboradores aptos a serem responsáveis
+  - [POST /producao/sync](resources/producao/producao.sync.js) — sincroniza OPs do Protheus
+  - [GET /producao/pdf-final](resources/producao/producao.pdf-final.js) — gera PDF consolidado do registro completo
+
+#### Anexos da etapa (SharePoint) — `producao.anexo-*` · perm 14001
+- **Service**: [services/graphFiles.js](services/graphFiles.js) — wrapper Microsoft Graph pra upload/download/delete em **SharePoint SITE** (`https://gnatus.sharepoint.com/sites/Pipefy`)
+- **Migration**: [45-producao-anexo-sharepoint.sql](database/postgres/45-producao-anexo-sharepoint.sql) — estende `tab_prod_registro_anexo` com `origem` (`url_externa` legacy / `sharepoint`), `sharepoint_drive_id/item_id/path`, `nome_original`, `mime_type`, `tamanho_bytes`
+- ⚠️ **NÃO usa OneDrive pessoal** — `Application permissions` no Graph não acessam personal sites de forma confiável. Destino é SharePoint Site dedicado
+- Requer permission de **aplicativo** `Files.ReadWrite.All` (ou `Sites.Selected` + grant restrito) com admin consent
+- `.env`: `GRAPH_SP_HOSTNAME` (default `gnatus.sharepoint.com`), `GRAPH_SP_SITE_PATH` (default `/sites/Pipefy`)
+- **Limite atual**: arquivo até 4MB no PUT direto. > 4MB precisa upload session (não implementado — F1 não mira nisso)
+- Endpoints: [anexo-upload](resources/producao/producao.anexo-upload.js), [anexo-download](resources/producao/producao.anexo-download.js), [anexo-delete](resources/producao/producao.anexo-delete.js), [anexo-add](resources/producao/producao.anexo-add.js) (link externo só)
+
+#### Dashboard de Produção · `/producao/dashboard` · perm 14001/14002/14003
+- **Página**: [DashboardProducao.tsx](../frontend_intranet_react/src/pages/Producao/DashboardProducao.tsx)
+- **Endpoint**: [GET /producao/dashboard](resources/producao/producao.dashboard.js)
+- KPIs operacionais: ops em andamento, atrasadas, eficiência, ocupação por colaborador
+
+#### Gestão da Produção · `/producao/gestao` · perm 14002
+- **Página**: [GestaoProducao.tsx](../frontend_intranet_react/src/pages/Producao/GestaoProducao.tsx)
+- **Endpoints**:
+  - [GET /producao/gestao/dashboard](resources/producao/producao.gestao-dashboard.js) — KPIs + ranking colaboradores + tempo médio + gargalo por etapa + série temporal
+  - [GET /producao/gestao/em-andamento](resources/producao/producao.gestao-em-andamento.js) — lista atual de etapas em aberto
+- Filtros via query: `dataIni`/`dataFim` (default últimos 30d), `colaboradorId`, `etapaCodigo` (1..12)
+- Calcula tempos usando `tab_prod_registro_etapa_log` — transições aprovado/reprovado vs em_andamento, dia a dia
+
+#### Cadastro de Instruções de Trabalho · `/producao/instrucoes` · perm 14002
+- **Página**: [CadastroInstrucoes.tsx](../frontend_intranet_react/src/pages/Producao/CadastroInstrucoes.tsx)
+- **Endpoints**:
+  - [GET /producao/instrucoes-list](resources/producao/producao.instrucoes-list.js) — catálogo completo
+  - [GET /producao/instrucoes-produto/:codigo](resources/producao/producao.instrucoes-produto.js) — instruções de 1 produto
+  - [POST /producao/instrucoes-upload](resources/producao/producao.instrucoes-upload.js) — sobe arquivo pro SharePoint + grava metadata
+  - [GET /producao/instrucao-download/:id](resources/producao/producao.instrucao-download.js) — proxy de download
+  - [DELETE /producao/instrucoes-delete/:id](resources/producao/producao.instrucoes-delete.js) — remove SharePoint + row
+- **Migration**: [47-producao-instrucoes.sql](database/postgres/47-producao-instrucoes.sql)
+- **Storage**: `SharePoint /sites/Pipefy/Documents/Instrucoes Produto/{codigo}/`
+- **Modelo**: 1 instrução por (produto_codigo, etapa_codigo). `etapa_codigo NULL` = instrução geral do produto. UNIQUE INDEX garante uma instrução por par
+- **Linkagem dinâmica**: quando OP é aberta, o detalhe consulta as instruções do produto e exibe no accordion da etapa correspondente. **Editar a instrução impacta todas as OPs (passadas e futuras) imediatamente** — substitui o "database de produtos" do Pipefy
 
 ---
 
 ### 3.11 Universidade Corporativa
 
-#### Trilhas e Cursos · `/universidade` · perm 15001
-- **Páginas**: [Universidade.tsx](../frontend_intranet_react/src/pages/Universidade/Universidade.tsx) (catálogo) + [Curso.tsx](../frontend_intranet_react/src/pages/Universidade/Curso.tsx)
-- **Tabelas** ([migrations 19/20/23](database/postgres/19-universidade.sql)):
-  - `tab_uni_trilha`, `tab_uni_curso`, `tab_uni_modulo`, `tab_uni_aula`
-  - `tab_uni_quiz`, `tab_uni_quiz_pergunta`, `tab_uni_quiz_resposta`
-  - `tab_uni_progresso` (corrigido em [migration 23](database/postgres/23-universidade-fix-progresso.sql) — UNIQUE composto por user+aula)
-- Tracking de tempo assistido por aula
-- Quiz no fim do módulo com nota mínima
+**Permissões** (em [resources/universidade/_perms.js](resources/universidade/_perms.js)):
+- `15001` Universidade - Aluno (consome cursos, faz quiz)
+- `15002` Universidade - Instrutor (cria/edita cursos, vê matriculados)
+- `15003` Universidade - Admin (gestão completa, catálogo, quiz admin)
+
+**Tabelas** ([migrations 19/20/23](database/postgres/19-universidade.sql)):
+- `tab_uni_curso`, `tab_uni_aula`, `tab_uni_categoria`
+- `tab_uni_matricula`, `tab_uni_progresso` (corrigido em [migration 23](database/postgres/23-universidade-fix-progresso.sql) — UNIQUE composto por user+aula)
+- `tab_uni_quiz`, `tab_uni_quiz_questao`, `tab_uni_quiz_tentativa`, `tab_uni_quiz_resposta`
+
+#### Catálogo · `/universidade` · perm 15001/15002/15003
+- **Página**: [Catalogo.tsx](../frontend_intranet_react/src/pages/Universidade/Catalogo.tsx)
+- **Endpoints**: [cursos](resources/universidade/universidade.cursos.js), [categorias](resources/universidade/universidade.categorias.js), [matricular](resources/universidade/universidade.matricular.js)
+
+#### Meus Cursos · `/universidade/meus-cursos` · perm 15001
+- **Página**: [MeusCursos.tsx](../frontend_intranet_react/src/pages/Universidade/MeusCursos.tsx)
+- **Endpoint**: [GET /universidade/meus-cursos](resources/universidade/universidade.meus-cursos.js)
+- Lista cursos matriculados com % de progresso. Botão "Certificado" se concluído
+
+#### Detalhe do Curso (player) · `/universidade/curso/:id` · perm 15001/15002/15003
+- **Página**: [CursoDetalhe.tsx](../frontend_intranet_react/src/pages/Universidade/CursoDetalhe.tsx)
+- **Endpoints**: [curso](resources/universidade/universidade.curso.js), [aula-concluir](resources/universidade/universidade.aula-concluir.js)
+- Player de vídeo/conteúdo + tracking de tempo assistido por aula
+
+#### Quiz · `/universidade/curso/:cursoId/quiz` + `/universidade/tentativa/:id` · perm 15001
+- **Páginas**: [QuizAluno.tsx](../frontend_intranet_react/src/pages/Universidade/QuizAluno.tsx) + [RevisaoTentativa.tsx](../frontend_intranet_react/src/pages/Universidade/RevisaoTentativa.tsx)
+- **Endpoints**: [quiz](resources/universidade/universidade.quiz.js), [quiz-iniciar](resources/universidade/universidade.quiz-iniciar.js), [quiz-finalizar](resources/universidade/universidade.quiz-finalizar.js), [tentativa](resources/universidade/universidade.tentativa.js)
+- Quiz no fim do curso com nota mínima. Tentativa fica salva pra revisão posterior
+
+#### Certificado · perm 15001
+- **Endpoint**: [GET /universidade/certificado/:cursoId](resources/universidade/universidade.certificado.js) — gera PDF com nome/curso/data/nota
+
+#### Admin · `/universidade/admin` · perm 15002/15003
+- **Página**: [AdminUniversidade.tsx](../frontend_intranet_react/src/pages/Universidade/AdminUniversidade.tsx)
+- **Endpoints CRUD**: [curso-criar](resources/universidade/universidade.curso-criar.js), [curso-editar](resources/universidade/universidade.curso-editar.js), [aula-criar](resources/universidade/universidade.aula-criar.js), [aula-editar](resources/universidade/universidade.aula-editar.js), [aula-deletar](resources/universidade/universidade.aula-deletar.js), [quiz-criar](resources/universidade/universidade.quiz-criar.js), [quiz-editar](resources/universidade/universidade.quiz-editar.js), [quiz-admin](resources/universidade/universidade.quiz-admin.js), [questao-criar](resources/universidade/universidade.questao-criar.js), [questao-deletar](resources/universidade/universidade.questao-deletar.js), [curso-matriculados](resources/universidade/universidade.curso-matriculados.js)
 
 ---
 
@@ -639,7 +847,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 ---
 
-### 3.10 Perfil (todos usuários logados)
+### 3.15 Perfil (todos usuários logados)
 
 #### Alterar Senha · `/alterar-senha` · perm `[]`
 - Sem restrição. Bcrypt hash em `tab_intranet_usr.senha`
@@ -746,6 +954,30 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 ### 4.11 Anthropic / Claude Code (este manual)
 - O próprio assistente que escreveu/escreve este manual usa Claude API
 - Integração específica do **assistente de desenvolvimento** (não confundir com o IA Provider do Apoio Gerencial)
+
+### 4.12 Microsoft Graph — SharePoint Files
+- **Service**: [services/graphFiles.js](services/graphFiles.js) — cliente Microsoft Graph pra upload/download/delete de arquivos em **SharePoint Site**
+- Destino: `https://gnatus.sharepoint.com/sites/Pipefy` (não OneDrive pessoal — Application permissions não acessam personal sites confiável)
+- Permission de **aplicativo**: `Files.ReadWrite.All` (ou `Sites.Selected` + grant restrito) com admin consent
+- `.env`: `GRAPH_SP_HOSTNAME` (default `gnatus.sharepoint.com`), `GRAPH_SP_SITE_PATH` (default `/sites/Pipefy`). Reusa `M365_TENANT_ID`/`M365_CLIENT_ID`/`M365_CLIENT_SECRET`
+- Auth via `@azure/msal-node` (Confidential Client) + cache interno com margem 60s
+- **Limite**: 4MB no PUT direto (acima precisa upload session — não implementado)
+- **Usado por**: Produção (anexos de etapas) + Produção (instruções de trabalho)
+
+### 4.13 Protheus REST (Develsoft — endpoints custom)
+- **Wrapper services**:
+  - [services/protheus.js](services/protheus.js) — MSSQL Protheus (leitura)
+  - [services/protheusCobranca.js](services/protheusCobranca.js) — `POST /Cobranca/gerar-bordero` (Envio de Boleto)
+  - [services/protheusSolicCompra.js](services/protheusSolicCompra.js) — `POST /SolicCompra/incluir` (Solicitar SC)
+- **Endpoint padrão**: `POST {PROTHEUS_API_URL}/<recurso>/<acao>` — Basic Auth (`PROTHEUS_API_USER`/`PROTHEUS_API_PASS`, default `admin:Gn@tu5`)
+- `.env`:
+  - `PROTHEUS_API_URL=http://protheus.gnatus.com.br:8081/rest`
+  - `PROTHEUS_API_USER=admin`
+  - `PROTHEUS_API_PASS=Gn@tu5`
+  - `PROTHEUS_API_PATH_BORDERO=/Cobranca/gerar-bordero` (override opcional)
+  - `PROTHEUS_API_PATH_SOLIC_COMPRA=/SolicCompra/incluir` (override opcional)
+- Timeout: 60s pra Cobrança · 180s pra SolicCompra (anexos inflam payload, AdvPL leva ~80s/MB)
+- **AprovaCompras** (também custom Develsoft) é chamado direto do endpoint de Aprovações — não tem service-wrapper isolado
 
 ---
 
@@ -926,6 +1158,14 @@ Resumo dos principais:
 - **WhatsApp D+3 = janela 1 a 3 dias**, não "≥ 3 dias" (corrigido em 2026-05-12). `mode: 'janela'` no `services/scheduler.js TIPOS` com `delta=-3, deltaMax=-1`. Antes pegava títulos de 1000+ dias atrás
 - **Estoque snapshot precisa GRANT explícito**: as tabelas criadas como `postgres` não dão permissão automática pro role `intranet`. Sempre rodar a migration via psql que inclui `GRANT SELECT/INSERT/UPDATE/DELETE ON ... TO intranet` (ver migrations 38/39/40 como exemplo). Sem isso o backend dá `permission denied for table`
 - **Cobrança Borderô (Develsoft)**: validações 400/413 do stub funcionam mas o 401 vem com body genérico do AppServer (`{"message":"The request requires authentication..."}`) porque o `AccessControl` bloqueia ANTES da função AdvPL rodar. O test script aceita 401 só pelo status code, sem checar `codigo_erro`
+- **SC criada via Intranet**: solicitante deve ser `USR_CODIGO` do Protheus (6 chars, login do SYS_USR), não email. Caminho: `req.user.CODIGO_PROTHEUS` (USR_ID) → `SELECT TOP 1 USR_CODIGO FROM SYS_USR WHERE USR_ID = @cod`. Antes mandávamos email (16+ chars), estourava C1_USER e AdvPL crashava com HTTP 500 genérico
+- **SharePoint anexos > 4MB** requer upload session do Graph (não simples PUT). Não implementado em F1. Limite atual hardcoded em `MAX_SIMPLE_UPLOAD` no `services/graphFiles.js`
+- **SharePoint via Application Permissions** não acessa OneDrive pessoal de forma confiável — destino tem que ser **Site SharePoint** dedicado (`/sites/Pipefy`). Permission `Files.ReadWrite.All` (ou `Sites.Selected` com grant restrito) precisa admin consent
+- **Produção 12 etapas**: a etapa 3 (Liberação de Início de Processo) tem checklist hardcoded de 8 requisitos em `_etapas.js`. Aprovar a etapa sem completar checklist deveria ser bloqueado no frontend — confirmar regra antes de relaxar
+- **Log de etapas começa limpo**: `tab_prod_registro_etapa_log` (migration 46) só recebe rows criadas a partir da instalação. Etapas existentes NÃO geram histórico retroativo. Cálculos de tempo médio nos primeiros dias podem estar enviesados pra baixo
+- **Instruções de Trabalho**: editar instrução do produto X impacta TODAS as OPs (passadas e futuras) imediatamente — linkagem é dinâmica via `produto_codigo`. Manter versões anteriores não foi escopo da F1 (Pipefy também não tinha)
+- **Retorno do banco**: Intranet NÃO parseia CNAB. Operador roda FINA130/140 no Protheus → atualiza SE1 → POST `/sincronizar` consulta. Códigos de ocorrência fora do `MAP_OCORRENCIA` viram `DESCONHECIDO` — quando aparecer, adicionar manualmente em `boleto-lote-sincronizar.js`
+- **Lote de boleto não reenviável**: status `CRIADO` só vira `ENVIADO_PROTHEUS` 1 vez. Rejeições parciais ficam visíveis no `protheus_resposta.detalhes[]`, mas pra reenviar precisaria criar novo lote
 
 ---
 
@@ -937,8 +1177,9 @@ Resumo dos principais:
 - Filtros temporais no Dashboard de Cobrança (hoje só mostra estado atual)
 
 ### Envio de Boleto
-- **Onda 2**: integração REST com Protheus pra **gerar borderô automaticamente** (especificação em [docs/spec-protheus-rest-cobranca-bordero.md](../docs/spec-protheus-rest-cobranca-bordero.md) — aguarda Develsoft criar `POST /rest/Cobranca/gerar-bordero`)
-- **Onda 3**: detectar retorno do banco (E1_NUMBOR + E1_NUMBCO preenchidos) e disparar boleto por e-mail/WhatsApp. Geração de PDF próprio do boleto
+- ~~**Onda 2**: integração REST com Protheus pra gerar borderô~~ ✅ **Implementado em 2026-05-13** (migration 42 + `protheusCobranca.js`)
+- ~~**Onda 3.1-3.3**: ler retorno do banco via SE1~~ ✅ **Implementado** (migration 44 + endpoint `/sincronizar`)
+- **Onda 3.4-3.6 (pendente)**: disparar boleto por e-mail/WhatsApp a partir de `status_banco = 'REGISTRADO'`. Gerar PDF próprio do boleto (sem depender do ESF050)
 
 ### Contratos
 - **Onda 3**: assinatura digital (Clicksign API), faturamento automático (gerar SE1), renovação automática quando `renovacao_automatica = true`, alertas por WhatsApp (alongside e-mail)
@@ -994,11 +1235,103 @@ Resumo dos principais:
 | 34 | `34-pt-pedido-venda-amplo.sql` | Amplia `pedido_venda` em `tab_pt_finalizacao` pra varchar(200) |
 | 35 | `35-financeiro-envio-boleto.sql` | `tab_boleto_envio_lote` + `tab_boleto_envio_lote_titulo` + perm 8005 |
 | 36 | `36-contratos.sql` | `tab_contrato` + `tab_contrato_aditivo` + `tab_contrato_anexo` + `tab_contrato_alerta` + perms 5002/5003/5004 |
+| 37 | `37-telefonia-valor.sql` | Adiciona `valor_mensal numeric(10,2)` em `tab_telefonia_linha` (custo mensal das linhas) |
+| 38 | `38-estoque-dashboards.sql` | `tab_estoque_snapshot_mensal` + `tab_estoque_parametros` (cache 12m + lead time/z/janela por tipo) + perm 11004 |
+| 39 | `39-estoque-produto-meta.sql` | `tab_estoque_produto_meta` — cache de metadados B1 (descrição/tipo/grupo/UM/B1_PE). Atualizado pelo cron de snapshot |
+| 40 | `40-cobranca-meta-perfil.sql` | `tab_cobranca_meta_perfil` (4 perfis seed) + coluna `perfil` em `tab_cobranca_bu_equipe` (classifica em Corp/Atacado/AT/Varejo) |
+| 41 | `41-vendas-ranking-perm.sql` | Permissão 2005 — Ranking de Vendas por pedidos em aberto (distinto do 2001 por faturamento NF) |
+| 42 | `42-boleto-bordero-protheus.sql` | Onda 2 do Envio de Boleto — adiciona em `tab_boleto_envio_lote`: `lote_protheus`, `enviado_em`, `enviado_por_email`, `qt_processados`, `qt_rejeitados`, `protheus_resposta` (jsonb da resposta REST) |
+| 43 | `43-compras-solicitar.sql` | `tab_sc_intranet_log` (log de cada tentativa de criar SC via Intranet) + perm 4004 (Solicitar Compra). SC eh criada no Protheus via REST custom — esta tabela só guarda histórico |
+| 44 | `44-boleto-retorno.sql` | Onda 3 do Envio de Boleto — `tab_boleto_envio_lote_retorno` (1 row por título com status do banco — REGISTRADO/LIQUIDADO/BAIXADO/REJEITADO/PENDENTE/DESCONHECIDO derivado de E1_OCORREN + E1_BAIXA). Adiciona contadores no lote (`sincronizado_em`, `qt_registrados/liquidados/rejeitados_banco/pendentes_banco`) |
+| 45 | `45-producao-anexo-sharepoint.sql` | Estende `tab_prod_registro_anexo` com `origem` (`url_externa`/`sharepoint`) + `sharepoint_drive_id/item_id/path`, `nome_original`, `mime_type`, `tamanho_bytes`. Backfill marca anexos antigos como `url_externa` |
+| 46 | `46-producao-gestao.sql` | `tab_prod_registro_etapa_log` — log de transições de status nas etapas (de→para, mudou_por, mudou_em). Popula via etapa-update. Permite calcular tempos médios e produtividade por colaborador. Sem perm nova (14002 já existe) |
+| 47 | `47-producao-instrucoes.sql` | `tab_prod_instrucao` — catálogo central de Instruções de Trabalho (1 por produto+etapa, ou geral). Storage no SharePoint `/sites/Pipefy/Documents/Instrucoes Produto/{codigo}/`. Linkagem dinâmica: editar instrução impacta todas OPs imediatamente |
+| 48 | `48-estoque-produto-meta-override.sql` | Estende `tab_estoque_produto_meta` com `lead_time_override`, `demanda_mensal_manual`, `estoque_seguranca_manual`, `observacao_manual`, `atualizado_por`, `manual_em`. Quando preenchido, ganha do cálculo automático no dashboard de Qualidade |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
 
-⚠️ Novas migrations devem incrementar a numeração (próxima é #37) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+⚠️ Novas migrations devem incrementar a numeração (próxima é #49) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
 
 ```bash
 sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
 ```
+
+---
+
+## 11. Catálogo de Permissões
+
+> Catálogo consolidado de todas as permissões em uso. Seed base em [09-seed-permissoes-base.sql](database/postgres/09-seed-permissoes-base.sql); permissões novas são adicionadas inline em migrations subsequentes (ex: 27/29/31/32/35/36/41/43).
+
+### Faixas de numeração
+| Faixa | Módulo |
+|---|---|
+| `0` | Administrador (acesso total — passa por qualquer `Protect`) |
+| `1xxx` | Tecnologia |
+| `2xxx` | Faturamento / Vendas |
+| `3xxx` | Planejamento |
+| `4xxx` | Compras |
+| `5xxx` | Apoio Gerencial / Perfil |
+| `6xxx` | SAC |
+| `7xxx` | Perfil (Cofre) |
+| `8xxx` | Financeiro |
+| `9xxx` | Cobrança |
+| `10xxx` | Gerência |
+| `11xxx` | Controladoria |
+| `12xxx` | Expedição |
+| `13xxx` | Compras (Aprovações) |
+| `14xxx` | Produção |
+| `15xxx` | Universidade |
+
+### Permissões ativas
+
+| Cód | Módulo | Descrição |
+|---|---|---|
+| 0    | Sistema       | Administrador (acesso total) |
+| 1026 | Tecnologia    | Gerenciamento de Permissões |
+| 1027 | Tecnologia    | Termo de Responsabilidade / Equipamentos / Telefonia Móvel |
+| 1028 | Tecnologia    | Gestão de Usuários |
+| 1029 | Tecnologia    | Provisionamento de Usuários (AD/M365) |
+| 1030 | Tecnologia    | Cobrança WhatsApp (automação) |
+| 1031 | Tecnologia    | Importação Protheus (TRPWSIMP) — migration 27 |
+| 1032 | Tecnologia    | Auditoria (logs centralizados) — migration 29 |
+| 2001 | Faturamento   | Ranking de Vendedores (por NF) |
+| 2002 | Faturamento   | Relatório de Faturamento |
+| 2003 | Faturamento   | Vendas Analítico / Saídas Diversas |
+| 2004 | Faturamento   | Curva ABC / Carteira / Itens sem Movimento / Histórico Anual |
+| 2005 | Faturamento   | Ranking de Vendas (pedidos em aberto) — migration 41 |
+| 3001 | Planejamento  | Disponibilidade |
+| 4001 | Compras       | Solicitações de Compra |
+| 4002 | Compras       | Pedidos de Compra |
+| 4003 | Compras       | MCL (Compras Mínimas Lucrativas) |
+| 4004 | Compras       | Solicitar Compra (criar SC via Intranet) — migration 43 |
+| 5001 | Apoio Ger.    | Reserva de Sala / Gerador de Apresentações (IA) |
+| 5002 | Apoio Ger.    | Contratos - Ver — migration 36 |
+| 5003 | Apoio Ger.    | Contratos - Editar — migration 36 |
+| 5004 | Apoio Ger.    | Contratos - Aprovar Aditivos — migration 36 |
+| 6001 | SAC           | Consulta de Cliente |
+| 6002 | SAC           | Supervisão |
+| 7001 | Perfil        | Cofre de Senhas |
+| 8001 | Financeiro    | Contas a Pagar |
+| 8002 | Financeiro    | Contas a Receber |
+| 8004 | Financeiro    | Fluxo de Caixa |
+| 8005 | Financeiro    | Envio de Boleto (curadoria + bordero) — migration 35 |
+| 9001 | Cobrança      | Painel / Dashboard / BU-Equipe / Faturamento vs Inadimplência / Equipes Ranking / Meta Perfil |
+| 9003 | Cobrança      | Minhas Ações |
+| 9004 | Cobrança      | Envio WhatsApp (curadoria operador) |
+| 10001 | Gerência     | DRE Gerencial |
+| 11001 | Controladoria| Estoque (lista simples) |
+| 11002 | Controladoria| Custo de Produto |
+| 11003 | Controladoria| Poder de Terceiros |
+| 11004 | Controladoria| Estoque Dashboards (Valor / Qualidade / Tendência / Parâmetros Manuais) — migration 38 |
+| 12001 | Expedição    | Notas a Expedir |
+| 12002 | Expedição    | Borderô de Etiquetagem |
+| 13001 | Compras      | Aprovador (SC/PC) |
+| 14001 | Produção     | Registro (operador) |
+| 14002 | Produção     | Admin / Gestão / Instruções |
+| 14003 | Produção     | Dashboard (visualização apenas) |
+| 15001 | Universidade | Aluno |
+| 15002 | Universidade | Instrutor |
+| 15003 | Universidade | Admin |
+
+⚠️ Permissões `[]` (array vazio) = qualquer usuário logado (Dashboard, Alterar Senha)
+⚠️ Padrão de uso: `requiredPerms={[N, 0]}` no `<Protect>` — usuário com perm N OU admin (0) passa
