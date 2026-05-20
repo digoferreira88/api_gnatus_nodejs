@@ -339,6 +339,22 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Disparar boleto por WhatsApp/email a partir de `status_banco = 'REGISTRADO'`
 - Gerar PDF do boleto próprio (não depende do ESF050)
 
+#### Liberação Financeira · `/financeiro/liberacao-financeira` · perm 8006
+> Substitui o processo manual: a operadora baixava a planilha de "carteira de pedidos" do **intranet PHP antigo**, montava uma tabela dinâmica filtrando status = "aguardando liberação do financeiro" + tipo + forma pgto + nº pedido, adicionava 2 colunas (Ações, Observações) e então liberava os pedidos no Protheus.
+
+- **Página**: [LiberacaoFinanceira.tsx](../frontend_intranet_react/src/pages/Financeiro/LiberacaoFinanceira.tsx)
+- **Tabela** ([migration 49](database/postgres/49-financeiro-liberacao.sql)): `tab_lib_financeira_anotacao` (1 row por pedido — `acoes` e `observacoes` texto livre, compartilhadas entre operadores, com quem/quando)
+- **Endpoints**:
+  - [GET /financeiro/liberacao](resources/financeiro/financeiro.liberacao-list.js) — carteira **agregada por pedido**, filtrada por `pedidos_estatus.estatus_cod = 20` ("Aguardando liberação do Financeiro"). Junta o financeiro de cada pedido (`total_pedido_sc6`, `pedidos_ra` pago, `pedidos_rf` a pagar) + tipo (SX5 Z1), forma/cond pgto, cliente, vendedor. Filtros: `tipo`, `formaPgto`, `busca` (pedido/cliente)
+  - [POST /financeiro/liberacao/anotacao](resources/financeiro/financeiro.liberacao-anotacao.js) — upsert de ações/observações por pedido (auditado INFO)
+- **Status do pedido** vem da view custom **`pedidos_estatus`** (derivada do SC9): `10` Comercial · **`20` Financeiro** · `30` Planejamento · `40` Formulação Financeira · `50` Estoque · `60` Faturamento · `99` Faturado. O bloqueio financeiro é o `C9_BLCRED` (crédito) no SC9
+- **Flags de apoio** (mesma lógica do relatório PHP):
+  - **Verificar financeiro**: `geraTP = 'S'` E diferença financeira ≠ 0 (TP vs pago+a pagar)
+  - **Não liberar (restrição de pagto)**: `recMinFat > 0` E `recMinFat > pago` (recebimento mínimo de faturamento não atingido)
+- UI: tabela 1 linha/pedido, KPIs (pedidos, valor total, qtd verificar, qtd restrição), filtros, Ações/Observações editáveis inline (salvam on-blur), export CSV (CPF/CNPJ mascarado, datas dd/mm/yyyy)
+- **Onda 1 (atual)**: organiza + rastreia. A **liberação efetiva continua no Protheus**
+- **Onda 2 (planejada)**: botão "Liberar no Protheus" — executa a **sequência de liberação custom** (rotina Develsoft ligada à `v_filapedidos` / SC9 `C9_BLCRED`). Precisa de endpoint REST custom (mesmo padrão do `AprovaCompras/aprovar`) — aguarda spec + Develsoft. Prints da sequência a coletar com a operadora
+
 ---
 
 ### 3.6 Cobrança (módulo dedicado)
@@ -1181,6 +1197,10 @@ Resumo dos principais:
 - ~~**Onda 3.1-3.3**: ler retorno do banco via SE1~~ ✅ **Implementado** (migration 44 + endpoint `/sincronizar`)
 - **Onda 3.4-3.6 (pendente)**: disparar boleto por e-mail/WhatsApp a partir de `status_banco = 'REGISTRADO'`. Gerar PDF próprio do boleto (sem depender do ESF050)
 
+### Liberação Financeira
+- ~~**Onda 1**: tela que substitui planilha+dinâmica (carteira filtrada por estatus 20) + ações/observações por pedido~~ ✅ **Implementado em 2026-05-20** (migration 49)
+- **Onda 2 (pendente)**: botão "Liberar no Protheus" — executar a sequência de liberação custom (rotina Develsoft ligada à `v_filapedidos` / SC9 `C9_BLCRED`). Precisa de **endpoint REST custom da Develsoft** (mesmo padrão do `AprovaCompras/aprovar`) + prints da sequência atual com a operadora. Provável: service `services/protheusLiberacao.js` + `POST /financeiro/liberacao/:pedido/liberar`
+
 ### Contratos
 - **Onda 3**: assinatura digital (Clicksign API), faturamento automático (gerar SE1), renovação automática quando `renovacao_automatica = true`, alertas por WhatsApp (alongside e-mail)
 
@@ -1247,10 +1267,11 @@ Resumo dos principais:
 | 46 | `46-producao-gestao.sql` | `tab_prod_registro_etapa_log` — log de transições de status nas etapas (de→para, mudou_por, mudou_em). Popula via etapa-update. Permite calcular tempos médios e produtividade por colaborador. Sem perm nova (14002 já existe) |
 | 47 | `47-producao-instrucoes.sql` | `tab_prod_instrucao` — catálogo central de Instruções de Trabalho (1 por produto+etapa, ou geral). Storage no SharePoint `/sites/Pipefy/Documents/Instrucoes Produto/{codigo}/`. Linkagem dinâmica: editar instrução impacta todas OPs imediatamente |
 | 48 | `48-estoque-produto-meta-override.sql` | Estende `tab_estoque_produto_meta` com `lead_time_override`, `demanda_mensal_manual`, `estoque_seguranca_manual`, `observacao_manual`, `atualizado_por`, `manual_em`. Quando preenchido, ganha do cálculo automático no dashboard de Qualidade |
+| 49 | `49-financeiro-liberacao.sql` | `tab_lib_financeira_anotacao` (ações/observações por pedido na Liberação Financeira) + perm 8006 |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
 
-⚠️ Novas migrations devem incrementar a numeração (próxima é #49) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+⚠️ Novas migrations devem incrementar a numeração (próxima é #50) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
 
 ```bash
 sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
@@ -1315,6 +1336,7 @@ sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSW
 | 8002 | Financeiro    | Contas a Receber |
 | 8004 | Financeiro    | Fluxo de Caixa |
 | 8005 | Financeiro    | Envio de Boleto (curadoria + bordero) — migration 35 |
+| 8006 | Financeiro    | Liberação Financeira — migration 49 |
 | 9001 | Cobrança      | Painel / Dashboard / BU-Equipe / Faturamento vs Inadimplência / Equipes Ranking / Meta Perfil |
 | 9003 | Cobrança      | Minhas Ações |
 | 9004 | Cobrança      | Envio WhatsApp (curadoria operador) |
