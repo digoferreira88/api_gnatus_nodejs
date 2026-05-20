@@ -198,6 +198,14 @@ module.exports = (app) => ({
         }
       }
 
+      // Anexa o status de cobrança (cadastrado pelo operador em
+      // tab_cobranca_status_cliente) a cada título, pra que o export por título
+      // também traga essa informação.
+      filtrados.forEach(t => {
+        const st = statusMap.get(`${t.clienteCod}|${t.clienteLoja}`);
+        t.statusCobranca = st ? st.status : '';
+      });
+
       // Agrega por cliente
       const porClienteMap = new Map();
       filtrados.forEach(t => {
