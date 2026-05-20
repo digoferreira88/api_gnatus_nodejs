@@ -76,7 +76,15 @@ module.exports = (app) => ({
         CAST(ISNULL(prf.saldo,0)  AS NUMERIC(14,2)) AS pagar,
         CAST(ISNULL(pra.saldo,0) + ISNULL(prf.saldo,0) AS NUMERIC(14,2)) AS totalFinan,
         CAST(ISNULL(tp6.total,0) - ISNULL(pra.saldo,0) - ISNULL(prf.saldo,0) AS NUMERIC(14,2)) AS difFinan,
-        CAST(ISNULL(sc5.C5_VLMINFT,0) AS NUMERIC(14,2)) AS recMinFat
+        CAST(ISNULL(sc5.C5_VLMINFT,0) AS NUMERIC(14,2)) AS recMinFat,
+        -- Data da liberação do Comercial (estatus 10 -> 20): quando o comercial
+        -- liberou, o SC9 foi criado com C9_BLCRED='01' e C9_DATALIB = data dessa
+        -- liberação. Pegamos o MAX do C9_DATALIB das linhas em estatus 20.
+        (SELECT MAX(RTRIM(pe2.c9_datalib))
+           FROM pedidos_estatus pe2
+          WHERE pe2.c6_filial = sc5.C5_FILIAL
+            AND pe2.c6_num    = sc5.C5_NUM
+            AND pe2.estatus_cod = @est) AS dataLibComercial
       FROM SC5010 sc5 WITH (NOLOCK)
       LEFT JOIN SA1010 sa1 WITH (NOLOCK)
         ON sa1.A1_COD = sc5.C5_CLIENTE AND sa1.A1_LOJA = sc5.C5_LOJACLI AND sa1.D_E_L_E_T_ <> '*'
@@ -144,6 +152,7 @@ module.exports = (app) => ({
           tipoCod: trim(r.tipoCod),
           tipoNome: trim(r.tipoNome) || trim(r.tipoCod) || '(sem tipo)',
           emissao: trim(r.emissao),
+          dataLibComercial: trim(r.dataLibComercial),
           formaPgtoCod: trim(r.formaPgtoCod),
           formaPgtoNome: descreverFormaPgto(trim(r.formaPgtoCod)),
           condPagCod: trim(r.condPagCod),
