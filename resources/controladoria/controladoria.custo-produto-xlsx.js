@@ -61,6 +61,7 @@ module.exports = (app) => ({
         const rows = await Protheus.connectAndQuery(
           `SELECT RTRIM(sg1.G1_COD) pai, RTRIM(sg1.G1_COMP) componente,
                   RTRIM(sb1.B1_DESC) descricao, RTRIM(sb1.B1_TIPO) tipo, RTRIM(sb1.B1_UM) um,
+                  RTRIM(sb1.B1_GRUPO) grupo,
                   sg1.G1_QUANT qtd, sg1.G1_PERDA perda
              FROM SG1010 sg1 WITH (NOLOCK)
              LEFT JOIN SB1010 sb1 WITH (NOLOCK) ON sb1.B1_COD = sg1.G1_COMP AND sb1.D_E_L_E_T_ <> '*'
@@ -74,7 +75,7 @@ module.exports = (app) => ({
         rows.forEach(r => {
           const item = {
             componente: trim(r.componente), descricao: trim(r.descricao),
-            tipo: trim(r.tipo), um: trim(r.um),
+            tipo: trim(r.tipo), um: trim(r.um), grupo: trim(r.grupo),
             qtd: toN(r.qtd), perda: toN(r.perda)
           };
           porPai.get(trim(r.pai)).push(item);
@@ -130,55 +131,102 @@ module.exports = (app) => ({
       const mapUlt = new Map();
       ultCompra.forEach(u => mapUlt.set(trim(u.componente), u));
 
+      // 3b) Saldo + custo medio por ARMAZEM (default 21) — base da aba Estrutura.
+      // A planilha de referencia le saldo e custo unitario dos componentes do
+      // armazem 21 (almoxarifado de MP). Configuravel via ?armazemCusto=NN.
+      const armazemCusto = trim(req.query.armazemCusto) || '21';
+      const codsB2 = [...new Set([produto, ...todos])];
+      const mapB2 = new Map();
+      if (codsB2.length) {
+        const inB2 = codsB2.map((_, i) => `@b${i}`).join(',');
+        const paramsB2 = { arm: armazemCusto };
+        codsB2.forEach((c, i) => { paramsB2[`b${i}`] = c; });
+        const b2Rows = await Protheus.connectAndQuery(
+          `SELECT RTRIM(B2_COD) cod, B2_QATU qatu, B2_CM1 cm1
+             FROM SB2010 WITH (NOLOCK)
+            WHERE D_E_L_E_T_ <> '*' AND B2_FILIAL = '01' AND RTRIM(B2_LOCAL) = @arm
+              AND RTRIM(B2_COD) IN (${inB2})`, paramsB2);
+        b2Rows.forEach(b => mapB2.set(trim(b.cod), { qatu: toN(b.qatu), cm1: toN(b.cm1) }));
+      }
+      // PA: nao fica no armazem de MP — pega custo medio (MAX) e saldo total
+      const paB2 = await Protheus.connectAndQuery(
+        `SELECT ISNULL(MAX(B2_CM1), 0) cm1, ISNULL(SUM(B2_QATU), 0) qatu
+           FROM SB2010 WITH (NOLOCK)
+          WHERE D_E_L_E_T_ <> '*' AND B2_FILIAL = '01' AND RTRIM(B2_COD) = @produto`, { produto });
+      const paCusto = paB2.length ? toN(paB2[0].cm1) : 0;
+      const paSaldo = paB2.length ? toN(paB2[0].qatu) : 0;
+
       // 4) Monta workbook
       const wb = new ExcelJS.Workbook();
       wb.creator = 'Intranet GNATUS';
       wb.created = new Date();
 
-      // ===== Aba 1: Estrutura =====
+      // ===== Aba 1: Estrutura (layout da planilha de referencia, 27 colunas) =====
+      // Lista PLANA dos componentes diretos do PA (PIs aparecem como 1 linha, sem
+      // explodir). Saldo/C.Unitario do componente vem do armazem 21 (mapB2).
+      // Impostos por unidade: IPI/ICMS = rateio da ultima compra (valor/qtd da NF);
+      // PIS/COFINS = Valor Un x aliquota fixa. Totais = valor unitario x Quantidade.
+      const PIS_RATE = 0.0165;     // 1,65%
+      const COFINS_RATE = 0.076;   // 7,6%
       const wsEst = wb.addWorksheet('Estrutura');
       wsEst.columns = [
-        { header: 'Nivel', key: 'nivel', width: 8 },
-        { header: 'Codigo PA', key: 'codPA', width: 12 },
-        { header: 'Descricao PA', key: 'descPA', width: 38 },
-        { header: 'Codigo', key: 'codigo', width: 12 },
-        { header: 'TP', key: 'tipo', width: 6 },
-        { header: 'Descricao', key: 'descricao', width: 50 },
-        { header: 'Qtde', key: 'qtd', width: 12, style: { numFmt: '#,##0.0000' } },
-        { header: 'Perda %', key: 'perda', width: 10, style: { numFmt: '0.00%' } },
-        { header: 'Qtde c/ Perda', key: 'qtdPerda', width: 14, style: { numFmt: '#,##0.0000' } },
-        { header: 'UM', key: 'um', width: 6 }
+        { header: 'Produto Pai',               key: 'pai',        width: 12 },
+        { header: 'Descricao',                  key: 'descPai',    width: 34 },
+        { header: 'Saldo Atual',                key: 'saldoPai',   width: 12, style: { numFmt: '#,##0.00' } },
+        { header: 'C Unitario',                 key: 'cUnitPai',   width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Codigo',                     key: 'codigo',     width: 12 },
+        { header: 'Descricao',                  key: 'descricao',  width: 46 },
+        { header: 'Tipo',                       key: 'tipo',       width: 6 },
+        { header: 'Grupo',                      key: 'grupo',      width: 8 },
+        { header: 'Unidade',                    key: 'um',         width: 8 },
+        { header: 'Saldo Atual',                key: 'saldo',      width: 12, style: { numFmt: '#,##0.00' } },
+        { header: 'C Unitario',                 key: 'cUnit',      width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Quantidade',                 key: 'qtd',        width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Custo Total',                key: 'custoTotal', width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Armazem',                    key: 'armazem',    width: 9 },
+        { header: 'Valor Un.',                  key: 'valorUn',    width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Valor IPI Un.',              key: 'ipiUn',      width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Valor Un. + Valor IPI Un.',  key: 'unMaisIpi',  width: 16, style: { numFmt: '#,##0.0000' } },
+        { header: 'Valor ICMS',                 key: 'icmsUn',     width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Valor PIS',                  key: 'pisUn',      width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Valor COFINS',               key: 'cofinsUn',   width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'Valor Bruto',                key: 'bruto',      width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: '',                           key: 'sep',        width: 3 },
+        { header: 'Valor Bruto Total',          key: 'brutoTotal', width: 14, style: { numFmt: '#,##0.0000' } },
+        { header: 'IPI Total',                  key: 'ipiTotal',   width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'ICMS Total',                 key: 'icmsTotal',  width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'PIS Total',                  key: 'pisTotal',   width: 12, style: { numFmt: '#,##0.0000' } },
+        { header: 'COFINS Total',               key: 'cofinsTotal',width: 13, style: { numFmt: '#,##0.0000' } }
       ];
 
-      const escreverEstrutura = (codPai, profundidade) => {
-        const itens = porPai.get(codPai) || [];
-        for (const it of itens) {
-          const qtdPerda = it.qtd * (1 + it.perda);
-          const recuo = '  '.repeat(profundidade);
-          wsEst.addRow({
-            nivel: profundidade + 1,
-            codPA: profundidade === 0 ? pa.cod : '',
-            descPA: profundidade === 0 ? pa.descricao : '',
-            codigo: recuo + it.componente,
-            tipo: it.tipo,
-            descricao: it.descricao,
-            qtd: it.qtd,
-            perda: it.perda,
-            qtdPerda,
-            um: it.um
-          });
-          if (it.tipo === 'PI' && porPai.has(it.componente)) {
-            escreverEstrutura(it.componente, profundidade + 1);
-          }
-        }
-      };
-      escreverEstrutura(produto, 0);
+      for (const it of componentesRaiz) {
+        const b2 = mapB2.get(it.componente) || { qatu: 0, cm1: 0 };
+        const u = mapUlt.get(it.componente);
+        const qtdNF   = u ? toN(u.qtdComprada) : 0;
+        const valorUn = u ? toN(u.vunit) : 0;
+        const ipiUn   = u && qtdNF > 0 ? toN(u.ipi)  / qtdNF : 0;
+        const icmsUn  = u && qtdNF > 0 ? toN(u.icms) / qtdNF : 0;
+        const pisUn    = valorUn * PIS_RATE;
+        const cofinsUn = valorUn * COFINS_RATE;
+        const bruto    = valorUn + ipiUn;
+        const qtd = it.qtd;  // Quantidade do BOM (G1_QUANT, sem perda — igual a referencia)
+        wsEst.addRow({
+          pai: pa.cod, descPai: pa.descricao, saldoPai: paSaldo, cUnitPai: paCusto,
+          codigo: it.componente, descricao: it.descricao, tipo: it.tipo, grupo: it.grupo, um: it.um,
+          saldo: b2.qatu, cUnit: b2.cm1, qtd, custoTotal: b2.cm1 * qtd, armazem: armazemCusto,
+          valorUn, ipiUn, unMaisIpi: valorUn + ipiUn, icmsUn, pisUn, cofinsUn, bruto,
+          sep: '',
+          brutoTotal: bruto * qtd, ipiTotal: ipiUn * qtd, icmsTotal: icmsUn * qtd,
+          pisTotal: pisUn * qtd, cofinsTotal: cofinsUn * qtd
+        });
+      }
 
       // Cabecalho com formatacao
       wsEst.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
       wsEst.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E5FB5' } };
-      wsEst.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
-      wsEst.getRow(1).height = 22;
+      wsEst.getRow(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      wsEst.getRow(1).height = 30;
+      wsEst.views = [{ state: 'frozen', ySplit: 1 }];
 
       // ===== Aba 2: Custo TOTVS =====
       const ws = wb.addWorksheet('Custo TOTVS');
