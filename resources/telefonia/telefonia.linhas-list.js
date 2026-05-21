@@ -1,5 +1,6 @@
 // GET /telefonia/linhas — lista linhas com filtros + KPIs do dashboard.
-// Query: ?operadora=&status=&departamento=&busca=&vencendo=30&limit=&offset=
+// Query: ?operadora=&conta=&status=&departamento=&busca=&vencendo=30&limit=&offset=
+//   conta = id da tab_telefonia_conta (linhas são divididas por operadora E conta)
 // Permissao 1027 (reusada — Tecnologia: Termo+Equipamentos+Linhas Moveis).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1027]);
@@ -27,6 +28,10 @@ module.exports = (app) => ({
     if (req.query.departamento) {
       conds.push(`l.id_departamento = @dep`);
       params.dep = Number(req.query.departamento);
+    }
+    if (req.query.conta) {
+      conds.push(`l.id_conta = @conta`);
+      params.conta = Number(req.query.conta);
     }
     if (req.query.busca) {
       conds.push(`(l.numero_telefone ILIKE '%' || @q || '%'
