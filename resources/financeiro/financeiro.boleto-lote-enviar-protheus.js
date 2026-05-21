@@ -83,9 +83,14 @@ module.exports = (app) => ({
       const loteProth = trim(body.lote);  // se Develsoft devolver, gravamos
 
       // 4) Decide novo status
-      // - Sucesso (HTTP 200 + body.ok=true): ENVIADO_PROTHEUS, mesmo com rejeicoes parciais
+      // - Sucesso real (ok=true E qtd_processados>0): ENVIADO_PROTHEUS, mesmo com rejeicoes parciais
+      // - "Nada processado" (ok=true mas qtd_processados=0 — Protheus rejeitou
+      //   TODOS os titulos): nao eh sucesso nem erro de sistema. Mantem o lote
+      //   CRIADO (reenviavel) e avisa o operador com a mensagem.
       // - Falha geral (HTTP nao-2xx ou body.ok=false): ERRO_PROTHEUS
-      const novoStatus = okGeral ? 'ENVIADO_PROTHEUS' : 'ERRO_PROTHEUS';
+      const sucesso = okGeral && qtProc > 0;
+      const nadaProcessado = okGeral && qtProc === 0;
+      const novoStatus = sucesso ? 'ENVIADO_PROTHEUS' : (nadaProcessado ? 'CRIADO' : 'ERRO_PROTHEUS');
 
       await Pg.connectAndQuery(`
         UPDATE tab_boleto_envio_lote
@@ -110,11 +115,13 @@ module.exports = (app) => ({
       // 5) Auditoria
       Auditoria.registrar(app, {
         modulo: 'Financeiro', submodulo: 'EnvioBoleto',
-        acao: 'BORDERO_PROTHEUS', severidade: okGeral ? 'CRITICO' : 'ALERTA',
+        acao: 'BORDERO_PROTHEUS', severidade: sucesso ? 'CRITICO' : 'ALERTA',
         req, entidade: 'boleto_lote', entidadeId: String(id),
-        descricao: okGeral
+        descricao: sucesso
           ? `Enviou lote #${id} ao Protheus (banco ${lote.banco_cod}, ${qtProc}/${titulos.length} OK${qtRej ? `, ${qtRej} rejeitados` : ''}${loteProth ? `, bordero ${loteProth}` : ''})`
-          : `FALHA ao enviar lote #${id} ao Protheus (HTTP ${r.httpStatus}, ${body.codigo_erro || '?'})`,
+          : nadaProcessado
+            ? `Nada processado: lote #${id} — Protheus rejeitou todos os ${qtRej} titulo(s) (banco ${lote.banco_cod}). Lote mantido como CRIADO pra reenvio.`
+            : `FALHA ao enviar lote #${id} ao Protheus (HTTP ${r.httpStatus}, ${body.codigo_erro || '?'})`,
         meta: {
           id_lote: id,
           banco: lote.banco_cod, qt_titulos: titulos.length,
@@ -125,8 +132,12 @@ module.exports = (app) => ({
       });
 
       return res.json({
-        ok: okGeral,
+        ok: sucesso,
+        nada_processado: nadaProcessado,
         status: novoStatus,
+        message: nadaProcessado
+          ? 'Nada processado — o Protheus rejeitou todos os títulos. Verifique os motivos abaixo e reenvie o lote.'
+          : undefined,
         lote_protheus: loteProth || null,
         qt_processados: qtProc,
         qt_rejeitados: qtRej,
