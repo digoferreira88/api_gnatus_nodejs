@@ -199,27 +199,42 @@ module.exports = (app) => ({
         { header: 'COFINS Total',               key: 'cofinsTotal',width: 13, style: { numFmt: '#,##0.0000' } }
       ];
 
-      for (const it of componentesRaiz) {
-        const b2 = mapB2.get(it.componente) || { qatu: 0, cm1: 0 };
-        const u = mapUlt.get(it.componente);
-        const qtdNF   = u ? toN(u.qtdComprada) : 0;
-        const valorUn = u ? toN(u.vunit) : 0;
-        const ipiUn   = u && qtdNF > 0 ? toN(u.ipi)  / qtdNF : 0;
-        const icmsUn  = u && qtdNF > 0 ? toN(u.icms) / qtdNF : 0;
-        const pisUn    = valorUn * PIS_RATE;
-        const cofinsUn = valorUn * COFINS_RATE;
-        const bruto    = valorUn + ipiUn;
-        const qtd = it.qtd;  // Quantidade do BOM (G1_QUANT, sem perda — igual a referencia)
-        wsEst.addRow({
-          pai: pa.cod, descPai: pa.descricao, saldoPai: paSaldo, cUnitPai: paCusto,
-          codigo: it.componente, descricao: it.descricao, tipo: it.tipo, grupo: it.grupo, um: it.um,
-          saldo: b2.qatu, cUnit: b2.cm1, qtd, custoTotal: b2.cm1 * qtd, armazem: armazemCusto,
-          valorUn, ipiUn, unMaisIpi: valorUn + ipiUn, icmsUn, pisUn, cofinsUn, bruto,
-          sep: '',
-          brutoTotal: bruto * qtd, ipiTotal: ipiUn * qtd, icmsTotal: icmsUn * qtd,
-          pisTotal: pisUn * qtd, cofinsTotal: cofinsUn * qtd
-        });
-      }
+      // Explode RECURSIVAMENTE: lista todos os itens contidos no PA, em todos os
+      // niveis (PIs/semiacabados sao abertos nos seus componentes). "Produto Pai"
+      // de cada linha = o pai IMEDIATO; a descricao recebe recuo por nivel pra
+      // mostrar a hierarquia. Quantidade = G1_QUANT relativo ao pai imediato.
+      const escreverComp = (codPai, paiInfo, nivel) => {
+        const itens = porPai.get(codPai) || [];
+        for (const it of itens) {
+          const b2 = mapB2.get(it.componente) || { qatu: 0, cm1: 0 };
+          const u = mapUlt.get(it.componente);
+          const qtdNF   = u ? toN(u.qtdComprada) : 0;
+          const valorUn = u ? toN(u.vunit) : 0;
+          const ipiUn   = u && qtdNF > 0 ? toN(u.ipi)  / qtdNF : 0;
+          const icmsUn  = u && qtdNF > 0 ? toN(u.icms) / qtdNF : 0;
+          const pisUn    = valorUn * PIS_RATE;
+          const cofinsUn = valorUn * COFINS_RATE;
+          const bruto    = valorUn + ipiUn;
+          const qtd = it.qtd;  // Quantidade do BOM (G1_QUANT) relativo ao pai imediato
+          const recuo = nivel > 0 ? '    '.repeat(nivel) : '';
+          wsEst.addRow({
+            pai: paiInfo.cod, descPai: paiInfo.desc, saldoPai: paiInfo.saldo, cUnitPai: paiInfo.cm1,
+            codigo: it.componente, descricao: recuo + it.descricao, tipo: it.tipo, grupo: it.grupo, um: it.um,
+            saldo: b2.qatu, cUnit: b2.cm1, qtd, custoTotal: b2.cm1 * qtd, armazem: armazemCusto,
+            valorUn, ipiUn, unMaisIpi: valorUn + ipiUn, icmsUn, pisUn, cofinsUn, bruto,
+            sep: '',
+            brutoTotal: bruto * qtd, ipiTotal: ipiUn * qtd, icmsTotal: icmsUn * qtd,
+            pisTotal: pisUn * qtd, cofinsTotal: cofinsUn * qtd
+          });
+          // Semiacabado (PI) com estrutura propria -> explode os filhos logo abaixo
+          if (it.tipo === 'PI' && porPai.has(it.componente) && nivel < MAX_NIVEL) {
+            escreverComp(it.componente,
+              { cod: it.componente, desc: it.descricao, saldo: b2.qatu, cm1: b2.cm1 },
+              nivel + 1);
+          }
+        }
+      };
+      escreverComp(produto, { cod: pa.cod, desc: pa.descricao, saldo: paSaldo, cm1: paCusto }, 0);
 
       // Cabecalho com formatacao
       wsEst.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
