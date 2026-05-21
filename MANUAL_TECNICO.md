@@ -552,11 +552,15 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - KPIs: custo padrão (B1_CUSTD), custo médio (B2_CM1 max), custo calculado, Δ vs padrão
 - Coluna **Subtotal** entre Custo Médio e Impostos pra deixar `Subtotal + Impostos = Custo c/ imp` explícito
 - **Top 5 variação** (unitário e total) substitui o gráfico genérico — mostra os componentes que mais subiram/caíram %
-- **Export XLSX (TOTVS)** — botão verde no header (só pra produtos PA): gera planilha 2-abas no mesmo formato do relatório clássico do Protheus
-  - **Aba "Estrutura"**: BOM hierárquica completa (PIs explodidos)
+- **Export XLSX (TOTVS)** — botão verde no header (só pra produtos PA): gera planilha 2-abas no mesmo formato da planilha de referência da Controladoria (modelo em [docs/Estrutura - 8125 ...xlsx](../docs/))
+  - **Aba "Estrutura"** (27 colunas, espelha a planilha de referência): PA (Produto Pai, Descrição, Saldo Atual, C Unitário) + componente (Código, Descrição, Tipo, Grupo, Unidade, Saldo Atual, C Unitário, Quantidade, Custo Total, Armazém) + quebra de custo da última compra (Valor Un., Valor IPI Un., Valor Un.+IPI, Valor ICMS, Valor PIS, Valor COFINS, Valor Bruto) + Totais (Valor Bruto Total, IPI/ICMS/PIS/COFINS Total). Lista **plana** (componentes diretos; PIs como 1 linha)
+    - Saldo Atual / C Unitário do componente vêm do **armazém 21** (B2_QATU/B2_CM1). Configurável via `?armazemCusto=NN`
+    - **Valor Un.** = D1_VUNIT da última compra · **IPI/ICMS por unidade** = `D1_VALIPI`/`D1_VALICM` ÷ `D1_QUANT` (rateio da NF) · **PIS/COFINS por unidade** = Valor Un. × alíquota fixa (**1,65%** / **7,6%**) · **Valor Bruto** = Valor Un. + IPI Un. · **Totais** = valor unitário × Quantidade do BOM
+    - PA (Saldo/C Unitário do cabeçalho): saldo = `SUM(B2_QATU)`, custo = `MAX(B2_CM1)` (o PA não fica no armazém de MP)
   - **Aba "Custo TOTVS"**: 22 colunas exatas (Cód PA, Descrição, Qtd Necessária, UM, Última Compra, Fornecedor `cod/loja`, NF `doc-serie`, Pedido, Qtde NF, vunit, Total, IPI, ICMS, COFINS, PIS, Frete, Custo Bruto Unit, Custo Liq c/ IPI, Custo Liq Unit) + linha de total
   - **Endpoint**: [GET /controladoria/custo/:produto/xlsx](resources/controladoria/controladoria.custo-produto-xlsx.js)
-  - Fórmulas: `bruto = (Total + IPI + ICMS + Frete) / Qtde` · `liq c/IPI = (Total + IPI - ICMS - PIS - COFINS) / Qtde` · `liq = (Total - ICMS - PIS - COFINS) / Qtde`
+  - Fórmulas Custo TOTVS: `bruto = (Total + IPI + ICMS + Frete) / Qtde` · `liq c/IPI = (Total + IPI - ICMS - PIS - COFINS) / Qtde` · `liq = (Total - ICMS - PIS - COFINS) / Qtde`
+  - ⚠️ Tanto "Estrutura" quanto "Custo TOTVS" refletem a **última compra real** — se houver NF com preço anômalo no Protheus, o valor anômalo aparece (caso real: ESPIGÃO 000085 com NF de R$ 2625/un)
 
 #### Poder de Terceiros (Espelho Protheus) · `/controladoria/poder-terceiros` · perm 11003
 - **Página**: [PoderTerceiros.tsx](../frontend_intranet_react/src/pages/Controladoria/PoderTerceiros.tsx) — aba "Espelho Protheus (SB6010)"
