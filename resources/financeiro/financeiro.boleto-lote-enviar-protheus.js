@@ -1,6 +1,6 @@
 // POST /financeiro/boleto-lote/:id/enviar-protheus
 //
-// Envia o lote ao Protheus via REST custom Develsoft (services/protheusCobranca).
+// Envia o lote ao Protheus via REST custom Diego (services/protheusCobranca).
 // Atualiza status do lote, grava lote_protheus retornado, contadores e o
 // JSON completo da resposta. Audita CRITICO.
 //
@@ -82,7 +82,7 @@ module.exports = (app) => ({
       const okGeral = !!body.ok;
       const qtProc = N(body.qtd_processados);
       const qtRej  = N(body.qtd_rejeitados);
-      const loteProth = trim(body.lote);  // se Develsoft devolver, gravamos
+      const loteProth = trim(body.lote);  // se Diego devolver, gravamos
 
       // 4) Decide novo status
       // - Sucesso real (ok=true E qtd_processados>0): ENVIADO_PROTHEUS, mesmo com rejeicoes parciais

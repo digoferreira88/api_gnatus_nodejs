@@ -1,4 +1,4 @@
-// Script de validacao do endpoint REST Cobranca/gerar-bordero (stub Develsoft)
+// Script de validacao do endpoint REST Cobranca/gerar-bordero (stub Diego)
 //
 // Roda 10 cenarios contra o endpoint e imprime PASS/FAIL pra cada um.
 // Uso: `node test-cobranca-gerar-bordero.js [url] [user] [pass]`

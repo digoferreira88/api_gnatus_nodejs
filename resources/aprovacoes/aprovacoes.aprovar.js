@@ -1,6 +1,6 @@
 // Aprova SC ou Pedido (IP) via API REST do Protheus.
 //
-// Endpoint custom Develsoft:
+// Endpoint custom Diego:
 //   POST {PROTHEUS_API_URL}/AprovaCompras/aprovar
 //   Auth: Basic (credenciais em .env — NUNCA commitar credenciais reais)
 //   Body: { tipo, filial, numero, login, observacao }

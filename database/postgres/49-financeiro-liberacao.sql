@@ -8,7 +8,7 @@
 -- Compartilhados entre os operadores (1 registro por pedido).
 --
 -- A liberação efetiva continua sendo feita no Protheus (Onda 2 futura fará o
--- write-back via REST custom Develsoft). Esta tabela é só apoio operacional —
+-- write-back via REST custom Diego). Esta tabela é só apoio operacional —
 -- a verdade dos pedidos vive no Protheus (SC5/SC6/SC9).
 
 -- Permissao 8006: acesso ao módulo de Liberação Financeira

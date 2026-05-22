@@ -1,4 +1,4 @@
-// Wrapper pro endpoint REST custom Develsoft "Cobranca/gerar-bordero".
+// Wrapper pro endpoint REST custom Diego "Cobranca/gerar-bordero".
 // Spec validado em 2026-05-13: 10/10 cenarios PASS + echo da chave dos
 // titulos no detalhes[].
 //

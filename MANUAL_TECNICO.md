@@ -122,7 +122,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Página exibe relatório dos envios (OK/ERRO/SEM TELEFONE) + botão "Disparar agora" + toggle de ligar/desligar automação
 - Toggle persistido em `tab_cobranca_whatsapp_config.chave = 'automacao_ativa'`
 - O **operador de cobrança** usa o módulo paralelo em `/cobranca/envio-whatsapp` (perm 9004) — preview com curadoria manual antes do envio
-- Endpoint do SURI descoberto via SSH no Fluig PHP da Develsoft: `POST /api/messages/send` (Basic Auth)
+- Endpoint do SURI descoberto via SSH no Fluig PHP da Diego: `POST /api/messages/send` (Basic Auth)
 
 #### Importação Protheus (TRPWSIMP) · `/tecnologia/importar-protheus` · perm 1031
 - **Página**: [ProtheusImport.tsx](../frontend_intranet_react/src/pages/ProtheusImport/ProtheusImport.tsx)
@@ -229,7 +229,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 #### Nova Solicitação de Compra · `/compras/nova-sc` · perm 4004
 - **Página**: [NovaSolicitacaoCompra.tsx](../frontend_intranet_react/src/pages/Compras/NovaSolicitacaoCompra.tsx)
 - **Endpoint**: [POST /compras/sc-criar](resources/compras/compras.sc-criar.js)
-- **Service**: [services/protheusSolicCompra.js](services/protheusSolicCompra.js) — wrapper de `POST {PROTHEUS_API_URL}/SolicCompra/incluir` (REST custom Develsoft, formato MIT072)
+- **Service**: [services/protheusSolicCompra.js](services/protheusSolicCompra.js) — wrapper de `POST {PROTHEUS_API_URL}/SolicCompra/incluir` (REST custom Diego, formato MIT072)
 - Permite abrir SC pela Intranet sem precisar logar no Protheus. Após criada, **aparece em "Minhas Aprovações"** pra quem tem alçada (fluxo SCR/SAL idêntico ao processo do ERP)
 - **Body**: `{ data_necessaria (YYYY-MM-DD), observacao?, itens: [{produto, quantidade, local?, centro_custo, observacao?, fornecedor?, loja?}], anexos?: [{nome, descricao?, base64, item?}] }`
 - Limites: max 50 itens · max 10 anexos · 10MB total de anexos (base64 expandido ~13MB) · timeout 180s
@@ -313,13 +313,13 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 | Status | Quem dispara | O que aconteceu |
 |---|---|---|
 | `CRIADO` | Operador (POST lote-create) | Lote registrado na Intranet, ainda não enviado |
-| `ENVIADO_PROTHEUS` | POST lote-enviar-protheus | Develsoft devolveu `ok:true`, ProcBord rodou (pode ter rejeições parciais) |
+| `ENVIADO_PROTHEUS` | POST lote-enviar-protheus | Diego devolveu `ok:true`, ProcBord rodou (pode ter rejeições parciais) |
 | `ERRO_PROTHEUS` | POST lote-enviar-protheus | HTTP não-2xx ou `body.ok:false` (falha geral, não roda parcial) |
 | `RETORNADO` | POST lote-sincronizar | Todos os títulos do lote já têm retorno do banco (sem PENDENTE) |
 | `DISPARADO` | Onda 3.4-3.6 (planejado) | Boleto disparado por WhatsApp/email |
 
 ##### Onda 2 — Envio ao Protheus (implementado em 2026-05-13)
-- **Service**: [services/protheusCobranca.js](services/protheusCobranca.js) — wrapper de `POST {PROTHEUS_API_URL}/Cobranca/gerar-bordero` (REST custom Develsoft)
+- **Service**: [services/protheusCobranca.js](services/protheusCobranca.js) — wrapper de `POST {PROTHEUS_API_URL}/Cobranca/gerar-bordero` (REST custom Diego)
 - **Endpoint**: [POST /financeiro/boleto-lote/:id/enviar-protheus](resources/financeiro/financeiro.boleto-lote-enviar-protheus.js)
 - Pre-condição: lote em status `CRIADO` (não reenvia)
 - Auth Basic com `PROTHEUS_API_USER/PROTHEUS_API_PASS` (mesmas creds do AprovaCompras). Timeout 60s, max 500 títulos/chamada
@@ -359,7 +359,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
   - **Não liberar (restrição de pagto)**: `recMinFat > 0` E `recMinFat > pago` (recebimento mínimo de faturamento não atingido)
 - UI: tabela 1 linha/pedido, KPIs (pedidos, valor total, qtd verificar, qtd restrição), filtros, Ações/Observações editáveis inline (salvam on-blur), export CSV (CPF/CNPJ mascarado, datas dd/mm/yyyy)
 - **Onda 1 (atual)**: organiza + rastreia. A **liberação efetiva continua no Protheus**
-- **Onda 2 (planejada)**: botão "Liberar no Protheus" — executa a **sequência de liberação custom** (rotina Develsoft ligada à `v_filapedidos` / SC9 `C9_BLCRED`). Precisa de endpoint REST custom (mesmo padrão do `AprovaCompras/aprovar`) — aguarda spec + Develsoft. Prints da sequência a coletar com a operadora
+- **Onda 2 (planejada)**: botão "Liberar no Protheus" — executa a **sequência de liberação custom** (rotina Diego ligada à `v_filapedidos` / SC9 `C9_BLCRED`). Precisa de endpoint REST custom (mesmo padrão do `AprovaCompras/aprovar`) — aguarda spec + Diego. Prints da sequência a coletar com a operadora
 
 ---
 
@@ -456,7 +456,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - **Mapeamento equipe → perfil** definido em `tab_cobranca_bu_equipe.perfil` (seed na migration 40)
 
 #### Borderô (integração com Protheus) — em construção
-- **Endpoint Protheus** (custom Develsoft): `POST http://protheus.gnatus.com.br:8081/rest/Cobranca/gerar-bordero`
+- **Endpoint Protheus** (custom Diego): `POST http://protheus.gnatus.com.br:8081/rest/Cobranca/gerar-bordero`
 - Auth Basic (`admin:Gn@tu5` — mesmas credenciais do AprovaCompras)
 - **Spec do contrato**: validações 400/413, payload `{filial, banco, operador, observacao, titulos[]}`, response `{ok, qtd_processados, qtd_rejeitados, lote, detalhes:[{prefixo, numero, parcela, cliente, loja, status, codigo_erro?, mensagem?}]}`
 - **Script de teste**: [scripts/test-cobranca-gerar-bordero.js](scripts/test-cobranca-gerar-bordero.js) — 10 cenários (auth/validações/payload válido). Roda com `node scripts/test-cobranca-gerar-bordero.js`
@@ -707,7 +707,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 ### 3.10 Produção
 
-> Substitui o **Pipefy "01 | REGISTRO HISTÓRICO DO PRODUTO"** (Develsoft). Cada Ordem de Produção (OP) percorre 12 etapas. Cada etapa tem responsável, status, campos específicos, anexos (SharePoint) e log de transições pra cálculo de tempos/produtividade.
+> Substitui o **Pipefy "01 | REGISTRO HISTÓRICO DO PRODUTO"** (Diego). Cada Ordem de Produção (OP) percorre 12 etapas. Cada etapa tem responsável, status, campos específicos, anexos (SharePoint) e log de transições pra cálculo de tempos/produtividade.
 
 **Permissões**:
 - `14001` Produção - Registro (operador comum: cria registros, atualiza etapas atribuídas)
@@ -972,7 +972,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 ### 4.10 SURI WhatsApp (via Fluig PHP)
 - **Service**: [services/suri.js](services/suri.js)
-- Cliente do **Gupshup/SURI** mediado pelo **Fluig PHP da Develsoft** (`172.31.255.51`) — Gnatus não chama Gupshup direto
+- Cliente do **Gupshup/SURI** mediado pelo **Fluig PHP da Diego** (`172.31.255.51`) — Gnatus não chama Gupshup direto
 - Endpoint: `POST {SURI_BASE_URL}/api/messages/send` com Basic Auth (`gnatus-fluig`/`@Senha1232019`)
 - Templates aprovados pela Meta com placeholders `{{1}}, {{2}}, ...` substituídos por nome/NF/valor/vencimento
 - Função `normalizePhone(rawPhone)` remove zeros, adiciona DDI 55, valida 12-13 dígitos
@@ -991,7 +991,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - **Limite**: 4MB no PUT direto (acima precisa upload session — não implementado)
 - **Usado por**: Produção (anexos de etapas) + Produção (instruções de trabalho)
 
-### 4.13 Protheus REST (Develsoft — endpoints custom)
+### 4.13 Protheus REST (Diego — endpoints custom)
 - **Wrapper services**:
   - [services/protheus.js](services/protheus.js) — MSSQL Protheus (leitura)
   - [services/protheusCobranca.js](services/protheusCobranca.js) — `POST /Cobranca/gerar-bordero` (Envio de Boleto)
@@ -1004,7 +1004,7 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
   - `PROTHEUS_API_PATH_BORDERO=/Cobranca/gerar-bordero` (override opcional)
   - `PROTHEUS_API_PATH_SOLIC_COMPRA=/SolicCompra/incluir` (override opcional)
 - Timeout: 60s pra Cobrança · 180s pra SolicCompra (anexos inflam payload, AdvPL leva ~80s/MB)
-- **AprovaCompras** (também custom Develsoft) é chamado direto do endpoint de Aprovações — não tem service-wrapper isolado
+- **AprovaCompras** (também custom Diego) é chamado direto do endpoint de Aprovações — não tem service-wrapper isolado
 
 ---
 
@@ -1184,7 +1184,7 @@ Resumo dos principais:
 - **Aprovações de SC: alçada por grupo só vale se `CR_USER` estiver vazio** (2026-05-13). Se a SCR tem aprovador nomeado, só ele aprova — qualquer outro membro do grupo recebe 403 do Protheus ("não faz parte da alçada")
 - **WhatsApp D+3 = janela 1 a 3 dias**, não "≥ 3 dias" (corrigido em 2026-05-12). `mode: 'janela'` no `services/scheduler.js TIPOS` com `delta=-3, deltaMax=-1`. Antes pegava títulos de 1000+ dias atrás
 - **Estoque snapshot precisa GRANT explícito**: as tabelas criadas como `postgres` não dão permissão automática pro role `intranet`. Sempre rodar a migration via psql que inclui `GRANT SELECT/INSERT/UPDATE/DELETE ON ... TO intranet` (ver migrations 38/39/40 como exemplo). Sem isso o backend dá `permission denied for table`
-- **Cobrança Borderô (Develsoft)**: validações 400/413 do stub funcionam mas o 401 vem com body genérico do AppServer (`{"message":"The request requires authentication..."}`) porque o `AccessControl` bloqueia ANTES da função AdvPL rodar. O test script aceita 401 só pelo status code, sem checar `codigo_erro`
+- **Cobrança Borderô (Diego)**: validações 400/413 do stub funcionam mas o 401 vem com body genérico do AppServer (`{"message":"The request requires authentication..."}`) porque o `AccessControl` bloqueia ANTES da função AdvPL rodar. O test script aceita 401 só pelo status code, sem checar `codigo_erro`
 - **SC criada via Intranet**: solicitante deve ser `USR_CODIGO` do Protheus (6 chars, login do SYS_USR), não email. Caminho: `req.user.CODIGO_PROTHEUS` (USR_ID) → `SELECT TOP 1 USR_CODIGO FROM SYS_USR WHERE USR_ID = @cod`. Antes mandávamos email (16+ chars), estourava C1_USER e AdvPL crashava com HTTP 500 genérico
 - **SharePoint anexos > 4MB** requer upload session do Graph (não simples PUT). Não implementado em F1. Limite atual hardcoded em `MAX_SIMPLE_UPLOAD` no `services/graphFiles.js`
 - **SharePoint via Application Permissions** não acessa OneDrive pessoal de forma confiável — destino tem que ser **Site SharePoint** dedicado (`/sites/Pipefy`). Permission `Files.ReadWrite.All` (ou `Sites.Selected` com grant restrito) precisa admin consent
@@ -1210,7 +1210,7 @@ Resumo dos principais:
 
 ### Liberação Financeira
 - ~~**Onda 1**: tela que substitui planilha+dinâmica (carteira filtrada por estatus 20) + ações/observações por pedido~~ ✅ **Implementado em 2026-05-20** (migration 49)
-- **Onda 2 (pendente)**: botão "Liberar no Protheus" — executar a sequência de liberação custom (rotina Develsoft ligada à `v_filapedidos` / SC9 `C9_BLCRED`). Precisa de **endpoint REST custom da Develsoft** (mesmo padrão do `AprovaCompras/aprovar`) + prints da sequência atual com a operadora. Provável: service `services/protheusLiberacao.js` + `POST /financeiro/liberacao/:pedido/liberar`
+- **Onda 2 (pendente)**: botão "Liberar no Protheus" — executar a sequência de liberação custom (rotina Diego ligada à `v_filapedidos` / SC9 `C9_BLCRED`). Precisa de **endpoint REST custom da Diego** (mesmo padrão do `AprovaCompras/aprovar`) + prints da sequência atual com a operadora. Provável: service `services/protheusLiberacao.js` + `POST /financeiro/liberacao/:pedido/liberar`
 
 ### Contratos
 - **Onda 3**: assinatura digital (Clicksign API), faturamento automático (gerar SE1), renovação automática quando `renovacao_automatica = true`, alertas por WhatsApp (alongside e-mail)

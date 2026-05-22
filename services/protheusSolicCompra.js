@@ -1,4 +1,4 @@
-// Wrapper pro endpoint REST custom Develsoft "SolicCompra/incluir".
+// Wrapper pro endpoint REST custom Diego "SolicCompra/incluir".
 // Spec validada em 2026-05-13: 8/10 testes PASS — caminho de validacao +
 // sucesso ja funciona; falta dev tratar produto inexistente como
 // inconsistencia (hoje quebra com 500).
@@ -20,7 +20,7 @@ const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
 
 /**
- * Cria SC no Protheus via REST custom Develsoft. Opcionalmente envia anexos
+ * Cria SC no Protheus via REST custom Diego. Opcionalmente envia anexos
  * (grava em AC9010/ACB010 — "Conhecimento" no Protheus).
  *
  * @param {object} args
@@ -134,7 +134,7 @@ async function criarSC({ filial, solicitante, data_emissao, data_necessaria, obs
   }
 }
 
-// Interpreta o response no padrao Develsoft (MIT072 + INCONSISTENCIAS):
+// Interpreta o response no padrao Diego (MIT072 + INCONSISTENCIAS):
 //   SC_GERADAS preenchido         -> SUCESSO
 //   STATUS.NAO_ATUALIZADOS > 0    -> REJEITADA (item invalido — produto, qtd, etc)
 //   resto                         -> ERRO_SISTEMA (HTTP 5xx, JSON quebrado)

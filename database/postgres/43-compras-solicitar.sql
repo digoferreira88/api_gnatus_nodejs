@@ -1,6 +1,6 @@
 -- Compras - Solicitar Compra (Onda 1)
 -- Tela na Intranet pra abrir SC sem precisar logar no Protheus.
--- Chama POST /SolicCompra/incluir (WSRESTFUL custom Develsoft) — formato MIT072.
+-- Chama POST /SolicCompra/incluir (WSRESTFUL custom Diego) — formato MIT072.
 -- Aprovacao continua no Protheus (SCR/SAL) e a SC ja aparece em
 -- "Minhas Aprovacoes" da Intranet pra quem tem alcada.
 
@@ -49,4 +49,4 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON tab_sc_intranet_log TO intranet;
 GRANT USAGE, SELECT ON SEQUENCE tab_sc_intranet_log_id_seq TO intranet;
 
 COMMENT ON TABLE tab_sc_intranet_log IS
-    'Log de tentativas de criacao de SC via Intranet. SC eh criada no Protheus via REST custom Develsoft — esta tabela so guarda historico/auditoria.';
+    'Log de tentativas de criacao de SC via Intranet. SC eh criada no Protheus via REST custom Diego — esta tabela so guarda historico/auditoria.';

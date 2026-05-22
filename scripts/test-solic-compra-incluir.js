@@ -1,4 +1,4 @@
-// Script de validacao do endpoint REST SolicCompra/incluir (WSRESTFUL custom Develsoft)
+// Script de validacao do endpoint REST SolicCompra/incluir (WSRESTFUL custom Diego)
 //
 // Roda 10 cenarios contra o endpoint e imprime PASS/FAIL pra cada um.
 // Uso: `node test-solic-compra-incluir.js [url] [user] [pass] [produtoReal] [ccReal]`
@@ -56,7 +56,7 @@ const tests = [
     validar: (s) => ({ ok: s === 401, msg: `HTTP esperado 401, recebido ${s}` })
   },
   // Validacoes de campo (pre-AdvPL) — esperamos 400 com codigo_erro
-  // Validacoes de campo — Develsoft padronizou em INCONSISTENCIAS[] em vez
+  // Validacoes de campo — Diego padronizou em INCONSISTENCIAS[] em vez
   // de codigo_erro no root (mais consistente com o formato MIT072 — TODO erro
   // vai pro mesmo array, validacao ou item).
   {

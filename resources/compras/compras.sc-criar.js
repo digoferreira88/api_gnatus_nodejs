@@ -1,6 +1,6 @@
 // POST /compras/sc-criar
 //
-// Cria uma SC no Protheus via REST custom Develsoft. Solicitante = email do
+// Cria uma SC no Protheus via REST custom Diego. Solicitante = email do
 // usuario logado. Loga tudo em tab_sc_intranet_log + audita CRITICO.
 //
 // Body: {
