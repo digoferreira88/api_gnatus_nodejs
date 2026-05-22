@@ -25,7 +25,13 @@ module.exports = (app) => ({
       const lotes = await Pg.connectAndQuery(`
         SELECT l.id, l.banco_cod, l.banco_nome, l.qt_titulos, l.valor_total,
                l.status, l.observacao, l.criado_em, l.atualizado_em,
-               l.usuario_nome
+               l.usuario_nome,
+               -- Onda 2 (envio ao Protheus / bordero)
+               l.lote_protheus, l.enviado_em, l.enviado_por_email,
+               l.qt_processados, l.qt_rejeitados,
+               -- Onda 3 (retorno do banco)
+               l.sincronizado_em, l.qt_registrados, l.qt_liquidados,
+               l.qt_rejeitados_banco, l.qt_pendentes_banco
           FROM tab_boleto_envio_lote l
           ${where}
          ORDER BY l.criado_em DESC
