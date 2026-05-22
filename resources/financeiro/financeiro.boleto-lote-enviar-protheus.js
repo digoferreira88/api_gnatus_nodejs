@@ -67,6 +67,8 @@ module.exports = (app) => ({
       const r = await ProtheusCobranca.gerarBordero({
         filial: '01',
         banco: trim(lote.banco_cod),
+        agencia: trim(lote.banco_agencia),
+        conta: trim(lote.banco_conta),
         operador: operadorEmail,
         observacao,
         titulos: titulos.map(t => ({

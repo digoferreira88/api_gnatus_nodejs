@@ -1,6 +1,9 @@
 // POST /financeiro/boleto-lote — cria lote de boletos a enviar.
-// Body: { banco_cod, banco_nome, observacao?, titulos: [{prefixo, numero, parcela, tipo,
-//         cliente_cod, cliente_loja, cliente_nome, valor, saldo, vencimento}] }
+// Body: { banco_cod, banco_nome, banco_agencia?, banco_conta?, observacao?,
+//         titulos: [{prefixo, numero, parcela, tipo, cliente_cod, cliente_loja,
+//         cliente_nome, valor, saldo, vencimento}] }
+//   banco_agencia/banco_conta = portador (A6_AGENCIA/A6_NUMCON) escolhido — usado
+//   no envio ao Protheus pra o bordero ir na conta certa.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const Auditoria = require('../../services/auditoria');
@@ -18,6 +21,8 @@ module.exports = (app) => ({
     const b = req.body || {};
     const banco_cod = trim(b.banco_cod);
     const banco_nome = trim(b.banco_nome);
+    const banco_agencia = trim(b.banco_agencia);
+    const banco_conta = trim(b.banco_conta);
     const titulos = Array.isArray(b.titulos) ? b.titulos : [];
 
     if (!banco_cod) return res.status(400).json({ message: 'banco_cod obrigatorio.' });
@@ -29,14 +34,16 @@ module.exports = (app) => ({
     try {
       const ins = await Pg.connectAndQuery(`
         INSERT INTO tab_boleto_envio_lote
-          (id_user, usuario_nome, banco_cod, banco_nome, qt_titulos, valor_total, observacao, status)
-        VALUES (@uid, @uname, @bcod, @bnome, @qt, @vt, @obs, 'CRIADO')
+          (id_user, usuario_nome, banco_cod, banco_nome, banco_agencia, banco_conta, qt_titulos, valor_total, observacao, status)
+        VALUES (@uid, @uname, @bcod, @bnome, @bag, @bcc, @qt, @vt, @obs, 'CRIADO')
         RETURNING id`,
         {
           uid: user?.ID || null,
           uname: trim(user?.NOME) || null,
           bcod: banco_cod,
           bnome: banco_nome || null,
+          bag: banco_agencia || null,
+          bcc: banco_conta || null,
           qt: titulos.length,
           vt: Number(valor_total.toFixed(2)),
           obs: trim(b.observacao) || null

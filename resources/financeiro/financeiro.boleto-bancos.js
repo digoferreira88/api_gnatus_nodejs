@@ -41,7 +41,9 @@ module.exports = (app) => ({
           cod: trim(r.cod),
           nome: trim(r.nome),
           agencia: trim(r.agencia),
-          cc: trim(r.cc) + (trim(r.dv) ? `-${trim(r.dv)}` : ''),
+          conta: trim(r.cc),                 // A6_NUMCON cru (sem DV) — enviado ao Protheus
+          contaDv: trim(r.dv),               // A6_DVCTA
+          cc: trim(r.cc) + (trim(r.dv) ? `-${trim(r.dv)}` : ''),   // display c/ DV
           rotulo: `${BANCOS_COBRANCA[trim(r.cod)]} · ag ${trim(r.agencia)} · cc ${trim(r.cc)}`
         }))
         .sort((a, b) => a.rotulo.localeCompare(b.rotulo));

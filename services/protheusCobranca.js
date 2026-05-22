@@ -23,7 +23,7 @@ const trim = (v) => String(v || '').trim();
  * @param {Array}  args.titulos     — [{prefixo, numero, parcela, tipo, cliente, loja}, ...]
  * @returns {Promise<{httpStatus, body, ok}>}
  */
-async function gerarBordero({ filial, banco, operador, observacao, titulos }) {
+async function gerarBordero({ filial, banco, agencia, conta, operador, observacao, titulos }) {
   const apiUrl  = process.env.PROTHEUS_API_URL;
   const apiUser = process.env.PROTHEUS_API_USER;
   const apiPass = process.env.PROTHEUS_API_PASS;
@@ -58,6 +58,12 @@ async function gerarBordero({ filial, banco, operador, observacao, titulos }) {
   const payload = {
     filial: trim(filial) || '01',
     banco: trim(banco),
+    // Agencia/conta do portador escolhido (A6_AGENCIA / A6_NUMCON). Quando
+    // informadas, a rotina deve gerar o bordero na carteira (SEE010) dessa conta
+    // e setar E1_AGEDEP/E1_CONTA nos titulos. Sem elas, cai no comportamento
+    // antigo (banco sem conta especifica).
+    agencia: trim(agencia),
+    conta: trim(conta),
     operador: trim(operador),
     observacao: trim(observacao),
     titulos: titulos.map(t => ({
