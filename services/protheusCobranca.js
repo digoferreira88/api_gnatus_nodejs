@@ -23,7 +23,12 @@ const trim = (v) => String(v || '').trim();
  * @param {Array}  args.titulos     — [{prefixo, numero, parcela, tipo, cliente, loja}, ...]
  * @returns {Promise<{httpStatus, body, ok}>}
  */
-async function gerarBordero({ filial, banco, agencia, conta, operador, observacao, titulos }) {
+// Situacao do bordero (campo "Situacao" da ESF050). No Protheus o padrao vem
+// como '0' (CARTEIRA), mas o financeiro SEMPRE gera como '1' (carteira simples).
+// Mandamos '1' por padrao pra bater com o processo manual.
+const SITUACAO_PADRAO = '1';
+
+async function gerarBordero({ filial, banco, agencia, conta, situacao, operador, observacao, titulos }) {
   const apiUrl  = process.env.PROTHEUS_API_URL;
   const apiUser = process.env.PROTHEUS_API_USER;
   const apiPass = process.env.PROTHEUS_API_PASS;
@@ -64,6 +69,8 @@ async function gerarBordero({ filial, banco, agencia, conta, operador, observaca
     // antigo (banco sem conta especifica).
     agencia: trim(agencia),
     conta: trim(conta),
+    // '1' = carteira simples (o financeiro nunca usa o padrao '0' = carteira)
+    situacao: trim(situacao) || SITUACAO_PADRAO,
     operador: trim(operador),
     observacao: trim(observacao),
     titulos: titulos.map(t => ({
