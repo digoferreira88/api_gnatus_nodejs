@@ -70,6 +70,17 @@ module.exports = (app) => ({
         });
       });
 
+      // Status de cobranca por cliente (cadastrado pelo operador) — pra mostrar
+      // na curadoria. Chave: cliente_cod|cliente_loja.
+      const statusRows = await Pg.connectAndQuery(
+        `SELECT cliente_cod, cliente_loja, status, observacao FROM tab_cobranca_status_cliente`, {}
+      );
+      const statusCliente = new Map();
+      statusRows.forEach(s => statusCliente.set(
+        `${String(s.cliente_cod || '').trim()}|${String(s.cliente_loja || '').trim()}`,
+        { status: s.status, observacao: s.observacao }
+      ));
+
       const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
       const candidatos = { 'D-1': [], 'D0': [], 'D+3': [] };
       const totais = {};
@@ -80,6 +91,7 @@ module.exports = (app) => ({
           const phone = Scheduler.extrairTelefone(row, Suri);
           const params = Scheduler.montarParametros(tipo, row);
           const env = ultimoEnvio.get(`${chaveTitulo(row)}|${tipo}`);
+          const stCob = statusCliente.get(`${String(row.cliente_cod || '').trim()}|${String(row.cliente_loja || '').trim()}`);
 
           let diasDesdeUltimoEnvio = null;
           if (env) {
@@ -114,7 +126,9 @@ module.exports = (app) => ({
             ja_enviado_hoje: !!jaHoje,
             ultimo_envio_em: env?.criado_em || null,        // timestamp completo
             ultimo_envio_status: env?.status || null,
-            dias_desde_ultimo_envio: diasDesdeUltimoEnvio
+            dias_desde_ultimo_envio: diasDesdeUltimoEnvio,
+            status_cobranca: stCob?.status || null,
+            status_cobranca_obs: stCob?.observacao || null
           };
         });
         candidatos[tipo] = lista;
