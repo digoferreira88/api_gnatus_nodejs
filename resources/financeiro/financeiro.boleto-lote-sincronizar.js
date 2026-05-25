@@ -30,6 +30,8 @@ const MAP_OCORRENCIA = {
   '15': { status: 'LIQUIDADO',  desc: 'Liquidação em cartório' },
   '17': { status: 'LIQUIDADO',  desc: 'Liquidação após baixa' },
   '20': { status: 'REGISTRADO', desc: 'Confirmação de recebimento' },
+  // Itau: ocorrencia 21 confirmada pelo financeiro como entrada/registro do boleto
+  '21': { status: 'REGISTRADO', desc: 'Entrada confirmada (ocorrência 21)' },
   '23': { status: 'REGISTRADO', desc: 'Remessa a cartório' },
   '24': { status: 'REGISTRADO', desc: 'Retirada de cartório' },
   '32': { status: 'REJEITADO',  desc: 'Instrução rejeitada' },
