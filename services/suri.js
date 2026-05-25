@@ -30,7 +30,10 @@ const http = axios.create({
 const TEMPLATES = {
   'D-1': process.env.SURI_TPL_D1 || 'cb97032321:template:152133702',  // cobrancalembreted1
   'D0':  process.env.SURI_TPL_D0 || 'cb97032321:template:152134356',  // cobrancavencimentod0
-  'D+3': process.env.SURI_TPL_D3 || 'cb97032321:template:152140099'   // cobrancaatrasod3
+  'D+3': process.env.SURI_TPL_D3 || 'cb97032321:template:152140099',  // cobrancaatrasod3
+  // envio_boleto (linha digitavel) — categoria Utility. So dispara se o env
+  // estiver setado (sem default: ate aprovar/configurar fica desligado).
+  'BOLETO': process.env.SURI_TPL_BOLETO || ''
 };
 
 // Body dos templates aprovados no Meta — espelhado aqui pra montar o preview
@@ -45,7 +48,12 @@ const TEMPLATE_BODIES = {
     'Em caso de dúvidas sobre boleto ou pagamento, fale conosco.\n\nEquipe Financeiro Gnatus',
   'D+3':
     'Olá, {{1}}.\n\nIdentificamos que a parcela da NF {{2}} (R$ {{3}}, vencida em {{4}}) ainda não foi compensada.\n\n' +
-    'Se já efetuou o pagamento, encaminhe o comprovante. Caso contrário, conte conosco para regularizar.\n\nEquipe Financeiro Gnatus'
+    'Se já efetuou o pagamento, encaminhe o comprovante. Caso contrário, conte conosco para regularizar.\n\nEquipe Financeiro Gnatus',
+  // {{1}} nome · {{2}} NF · {{3}} valor (sem R$) · {{4}} vencimento · {{5}} linha digitavel
+  'BOLETO':
+    'Olá, {{1}}!\n\nSegue o boleto referente à sua nota fiscal {{2}} na Gnatus.\n\n' +
+    'Valor: R$ {{3}}\nVencimento: {{4}}\n\nLinha digitável:\n{{5}}\n\n' +
+    'Copie a linha digitável acima e efetue o pagamento pelo app ou site do seu banco. Se já realizou o pagamento, desconsidere esta mensagem.'
 };
 
 // Substitui {{1}}, {{2}}, ... pelos valores. Usa replaceAll pra cobrir reuso.

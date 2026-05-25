@@ -18,9 +18,12 @@ const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005
 const Auditoria = require('../../services/auditoria');
 const ProtheusBoleto = require('../../services/protheusBoleto');
 const Email = require('../../services/emailService');
+const Suri = require('../../services/suri');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
+// Valor formatado pt-BR SEM "R$" (o template ja tem "R$" fixo antes da variavel).
+const fmtValor = (v) => N(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // 'YYYYMMDD' (ou 'YYYY-MM-DD') -> 'dd/mm/yyyy'
 function fmtData(v) {
@@ -77,6 +80,7 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;
+    const SuriSvc = app.services.Suri || Suri;
 
     const ids = (Array.isArray(req.body?.ids) ? req.body.ids : [])
       .map(Number).filter(n => Number.isInteger(n) && n > 0);
@@ -189,15 +193,33 @@ module.exports = (app) => ({
           }
         }
 
-        // 5) WhatsApp — pendente de template aprovado
+        // 5) WhatsApp — template 'BOLETO' (envio_boleto, Utility)
         if (querWhats) {
           if (!whatsHabilitado) {
-            erros.push('whatsapp: pendente_template (template de boleto não aprovado no Meta)');
+            erros.push('whatsapp: pendente_template (SURI_TPL_BOLETO não configurado)');
           } else if (!contato.telefone) {
             erros.push('whatsapp: sem telefone no cadastro (SA1)');
           } else {
-            // Reservado: quando o template existir, enviar aqui via Suri.
-            erros.push('whatsapp: template configurado, envio ainda não implementado');
+            const phone = SuriSvc.normalizePhone(contato.telefone);
+            if (!phone) {
+              erros.push(`whatsapp: telefone inválido (${contato.telefone})`);
+            } else {
+              // Ordem dos parametros = {{1}}..{{5}}: nome, NF, valor (sem R$), vencimento, linha
+              const params = [
+                trim(r.cliente_nome) || 'cliente',
+                trim(r.numero),
+                fmtValor(r.valor),
+                fmtData(r.vencimento),
+                linha
+              ];
+              try {
+                const w = await SuriSvc.enviarTemplate({ phone, tipo: 'BOLETO', parameters: params });
+                if (w.ok) enviados.push('WHATSAPP');
+                else erros.push('whatsapp: ' + (w.erro || 'falha no envio'));
+              } catch (e) {
+                erros.push('whatsapp: ' + e.message);
+              }
+            }
           }
         }
 
