@@ -30,6 +30,16 @@ async function sendVerificationEmail(to, codigo) {
     });
 }
 
+// Quebra um campo de destinatarios em array, aceitando separadores ',' e ';'
+// (o SA1 do Protheus guarda multiplos e-mails separados por ';' — convencao
+// Outlook — e o nodemailer interpretaria como UM endereco invalido se passado
+// como string). Devolve a entrada como esta se ja for array, ou null/undefined.
+const splitAddrs = (v) => {
+    if (v == null || v === '') return v;
+    if (Array.isArray(v)) return v;
+    return String(v).split(/[;,]/).map(s => s.trim()).filter(Boolean);
+};
+
 // Envio generico — usado por modulos que precisam mandar e-mail livre
 // (alertas de contrato, notificacoes diversas, etc).
 async function sendEmail({ to, subject, text, html, cc, bcc }) {
@@ -40,7 +50,7 @@ async function sendEmail({ to, subject, text, html, cc, bcc }) {
     }
     const info = await transporter.sendMail({
         from: process.env.SMTP_FROM || 'noreply@intranet.local',
-        to, cc, bcc, subject, text, html
+        to: splitAddrs(to), cc: splitAddrs(cc), bcc: splitAddrs(bcc), subject, text, html
     });
     return info;
 }
