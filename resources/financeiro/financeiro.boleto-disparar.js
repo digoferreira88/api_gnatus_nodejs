@@ -42,7 +42,7 @@ function montarEmail({ nome, numero, parcela, valor, vencimento, banco, linha })
   const venc = fmtData(vencimento);
   const val = fmtBRL(valor);
   const nf = `${numero}${parcela ? '/' + parcela : ''}`;
-  const subject = `Boleto Gnatus — NF ${nf}${venc ? ` (vence ${venc})` : ''}`;
+  const subject = `Boleto Gnatus — NF / Pedido ${nf}${venc ? ` (vence ${venc})` : ''}`;
 
   const text =
     `Olá, ${nome || 'cliente'}!\n\n` +
