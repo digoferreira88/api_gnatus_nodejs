@@ -27,10 +27,17 @@ module.exports = (app) => ({
     const conteudoBase64 = trim(req.body?.conteudo_base64);
     const nomeArquivo = trim(req.body?.nome_arquivo);
     const banco = trim(req.body?.banco);
+    const agencia = trim(req.body?.agencia);
+    const conta = trim(req.body?.conta);
     const simular = req.body?.simular !== false;   // default seguro: dry-run
 
     if (!conteudoBase64) {
       return res.status(400).json({ message: 'Envie o conteudo do arquivo (.RET) em conteudo_base64.' });
+    }
+    // No import REAL o endpoint Diego precisa de banco+agencia+conta pra fazer
+    // o DbSeek na SEE (achar a carteira / EE_DIRREC). Sem isso da LAYOUT_NAO_SUPORTADO.
+    if (!simular && (!banco || !agencia || !conta)) {
+      return res.status(400).json({ message: 'Para o import real, informe banco, agencia e conta da carteira (carteira do borderô).' });
     }
 
     try {
@@ -38,6 +45,8 @@ module.exports = (app) => ({
       const r = await ProtheusRetorno.importar({
         filial: '01',
         banco,
+        agencia,
+        conta,
         nomeArquivo,
         conteudoBase64,
         operador: operadorEmail,
