@@ -49,15 +49,15 @@ function montarEmail({ nome, numero, parcela, valor, vencimento, banco, linha })
   const venc = fmtData(vencimento);
   const val = fmtBRL(valor);
   const nf = `${numero}${parcela ? '/' + parcela : ''}`;
-  const subject = `Boleto em aberto — NF ${nf}${venc ? ` (vence ${venc})` : ''}`;
+  const subject = `Boleto em aberto — NF / Pedido ${nf}${venc ? ` (vence ${venc})` : ''}`;
 
   const text =
     `Olá, ${nome || 'cliente'}.\n\n` +
-    `Segue o boleto referente à NF ${nf}.\n\n` +
+    `Segue o boleto referente à NF / Pedido ${nf}.\n\n` +
     `Valor: ${val}\n` +
     (venc ? `Vencimento: ${venc}\n` : '') +
     (banco ? `Banco: ${banco}\n` : '') +
-    `Nota fiscal: ${nf}\n\n` +
+    `NF / Pedido: ${nf}\n\n` +
     `Linha digitável:\n${linha}\n\n` +
     `Selecione a linha digitável acima e pague no app do seu banco. ` +
     `Em caso de dúvida, responda este e-mail.\n\n` +
@@ -81,7 +81,7 @@ function montarEmail({ nome, numero, parcela, valor, vencimento, banco, linha })
 </td></tr>
 <tr><td style="padding:16px 32px 0 32px;font-size:15px;line-height:1.6;color:#0f172a;">
 <p style="margin:0 0 12px 0;">Olá, <strong>${esc(nome || 'cliente')}</strong>.</p>
-<p style="margin:0 0 20px 0;">Segue o boleto referente à <strong>NF ${esc(nf)}</strong>.</p>
+<p style="margin:0 0 20px 0;">Segue o boleto referente à <strong>NF / Pedido ${esc(nf)}</strong>.</p>
 </td></tr>
 <tr><td style="padding:0 32px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;">
@@ -98,7 +98,7 @@ ${banco ? `<tr>
 <td style="padding:12px 0;font-size:15px;color:#0f172a;text-align:right;border-top:1px solid #f1f5f9;">${esc(banco)}</td>
 </tr>` : ''}
 <tr>
-<td style="padding:12px 0;font-size:13px;color:#64748b;border-top:1px solid #f1f5f9;">Nota fiscal</td>
+<td style="padding:12px 0;font-size:13px;color:#64748b;border-top:1px solid #f1f5f9;">NF / Pedido</td>
 <td style="padding:12px 0;font-size:15px;color:#0f172a;text-align:right;border-top:1px solid #f1f5f9;">${esc(nf)}</td>
 </tr>
 </table>
