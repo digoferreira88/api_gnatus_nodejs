@@ -41,8 +41,10 @@ const esc = (s) => String(s || '').replace(/[&<>"']/g, (c) => (
 // Template baseado em docs/A _ Minimalista _ 1 boleto.html (Design Canvas).
 // O HTML do canvas tem ~873KB de CSS verboso — refeito aqui em HTML email-safe
 // (tabelas + inline styles) para caber sob o clip de 102KB do Gmail e renderizar
-// no Outlook. Botão "Baixar boleto (PDF)" deixado em standby (bloco BTN_PDF
-// comentado): quando houver endpoint do PDF, passar pdfUrl e descomentar.
+// no Outlook. Logo servido pelo nginx em https://intranew.gnatus.com.br/logo-gnatus.png
+// (asset versionado em frontend/public/logo-gnatus.png). Sem botão "Copiar linha
+// digitável": JS não roda em e-mail. Botão "Baixar boleto (PDF)" em standby
+// (bloco BTN_PDF comentado): quando houver URL do PDF, passar pdfUrl e descomentar.
 function montarEmail({ nome, numero, parcela, valor, vencimento, banco, linha }) {
   const venc = fmtData(vencimento);
   const val = fmtBRL(valor);
@@ -57,7 +59,7 @@ function montarEmail({ nome, numero, parcela, valor, vencimento, banco, linha })
     (banco ? `Banco: ${banco}\n` : '') +
     `Nota fiscal: ${nf}\n\n` +
     `Linha digitável:\n${linha}\n\n` +
-    `Basta copiar a linha digitável acima e pagar no app do seu banco. ` +
+    `Selecione a linha digitável acima e pague no app do seu banco. ` +
     `Em caso de dúvida, responda este e-mail.\n\n` +
     `Equipe Financeiro Gnatus`;
 
@@ -73,8 +75,9 @@ function montarEmail({ nome, numero, parcela, valor, vencimento, banco, linha })
 <tr><td align="center">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
 <tr><td style="padding:28px 32px 8px 32px;">
-<div style="font-size:12px;letter-spacing:1.5px;color:#64748b;text-transform:uppercase;font-weight:600;">Gnatus &middot; Financeiro</div>
-<h1 style="margin:8px 0 0 0;font-size:22px;line-height:1.3;font-weight:600;color:#0f172a;">Boleto em aberto</h1>
+<img src="https://intranew.gnatus.com.br/logo-gnatus.png" alt="Gnatus" width="64" height="64" style="display:block;border:0;outline:none;text-decoration:none;width:64px;height:64px;margin-bottom:12px;">
+<div style="font-size:12px;letter-spacing:1.5px;color:#64748b;text-transform:uppercase;font-weight:600;">Financeiro</div>
+<h1 style="margin:6px 0 0 0;font-size:22px;line-height:1.3;font-weight:600;color:#0f172a;">Boleto em aberto</h1>
 </td></tr>
 <tr><td style="padding:16px 32px 0 32px;font-size:15px;line-height:1.6;color:#0f172a;">
 <p style="margin:0 0 12px 0;">Olá, <strong>${esc(nome || 'cliente')}</strong>.</p>
@@ -104,22 +107,17 @@ ${banco ? `<tr>
 <div style="font-size:13px;color:#64748b;margin-bottom:8px;">Linha digitável</div>
 <div style="font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:15px;font-weight:600;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;letter-spacing:.3px;word-break:break-all;line-height:1.4;">${esc(linha)}</div>
 </td></tr>
+<!-- BTN_PDF (standby — habilitar quando URL do PDF estiver disponível):
 <tr><td style="padding:16px 32px 4px 32px;" align="left">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="display:inline-block;">
 <tr><td style="background:#0f172a;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;">
-<span style="color:#ffffff;">Copiar linha digitável</span>
+<a href="\${pdfUrl}" style="color:#ffffff;text-decoration:none;">Baixar boleto (PDF)</a>
 </td></tr>
 </table>
-<!-- BTN_PDF (standby — habilitar quando URL do PDF estiver disponível):
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="display:inline-block;margin-left:8px;">
-<tr><td style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:600;">
-<a href="\${pdfUrl}" style="color:#0f172a;text-decoration:none;">Baixar boleto (PDF)</a>
 </td></tr>
-</table>
 -->
-</td></tr>
 <tr><td style="padding:20px 32px 4px 32px;font-size:13px;line-height:1.6;color:#64748b;">
-Basta copiar a linha digitável acima e pagar no app do seu banco. Em caso de dúvida, responda este e-mail.
+Selecione a linha digitável acima e pague no app do seu banco. Em caso de dúvida, responda este e-mail.
 </td></tr>
 <tr><td style="padding:16px 32px 28px 32px;font-size:14px;color:#0f172a;">
 Equipe Financeiro Gnatus
