@@ -111,9 +111,10 @@ module.exports = (app) => ({
         fetchRejeitados(numerosSC, 'SC', rejeitadosSC)
       ]);
 
-      // 3) Filtra + agrega por CC e por ymes. Pra cada CC tambem guarda quebras
-      // por conta contabil (C7_CONTA) e por item (C7_PRODUTO) — pro drill da UI.
-      const porCC = new Map();   // cc -> { valor, qtdItens, pedidos:Set, porMes:Map, porConta:Map, porItem:Map }
+      // 3) Filtra + agrega por CC e por ymes. Drill aninhado: dentro de cada CC,
+      // quebra por conta contabil (C7_CONTA), e dentro de cada conta quebra por
+      // item (C7_PRODUTO). Igual ao DRE Gerencial (expand de natureza → titulos).
+      const porCC = new Map();   // cc -> { valor, qtdItens, pedidos:Set, porMes:Map, porConta:Map<conta, {valor, qtdItens, porItem:Map}> }
       const porMes = new Map();  // ymes -> { valor, qtdItens }
 
       for (const r of sc7) {
@@ -132,7 +133,7 @@ module.exports = (app) => ({
 
         if (!porCC.has(cc)) porCC.set(cc, {
           valor: 0, qtdItens: 0, pedidos: new Set(),
-          porMes: new Map(), porConta: new Map(), porItem: new Map()
+          porMes: new Map(), porConta: new Map()
         });
         const agCc = porCC.get(cc);
         agCc.valor += valor;
@@ -140,17 +141,19 @@ module.exports = (app) => ({
         agCc.pedidos.add(num);
         agCc.porMes.set(ymes, toN(agCc.porMes.get(ymes)) + valor);
 
-        // Quebra por conta contabil dentro do CC (chave = cod conta; '' se vazio)
+        // Quebra por conta contabil dentro do CC
         const kConta = conta || '(sem conta)';
-        if (!agCc.porConta.has(kConta)) agCc.porConta.set(kConta, { valor: 0, qtdItens: 0 });
+        if (!agCc.porConta.has(kConta)) agCc.porConta.set(kConta, {
+          valor: 0, qtdItens: 0, porItem: new Map()
+        });
         const aCt = agCc.porConta.get(kConta);
         aCt.valor += valor;
         aCt.qtdItens += 1;
 
-        // Quebra por item dentro do CC (chave = codigo produto)
+        // Quebra por item DENTRO da conta contabil (drill aninhado)
         const kItem = produto || '(sem produto)';
-        if (!agCc.porItem.has(kItem)) agCc.porItem.set(kItem, { descricao: descProduto, valor: 0, qtdItens: 0 });
-        const aIt = agCc.porItem.get(kItem);
+        if (!aCt.porItem.has(kItem)) aCt.porItem.set(kItem, { descricao: descProduto, valor: 0, qtdItens: 0 });
+        const aIt = aCt.porItem.get(kItem);
         aIt.valor += valor;
         aIt.qtdItens += 1;
         // Mantém a primeira descrição não-vazia (caso o mesmo produto venha com descrições diferentes)
@@ -265,25 +268,24 @@ module.exports = (app) => ({
             status: statusOrcamento(pctExecYTD)
           };
         }
-        // Drill: quebras por conta contabil e por item dentro do CC. Ordenadas
-        // por valor desc — UI mostra como sub-tabela ao expandir a linha.
+        // Drill aninhado: dentro do CC, lista de contas contabeis; dentro de
+        // cada conta, lista de itens. Tudo ordenado por valor desc.
         const porContaContabil = [...ag.porConta.entries()]
           .map(([conta, x]) => ({
             conta,
             descricao: descContas.get(conta) || '(sem descricao)',
             valor: x.valor,
             qtdItens: x.qtdItens,
-            pctCC: ag.valor > 0 ? (x.valor / ag.valor) * 100 : 0
-          }))
-          .sort((a, b) => b.valor - a.valor);
-
-        const porItem = [...ag.porItem.entries()]
-          .map(([produto, x]) => ({
-            produto,
-            descricao: x.descricao || '(sem descricao)',
-            valor: x.valor,
-            qtdItens: x.qtdItens,
-            pctCC: ag.valor > 0 ? (x.valor / ag.valor) * 100 : 0
+            pctCC: ag.valor > 0 ? (x.valor / ag.valor) * 100 : 0,
+            itens: [...x.porItem.entries()]
+              .map(([produto, y]) => ({
+                produto,
+                descricao: y.descricao || '(sem descricao)',
+                valor: y.valor,
+                qtdItens: y.qtdItens,
+                pctConta: x.valor > 0 ? (y.valor / x.valor) * 100 : 0
+              }))
+              .sort((a, b) => b.valor - a.valor)
           }))
           .sort((a, b) => b.valor - a.valor);
 
@@ -295,8 +297,7 @@ module.exports = (app) => ({
           qtdItens: ag.qtdItens,
           pctTotal: valorTotal > 0 ? (ag.valor / valorTotal) * 100 : 0,
           orcamento,
-          porContaContabil,
-          porItem
+          porContaContabil
         };
       }).sort((a, b) => b.valor - a.valor);
 
