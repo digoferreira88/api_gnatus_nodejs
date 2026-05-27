@@ -63,6 +63,9 @@ module.exports = (app) => ({
           RTRIM(sc7.C7_NUMSC)   AS origemSC,
           RTRIM(sc7.C7_ZNUMPRO) AS origemProcesso,
           RTRIM(sc7.C7_CC)      AS cc,
+          RTRIM(sc7.C7_CONTA)   AS conta,
+          RTRIM(sc7.C7_PRODUTO) AS produto,
+          RTRIM(sc7.C7_DESCRI)  AS descProduto,
           sc7.C7_EMISSAO        AS emissao,
           sc7.C7_TOTAL          AS valor
           FROM SC7010 sc7 WITH (NOLOCK)
@@ -108,8 +111,9 @@ module.exports = (app) => ({
         fetchRejeitados(numerosSC, 'SC', rejeitadosSC)
       ]);
 
-      // 3) Filtra + agrega por CC e por ymes
-      const porCC = new Map();   // cc -> { valor, qtdItens, pedidos:Set<numero>, porMes: Map<ymes,valor> }
+      // 3) Filtra + agrega por CC e por ymes. Pra cada CC tambem guarda quebras
+      // por conta contabil (C7_CONTA) e por item (C7_PRODUTO) — pro drill da UI.
+      const porCC = new Map();   // cc -> { valor, qtdItens, pedidos:Set, porMes:Map, porConta:Map, porItem:Map }
       const porMes = new Map();  // ymes -> { valor, qtdItens }
 
       for (const r of sc7) {
@@ -120,15 +124,37 @@ module.exports = (app) => ({
         if (sc && rejeitadosSC.has(sc)) continue;
 
         const cc = trim(r.cc);
+        const conta = trim(r.conta);
+        const produto = trim(r.produto);
+        const descProduto = trim(r.descProduto);
         const ymes = String(r.emissao || '').slice(0, 6);
         const valor = toN(r.valor);
 
-        if (!porCC.has(cc)) porCC.set(cc, { valor: 0, qtdItens: 0, pedidos: new Set(), porMes: new Map() });
+        if (!porCC.has(cc)) porCC.set(cc, {
+          valor: 0, qtdItens: 0, pedidos: new Set(),
+          porMes: new Map(), porConta: new Map(), porItem: new Map()
+        });
         const agCc = porCC.get(cc);
         agCc.valor += valor;
         agCc.qtdItens += 1;
         agCc.pedidos.add(num);
         agCc.porMes.set(ymes, toN(agCc.porMes.get(ymes)) + valor);
+
+        // Quebra por conta contabil dentro do CC (chave = cod conta; '' se vazio)
+        const kConta = conta || '(sem conta)';
+        if (!agCc.porConta.has(kConta)) agCc.porConta.set(kConta, { valor: 0, qtdItens: 0 });
+        const aCt = agCc.porConta.get(kConta);
+        aCt.valor += valor;
+        aCt.qtdItens += 1;
+
+        // Quebra por item dentro do CC (chave = codigo produto)
+        const kItem = produto || '(sem produto)';
+        if (!agCc.porItem.has(kItem)) agCc.porItem.set(kItem, { descricao: descProduto, valor: 0, qtdItens: 0 });
+        const aIt = agCc.porItem.get(kItem);
+        aIt.valor += valor;
+        aIt.qtdItens += 1;
+        // Mantém a primeira descrição não-vazia (caso o mesmo produto venha com descrições diferentes)
+        if (!aIt.descricao && descProduto) aIt.descricao = descProduto;
 
         if (!porMes.has(ymes)) porMes.set(ymes, { valor: 0, qtdItens: 0 });
         const agMes = porMes.get(ymes);
@@ -154,6 +180,33 @@ module.exports = (app) => ({
           rows.forEach(r => { if (!descricoes.has(trim(r.cc))) descricoes.set(trim(r.cc), trim(r.descricao)); });
         } catch (e) {
           console.warn('dre-centro-custo: CTT010 err:', e.message);
+        }
+      }
+
+      // 4b) Descricoes das contas contabeis (CT1010) — todas as contas usadas
+      // em qualquer CC. Uniao com Set pra evitar repeticao.
+      const contasUnicas = new Set();
+      for (const ag of porCC.values()) {
+        for (const k of ag.porConta.keys()) {
+          if (k && k !== '(sem conta)') contasUnicas.add(k);
+        }
+      }
+      const descContas = new Map();
+      if (contasUnicas.size) {
+        const arr = [...contasUnicas];
+        const inClause = arr.map((_, i) => `@k${i}`).join(',');
+        const p = {};
+        arr.forEach((c, i) => { p[`k${i}`] = c; });
+        try {
+          const rows = await Protheus.connectAndQuery(`
+            SELECT RTRIM(CT1_CONTA) conta, RTRIM(CT1_DESC01) descricao
+              FROM CT1010 WITH (NOLOCK)
+             WHERE D_E_L_E_T_ <> '*'
+               AND RTRIM(CT1_CONTA) IN (${inClause})
+          `, p);
+          rows.forEach(r => { if (!descContas.has(trim(r.conta))) descContas.set(trim(r.conta), trim(r.descricao)); });
+        } catch (e) {
+          console.warn('dre-centro-custo: CT1010 err:', e.message);
         }
       }
 
@@ -212,6 +265,28 @@ module.exports = (app) => ({
             status: statusOrcamento(pctExecYTD)
           };
         }
+        // Drill: quebras por conta contabil e por item dentro do CC. Ordenadas
+        // por valor desc — UI mostra como sub-tabela ao expandir a linha.
+        const porContaContabil = [...ag.porConta.entries()]
+          .map(([conta, x]) => ({
+            conta,
+            descricao: descContas.get(conta) || '(sem descricao)',
+            valor: x.valor,
+            qtdItens: x.qtdItens,
+            pctCC: ag.valor > 0 ? (x.valor / ag.valor) * 100 : 0
+          }))
+          .sort((a, b) => b.valor - a.valor);
+
+        const porItem = [...ag.porItem.entries()]
+          .map(([produto, x]) => ({
+            produto,
+            descricao: x.descricao || '(sem descricao)',
+            valor: x.valor,
+            qtdItens: x.qtdItens,
+            pctCC: ag.valor > 0 ? (x.valor / ag.valor) * 100 : 0
+          }))
+          .sort((a, b) => b.valor - a.valor);
+
         return {
           cc,
           descricao: descricoes.get(cc) || orc?.ccDescricao || '(sem descricao)',
@@ -219,7 +294,9 @@ module.exports = (app) => ({
           qtdPedidos: ag.pedidos.size,
           qtdItens: ag.qtdItens,
           pctTotal: valorTotal > 0 ? (ag.valor / valorTotal) * 100 : 0,
-          orcamento
+          orcamento,
+          porContaContabil,
+          porItem
         };
       }).sort((a, b) => b.valor - a.valor);
 
