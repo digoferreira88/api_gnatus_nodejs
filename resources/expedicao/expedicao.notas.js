@@ -2,9 +2,35 @@
 // filial 01, série 1, emissão após 2020-03-01, exclui CFOPs que não entram
 // na expedição física (5118/6118/5119/6119/5934/5905/5922/6922).
 // Enriquece com flag `noBordero` consultando tab_exp_bordero da Intranet.
+//
+// CATEGORIZAÇÃO DO DIFAL (campo `difalCategoria`):
+//   - 'SEM_DIFAL'        : difal == 0
+//   - 'ST_MENSAL'        : difal > 0 E UF do destinatário tem IE Gnatus → apuração
+//                          mensal por substituição tributária (Clara não paga diário)
+//   - 'INDEVIDO_CONTRIB' : difal > 0 E cliente é CONTRIBUINTE (A1_CONTRIB != '2') →
+//                          provável erro de cadastro/TES no Protheus (DIFAL EC 87/2015
+//                          é só pra não contribuinte) — auditar no caso a caso
+//   - 'DIARIO'           : difal > 0 E não contribuinte E UF sem IE Gnatus → DIFAL real
+//                          que a Clara precisa pagar/recolher diariamente
+//
+// O contador "Só com DIFAL" do frontend agora considera só DIARIO.
 
 const trim = (v) => String(v || '').trim();
 const toN  = (v) => Number(v || 0);
+
+// UFs onde a Gnatus tem IE como Substituto Tributário — DIFAL é apurado
+// mensalmente, não NF a NF. Lista informada pelo financeiro em 2026-05-27.
+// Se mudar, atualizar aqui e fazer deploy (não há tabela de config ainda).
+const UFS_IE_GNATUS = new Set(['AM', 'CE', 'DF', 'PR', 'MA', 'MG', 'RJ', 'SC']);
+
+const classificarDifal = (difal, uf, contrib) => {
+  if (!(Number(difal) > 0)) return 'SEM_DIFAL';
+  if (UFS_IE_GNATUS.has(trim(uf).toUpperCase())) return 'ST_MENSAL';
+  // A1_CONTRIB: '1' = contribuinte, '2' = não contribuinte, '9' = isento.
+  // DIFAL EC 87/2015 / LC 190/2022: só destinatário NÃO contribuinte (= '2').
+  if (trim(contrib) !== '2') return 'INDEVIDO_CONTRIB';
+  return 'DIARIO';
+};
 
 module.exports = (app) => ({
   verb: 'get',
@@ -55,6 +81,8 @@ module.exports = (app) => ({
         RTRIM(sa1.A1_EST)    clienteUf,
         RTRIM(sa1.A1_CEP)    clienteCep,
         RTRIM(sa1.A1_EMAIL)  clienteEmail,
+        RTRIM(sa1.A1_CONTRIB) clienteContrib,
+        RTRIM(sa1.A1_INSCR)   clienteInscr,
         f2.F2_VOLUME1        volumes,
         RTRIM(f2.F2_TRANSP)  transpCod,
         RTRIM(sa4.A4_NOME)   transpNome,
@@ -120,31 +148,39 @@ module.exports = (app) => ({
         borderoRows.forEach(r => nfsNoBordero.add(trim(r.NOTAFISCAL)));
       } catch (e) { console.warn('Expedição/notas: falha ao ler bordero', e.message); }
 
-      const notas = rows.map(r => ({
-        id: r.id,
-        nfe: trim(r.nfe),
-        serie: trim(r.serie),
-        emissao: trim(r.emissao),
-        clienteCod: trim(r.clienteCod),
-        clienteLoja: trim(r.clienteLoja),
-        clienteNome: trim(r.clienteNome),
-        clienteCnpj: trim(r.clienteCnpj),
-        clienteEnd: trim(r.clienteEnd),
-        clienteBairro: trim(r.clienteBairro),
-        clienteMun: trim(r.clienteMun),
-        clienteUf: trim(r.clienteUf),
-        clienteCep: trim(r.clienteCep),
-        clienteEmail: trim(r.clienteEmail),
-        volumes: toN(r.volumes),
-        transpCod: trim(r.transpCod),
-        transpNome: trim(r.transpNome),
-        zExpedic: trim(r.zExpedic),
-        zRastrei: trim(r.zRastrei),
-        total: toN(r.total),
-        difal: toN(r.difal),
-        fcp: toN(r.fcp),
-        noBordero: nfsNoBordero.has(trim(r.nfe))
-      }));
+      const notas = rows.map(r => {
+        const difal = toN(r.difal);
+        const uf    = trim(r.clienteUf);
+        const contrib = trim(r.clienteContrib);
+        return {
+          id: r.id,
+          nfe: trim(r.nfe),
+          serie: trim(r.serie),
+          emissao: trim(r.emissao),
+          clienteCod: trim(r.clienteCod),
+          clienteLoja: trim(r.clienteLoja),
+          clienteNome: trim(r.clienteNome),
+          clienteCnpj: trim(r.clienteCnpj),
+          clienteEnd: trim(r.clienteEnd),
+          clienteBairro: trim(r.clienteBairro),
+          clienteMun: trim(r.clienteMun),
+          clienteUf: uf,
+          clienteCep: trim(r.clienteCep),
+          clienteEmail: trim(r.clienteEmail),
+          clienteContrib: contrib,           // '1'=contrib, '2'=nao contrib, '9'=isento
+          clienteInscr: trim(r.clienteInscr),
+          volumes: toN(r.volumes),
+          transpCod: trim(r.transpCod),
+          transpNome: trim(r.transpNome),
+          zExpedic: trim(r.zExpedic),
+          zRastrei: trim(r.zRastrei),
+          total: toN(r.total),
+          difal,
+          fcp: toN(r.fcp),
+          difalCategoria: classificarDifal(difal, uf, contrib),
+          noBordero: nfsNoBordero.has(trim(r.nfe))
+        };
+      });
 
       return res.json({
         aba,
