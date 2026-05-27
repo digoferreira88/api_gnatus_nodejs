@@ -163,11 +163,18 @@ module.exports = (app) => ({
       const hoje = new Date();
       const anoCorrente = hoje.getFullYear();
 
-      const orcamentosRows = await Pg.connectAndQuery(`
-        SELECT cc_codigo, cc_descricao, ano, valor_orcado
-          FROM tab_centro_custo_orcamento
-         WHERE ano = @ano`,
-        { ano: anoFim });
+      // Tolera tabela inexistente (migration 51 ainda nao rodada em alguns ambientes)
+      // — sem orcamento, o endpoint segue funcionando e nao mostra os indicadores.
+      let orcamentosRows = [];
+      try {
+        orcamentosRows = await Pg.connectAndQuery(`
+          SELECT cc_codigo, cc_descricao, ano, valor_orcado
+            FROM tab_centro_custo_orcamento
+           WHERE ano = @ano`,
+          { ano: anoFim });
+      } catch (e) {
+        console.warn('dre-centro-custo: tab_centro_custo_orcamento indisponivel (rodar migration 51?):', e.message);
+      }
 
       const orcamentoPorCC = new Map();
       orcamentosRows.forEach(o => {
