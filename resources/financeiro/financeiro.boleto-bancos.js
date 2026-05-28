@@ -41,8 +41,9 @@ module.exports = (app) => ({
           cod: trim(r.cod),
           nome: trim(r.nome),
           agencia: trim(r.agencia),
-          conta: trim(r.cc),                 // A6_NUMCON cru (sem DV) — enviado ao Protheus
-          contaDv: trim(r.dv),               // A6_DVCTA
+          conta: trim(r.cc),                 // A6_NUMCON cru (sem DV)
+          contaDv: trim(r.dv),               // A6_DVCTA — front concatena conta+contaDv pra
+                                             // bater com a SEE010 no importar-retorno (Diego)
           cc: trim(r.cc) + (trim(r.dv) ? `-${trim(r.dv)}` : ''),   // display c/ DV
           rotulo: `${BANCOS_COBRANCA[trim(r.cod)]} · ag ${trim(r.agencia)} · cc ${trim(r.cc)}`
         }))
