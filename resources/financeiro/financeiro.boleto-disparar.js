@@ -22,6 +22,16 @@ const Suri = require('../../services/suri');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
+
+// Nome curto do banco pro template do e-mail/WhatsApp do cliente. Usamos isso
+// em vez do `banco_nome` cheio do lote (ex: "Santander · ag 0820 · cc 130002086
+// (adotado SE1)") — cliente não tem contexto pra entender ag/cc/internals.
+const BANCO_NOMES_CURTOS = {
+  '341': 'Itaú', '033': 'Santander', '237': 'Bradesco',
+  '001': 'Banco do Brasil', '104': 'Caixa', '748': 'Sicredi', '756': 'Sicoob'
+};
+const nomeBancoCurto = (cod, fallbackNome) =>
+  BANCO_NOMES_CURTOS[trim(cod)] || trim(fallbackNome) || trim(cod);
 // Valor formatado pt-BR SEM "R$" (o template ja tem "R$" fixo antes da variavel).
 const fmtValor = (v) => N(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -250,7 +260,8 @@ module.exports = (app) => ({
             try {
               const { subject, text, html } = montarEmail({
                 nome: trim(r.cliente_nome), numero: trim(r.numero), parcela: trim(r.parcela),
-                valor: r.valor, vencimento: r.vencimento, banco: trim(r.banco_nome) || trim(r.banco_cod), linha
+                valor: r.valor, vencimento: r.vencimento,
+                banco: nomeBancoCurto(r.banco_cod, r.banco_nome), linha
               });
               await Email.sendEmail({ to: contato.email, subject, text, html });
               enviados.push('EMAIL');
