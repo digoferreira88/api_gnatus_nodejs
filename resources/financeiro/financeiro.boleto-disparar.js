@@ -172,9 +172,15 @@ module.exports = (app) => ({
                l.banco_cod, l.banco_nome
           FROM tab_boleto_envio_lote_retorno r
           JOIN tab_boleto_envio_lote l ON l.id = r.id_lote
+          -- COALESCE em prefixo/parcela porque o INSERT do sincronizar grava ''
+          -- (trim de null vira '') e a tab_titulo pode ter NULL — sem COALESCE
+          -- o JOIN falha pros titulos sem parcela.
           LEFT JOIN tab_boleto_envio_lote_titulo t
-            ON t.id_lote = r.id_lote AND t.prefixo = r.prefixo AND t.numero = r.numero
-           AND t.parcela = r.parcela AND t.cliente_cod = r.cliente_cod AND t.cliente_loja = r.cliente_loja
+            ON t.id_lote = r.id_lote
+           AND COALESCE(t.prefixo, '') = COALESCE(r.prefixo, '')
+           AND t.numero = r.numero
+           AND COALESCE(t.parcela, '') = COALESCE(r.parcela, '')
+           AND t.cliente_cod = r.cliente_cod AND t.cliente_loja = r.cliente_loja
          WHERE r.id IN (${inIds})`, pIds);
 
       if (!rows.length) return res.status(404).json({ message: 'Nenhum boleto encontrado para os ids informados.' });

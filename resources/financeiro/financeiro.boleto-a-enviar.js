@@ -40,9 +40,15 @@ module.exports = (app) => ({
                l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta
           FROM tab_boleto_envio_lote_retorno r
           JOIN tab_boleto_envio_lote l ON l.id = r.id_lote
+          -- COALESCE em prefixo/parcela porque o INSERT do sincronizar grava ''
+          -- (string vazia via trim()) enquanto a tab_titulo pode ter NULL. Sem
+          -- COALESCE o JOIN falha pros titulos sem parcela (descoberto 2026-05-28).
           LEFT JOIN tab_boleto_envio_lote_titulo t
-            ON t.id_lote = r.id_lote AND t.prefixo = r.prefixo AND t.numero = r.numero
-           AND t.parcela = r.parcela AND t.cliente_cod = r.cliente_cod AND t.cliente_loja = r.cliente_loja
+            ON t.id_lote = r.id_lote
+           AND COALESCE(t.prefixo, '') = COALESCE(r.prefixo, '')
+           AND t.numero = r.numero
+           AND COALESCE(t.parcela, '') = COALESCE(r.parcela, '')
+           AND t.cliente_cod = r.cliente_cod AND t.cliente_loja = r.cliente_loja
          WHERE ${conds.join(' AND ')}
          ORDER BY (r.disparado_em IS NOT NULL), t.vencimento, r.numero`,
         params
