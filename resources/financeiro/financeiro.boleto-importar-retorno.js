@@ -70,7 +70,14 @@ module.exports = (app) => ({
           arquivo: nomeArquivo, banco: body.banco || banco, layout: body.layout, simular,
           qtd_registros: N(body.qtd_registros), qtd_registrados: N(body.qtd_registrados),
           qtd_liquidados: N(body.qtd_liquidados), qtd_rejeitados: N(body.qtd_rejeitados),
-          qtd_nao_localizados: N(body.qtd_nao_localizados), httpStatus: r.httpStatus, codigo_erro: body.codigo_erro
+          qtd_nao_localizados: N(body.qtd_nao_localizados),
+          httpStatus: r.httpStatus, codigo_erro: body.codigo_erro,
+          // Pra diagnosticar erros intermitentes do Diego (BANCO_INVALIDO, etc),
+          // capturamos a mensagem e o build_tag do Protheus quando vier erro.
+          mensagem: body.mensagem,
+          build_tag: body.build_tag,
+          // Conta enviada pra rastrear formato (SA6 vs SEE)
+          conta_enviada: trim(req.body?.conta)
         }
       });
 
