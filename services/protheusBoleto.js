@@ -13,12 +13,22 @@
 const TIMEOUT_MS = 30000;
 const trim = (v) => String(v || '').trim();
 
+// Convenios bancarios da Gnatus por banco (codigo cedente que o Diego procura
+// em MV_CONV<BBB> ou aceita via ?convenio=). Mantemos aqui pra evitar dependencia
+// de parametro Protheus que precisaria ser cadastrado pelo financeiro/Diego.
+//   033 (Santander): 3418790 — extraido de boleto antigo da Gnatus (2026-05-28).
+//                    Validado: gera linha digitavel correta com carteira 101.
+//   341 (Itau): nao precisa — Diego hardcoda cCart='109' direto no AdvPL.
+const CONVENIO_POR_BANCO = {
+  '033': '3418790'
+};
+
 /**
  * Busca a linha digitavel de um titulo registrado.
  * @returns {Promise<{ok, httpStatus, body}>}
  *   body em sucesso: { ok:true, linha_digitavel, codigo_barras, nosso_numero, banco, vencimento, valor }
  */
-async function linhaDigitavel({ filial, prefixo, numero, parcela, cliente, loja, tipo }) {
+async function linhaDigitavel({ filial, prefixo, numero, parcela, cliente, loja, tipo, banco }) {
   const apiUrl  = process.env.PROTHEUS_API_URL;
   const apiUser = process.env.PROTHEUS_API_USER;
   const apiPass = process.env.PROTHEUS_API_PASS;
@@ -28,6 +38,9 @@ async function linhaDigitavel({ filial, prefixo, numero, parcela, cliente, loja,
     return { ok: false, httpStatus: 503, body: { ok: false, codigo_erro: 'CONFIG', mensagem: 'API Protheus nao configurada.' } };
   }
 
+  // Convenio injetado automaticamente pra bancos que precisam (ex.: Santander 033)
+  const convenio = CONVENIO_POR_BANCO[trim(banco)];
+
   const qs = new URLSearchParams({
     filial: trim(filial) || '01',
     prefixo: trim(prefixo),
@@ -35,7 +48,8 @@ async function linhaDigitavel({ filial, prefixo, numero, parcela, cliente, loja,
     parcela: trim(parcela),
     cliente: trim(cliente),
     loja: trim(loja),
-    ...(trim(tipo) ? { tipo: trim(tipo) } : {})
+    ...(trim(tipo) ? { tipo: trim(tipo) } : {}),
+    ...(convenio ? { convenio } : {})
   }).toString();
 
   const url = apiUrl.replace(/\/$/, '') + path + '?' + qs;

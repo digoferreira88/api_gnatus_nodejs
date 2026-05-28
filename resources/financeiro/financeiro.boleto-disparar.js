@@ -236,7 +236,8 @@ module.exports = (app) => ({
         const lin = await ProtheusBoleto.linhaDigitavel({
           filial: '01',
           prefixo: trim(r.prefixo), numero: trim(r.numero), parcela: trim(r.parcela),
-          cliente: trim(r.cliente_cod), loja: trim(r.cliente_loja), tipo: trim(r.tipo)
+          cliente: trim(r.cliente_cod), loja: trim(r.cliente_loja), tipo: trim(r.tipo),
+          banco: trim(r.banco_cod)
         });
         const linha = trim(lin.body?.linha_digitavel);
         if (!lin.ok || !linha) {
