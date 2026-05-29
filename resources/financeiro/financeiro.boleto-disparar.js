@@ -319,11 +319,14 @@ module.exports = (app) => ({
         }
       }
 
-      // 7) Auditoria
+      // 7) Auditoria — entidade_id e varchar(80); a lista completa de ids
+      // vai no meta.ids (jsonb). Em disparos de 1 item, usa o id direto pra
+      // facilitar busca por entidade_id.
       Auditoria.registrar(app, {
         modulo: 'Financeiro', submodulo: 'EnvioBoleto',
         acao: 'DISPARO_BOLETO', severidade: falhaCount > 0 ? 'ALERTA' : 'AVISO',
-        req, entidade: 'boleto_retorno', entidadeId: ids.join(','),
+        req, entidade: 'boleto_retorno',
+        entidadeId: ids.length === 1 ? String(ids[0]) : `lote_${rows[0]?.id_lote || '?'}_${ids.length}ids`,
         descricao: `Disparou ${okCount} boleto(s) por ${canais.join('+')} (${falhaCount} falha(s) de ${rows.length})`,
         meta: { ids, canais, ok: okCount, falha: falhaCount, total: rows.length }
       });

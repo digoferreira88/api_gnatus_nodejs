@@ -296,48 +296,139 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Combina SE1 (a receber) + SE2 (a pagar) projetando saldo dia a dia
 - Filtros: cliente, equipe, BU, forma de pagamento
 
-#### Envio de Boleto (curadoria + bordero + retorno banco) · `/financeiro/envio-boleto` · perm 8005
-- **Página**: [EnvioBoleto.tsx](../frontend_intranet_react/src/pages/Financeiro/EnvioBoleto.tsx)
-- **Tabelas**:
-  - [migration 35](database/postgres/35-financeiro-envio-boleto.sql) — `tab_boleto_envio_lote` (cabeçalho) + `tab_boleto_envio_lote_titulo` (itens)
-  - [migration 42](database/postgres/42-boleto-bordero-protheus.sql) — adiciona em `tab_boleto_envio_lote`: `lote_protheus`, `enviado_em`, `enviado_por_email`, `qt_processados`, `qt_rejeitados`, `protheus_resposta jsonb`
-  - [migration 44](database/postgres/44-boleto-retorno.sql) — `tab_boleto_envio_lote_retorno` (1 row por título com status do banco) + colunas de contadores no lote (`sincronizado_em`, `qt_registrados`, `qt_liquidados`, `qt_rejeitados_banco`, `qt_pendentes_banco`)
-- **Endpoints** em `resources/financeiro/financeiro.boleto-*.js`: bancos · elegíveis · lote-create · lote-list · lote-detail · **lote-enviar-protheus** · **lote-sincronizar**
-- **Bancos comerciais** (filtro hardcoded): `001` BB · `033` Santander · `104` CEF · `237` Bradesco · `341` Itaú · `422` Safra · `748` Sicredi · `756` Sicoob — exclui FIDCs/cartões/aplicações dos 156 cadastros do SA6010
-- **Formas de pagamento elegíveis** (default): `4` Boleto · `A` Futuro Garantido · `B` Antecipação Parcelada
-- **Regra do filtro de portador (importante)**: lista APENAS títulos com `E1_PORTADO` JÁ preenchido (banco já decidido pelo financeiro). Antes mostrava títulos sem portador, contradizendo o fluxo real. Resultado: ~285 títulos / R$ 1,77M elegíveis hoje.
-- Operador **seleciona títulos** com checkbox + footer sticky com **valor total selecionado** (KPI grande verde)
-- "Banco do lote" derivado dos títulos selecionados (se 2+ bancos sem filtrar, bloqueia com aviso vermelho)
+#### Envio de Boleto (curadoria + bordero + retorno banco + disparo cliente) · `/financeiro/envio-boleto` · perm 8005
+
+> Substitui o processo manual de **registro + envio** de boletos: o financeiro escolhia os títulos no Protheus, gerava bordero no FINA070, registrava no banco via CNAB, importava o `.RET`, gerava o PDF no ESF050 e enviava o boleto pro cliente por e-mail manual. Agora o fluxo inteiro (curadoria → bordero → retorno → linha digitável → e-mail) é feito numa página única, com auditoria de cada passo. **Diagrama do fluxo**: [docs/fluxo-envio-boletos.md](../docs/fluxo-envio-boletos.md).
+
+- **Página**: [EnvioBoleto.tsx](../frontend_intranet_react/src/pages/Financeiro/EnvioBoleto.tsx) — 4 tabs: **Elegíveis** (curadoria) · **Lotes** (bordero + retorno) · **Importar retorno** (upload .RET → Diego) · **Disparar** (e-mail ao cliente)
+
+##### Tabelas (Postgres)
+| Migration | Tabela / colunas | Função |
+|---|---|---|
+| [35](database/postgres/35-financeiro-envio-boleto.sql) | `tab_boleto_envio_lote` (cabeçalho) + `tab_boleto_envio_lote_titulo` (itens) | Lote curado pela Intranet (status, banco, qt, valor; FK 1:N) |
+| [42](database/postgres/42-boleto-bordero-protheus.sql) | + `lote_protheus`, `enviado_em`, `enviado_por_email`, `qt_processados`, `qt_rejeitados`, `protheus_resposta jsonb` no lote | Resposta do `gerar-bordero` (Diego) preservada pra auditoria |
+| [44](database/postgres/44-boleto-retorno.sql) | `tab_boleto_envio_lote_retorno` (1 row por título com status do banco) + `sincronizado_em`, `qt_registrados`, `qt_liquidados`, `qt_rejeitados_banco`, `qt_pendentes_banco` no lote; colunas `disparado_em`, `canais_disparo` no retorno | Status pós-retorno + rastreio de disparo ao cliente |
+| [50](database/postgres/50-boleto-lote-conta.sql) | + `banco_agencia`, `banco_conta` no lote | Conta específica do portador (A6_AGENCIA / A6_NUMCON sem DV) — necessária pro bordero achar a carteira |
+
+##### Endpoints (Intranet) — `resources/financeiro/financeiro.boleto-*.js`
+| Verbo + rota | Função |
+|---|---|
+| `GET /financeiro/boleto-bancos` ([file](resources/financeiro/financeiro.boleto-bancos.js)) | Lista portadores SA6 filtrados aos 8 bancos comerciais (não FIDCs/cartões/aplicações) |
+| `GET /financeiro/boleto-elegiveis` ([file](resources/financeiro/financeiro.boleto-elegiveis.js)) | Títulos SE1 elegíveis (em aberto, `E1_PORTADO` preenchido, formas de pagto permitidas) |
+| `POST /financeiro/boleto-lote-create` ([file](resources/financeiro/financeiro.boleto-lote-create.js)) | Cria lote `CRIADO` com os títulos selecionados + banco/agência/conta escolhidos |
+| `GET /financeiro/boleto-lote-list` ([file](resources/financeiro/financeiro.boleto-lote-list.js)) | Lista todos os lotes com filtros e contadores |
+| `GET /financeiro/boleto-lote-detail` ([file](resources/financeiro/financeiro.boleto-lote-detail.js)) | Cabeçalho + títulos + retornos + resposta Protheus |
+| `POST /financeiro/boleto-lote/:id/enviar-protheus` ([file](resources/financeiro/financeiro.boleto-lote-enviar-protheus.js)) | Dispara `gerar-bordero` no Diego — registra títulos no banco |
+| `POST /financeiro/boleto-lote/:id/sincronizar` ([file](resources/financeiro/financeiro.boleto-lote-sincronizar.js)) | Lê SE1 atualizada pós-FINA130/140 e popula `tab_boleto_envio_lote_retorno` |
+| `POST /financeiro/boleto-importar-retorno` ([file](resources/financeiro/financeiro.boleto-importar-retorno.js)) | Upload `.RET` em base64 → Diego processa via FINA205 (registra/baixa); `simular:true` é dry-run |
+| `POST /financeiro/boleto-adotar-se1` ([file](resources/financeiro/financeiro.boleto-adotar-se1.js)) | Adota retroativamente títulos SE1 já registrados que não passaram pelo fluxo Intranet (remessa direta no Protheus) |
+| `GET /financeiro/boleto-a-enviar` ([file](resources/financeiro/financeiro.boleto-a-enviar.js)) | Lista títulos `REGISTRADO` prontos pra disparar ao cliente (com contato SA1 + linha digitável on-demand) |
+| `POST /financeiro/boleto-disparar` ([file](resources/financeiro/financeiro.boleto-disparar.js)) | Envia boleto ao cliente por e-mail (linha digitável + código de barras) |
+
+##### Endpoints Protheus (REST custom Diego)
+Auth Basic `PROTHEUS_API_USER:PROTHEUS_API_PASS` (mesmas creds do AprovaCompras). Host `http://protheus.gnatus.com.br:8081`. **Intranet é read-only no MSSQL — quem escreve no SE1/SEE é a Diego REST chamando FINA070/FINA205**.
+
+| Endpoint | Função | Service wrapper |
+|---|---|---|
+| `POST /rest/Cobranca/gerar-bordero` | Gera bordero (FINA070) — registra títulos no banco. Body `{filial, banco, agencia, conta, operador, observacao, titulos[]}`. Response `{ok, lote, qt_processados, qt_rejeitados, detalhes:[{prefixo, numero, parcela, cliente, loja, status, codigo_erro?, mensagem?}]}` | [services/protheusCobranca.js](services/protheusCobranca.js) |
+| `POST /rest/Cobranca/importar-retorno` | Processa CNAB `.RET` (FINA205) — registra/baixa títulos. Body `{filial, banco, agencia, conta, nomeArquivo, conteudoBase64, operador, simular}`. Response `{ok, layout, qtd_registros, qtd_registrados, qtd_liquidados, qtd_rejeitados, qtd_nao_localizados, build_tag}` | [services/protheusRetorno.js](services/protheusRetorno.js) |
+| `GET /rest/Cobranca/boleto-linha` | Devolve linha digitável + código de barras de um título já registrado. Query `?filial&prefixo&numero&parcela&cliente&loja&tipo&convenio`. Response `{ok, linha_digitavel, codigo_barras, nosso_numero, banco, vencimento, valor}`. ⚠️ Linha NÃO fica gravada em E1_CODBAR/E1_CODDIG — o Protheus gera na impressão, por isso buscamos via REST na hora do disparo | [services/protheusBoleto.js](services/protheusBoleto.js) |
+
+Spec completa do contrato em [docs/spec-protheus-multi-banco-santander.md](../docs/spec-protheus-multi-banco-santander.md).
+
+##### Configuração de bancos
+- **Bancos comerciais aceitos** (filtro hardcoded em `boleto-bancos`): `001` BB · `033` Santander · `104` CEF · `237` Bradesco · `341` Itaú · `422` Safra · `748` Sicredi · `756` Sicoob — exclui FIDCs/cartões/aplicações dos 156 cadastros SA6010
+- **Nomes curtos no e-mail ao cliente** (`BANCO_NOMES_CURTOS` em [boleto-disparar.js:29](resources/financeiro/financeiro.boleto-disparar.js)): só "Santander", "Itaú", etc. — sem ag/cc/internals
+- **Convênio bancário** (`CONVENIO_POR_BANCO` em [protheusBoleto.js:22](services/protheusBoleto.js)):
+  - `033` Santander: convênio `3418790` (extraído de boleto antigo da Gnatus, validado com carteira 101) — injetado automaticamente como `?convenio=` na chamada do `boleto-linha`, evitando depender do parâmetro `MV_CONV033` no Protheus
+  - `341` Itaú: não precisa — Diego hardcoda `cCart='109'` no AdvPL
+- **Formas de pagamento elegíveis** (default em `boleto-elegiveis`): `4` Boleto · `A` Futuro Garantido · `B` Antecipação Parcelada
 
 ##### Fluxo de status do lote
 | Status | Quem dispara | O que aconteceu |
 |---|---|---|
-| `CRIADO` | Operador (POST lote-create) | Lote registrado na Intranet, ainda não enviado |
-| `ENVIADO_PROTHEUS` | POST lote-enviar-protheus | Diego devolveu `ok:true`, ProcBord rodou (pode ter rejeições parciais) |
-| `ERRO_PROTHEUS` | POST lote-enviar-protheus | HTTP não-2xx ou `body.ok:false` (falha geral, não roda parcial) |
-| `RETORNADO` | POST lote-sincronizar | Todos os títulos do lote já têm retorno do banco (sem PENDENTE) |
-| `DISPARADO` | Onda 3.4-3.6 (planejado) | Boleto disparado por WhatsApp/email |
+| `CRIADO` | Operador (POST `lote-create`) | Lote registrado na Intranet, ainda não enviado |
+| `ENVIADO_PROTHEUS` | POST `lote-enviar-protheus` | Diego devolveu `ok:true`, ProcBord rodou (pode ter rejeições parciais) |
+| `ERRO_PROTHEUS` | POST `lote-enviar-protheus` | HTTP não-2xx ou `body.ok:false` (falha geral, não roda parcial) |
+| `RETORNADO` | POST `lote-sincronizar` (ou `boleto-adotar-se1` retroativo) | Todos os títulos do lote já têm retorno do banco (sem PENDENTE) |
+| `DISPARADO` (no nível do retorno) | POST `boleto-disparar` | `disparado_em` preenchido, `canais_disparo` lista EMAIL/WHATSAPP |
 
-##### Onda 2 — Envio ao Protheus (implementado em 2026-05-13)
-- **Service**: [services/protheusCobranca.js](services/protheusCobranca.js) — wrapper de `POST {PROTHEUS_API_URL}/Cobranca/gerar-bordero` (REST custom Diego)
-- **Endpoint**: [POST /financeiro/boleto-lote/:id/enviar-protheus](resources/financeiro/financeiro.boleto-lote-enviar-protheus.js)
-- Pre-condição: lote em status `CRIADO` (não reenvia)
-- Auth Basic com `PROTHEUS_API_USER/PROTHEUS_API_PASS` (mesmas creds do AprovaCompras). Timeout 60s, max 500 títulos/chamada
-- Response grava `lote_protheus` (nº do bordero), contadores e `protheus_resposta` completa em jsonb pra auditoria. Audita CRITICO em sucesso, ALERTA em falha
+##### Tab "Elegíveis" — curadoria
+- Filtros: banco (`E1_PORTADO`), forma de pagamento, busca por cliente/número
+- **Regra crítica do filtro de portador**: lista APENAS títulos com `E1_PORTADO` JÁ preenchido (banco já decidido pelo financeiro). Antes mostrava títulos sem portador, contradizendo o fluxo real
+- Operador seleciona títulos com checkbox + **footer sticky** com valor total selecionado (KPI grande verde)
+- "Banco do lote" derivado dos títulos selecionados (se 2+ bancos sem filtrar, bloqueia com aviso vermelho)
+- "Conta do lote" obrigatória — seletor mostra `A6_AGENCIA / A6_NUMCON` (sem DV) dos portadores SA6 do banco escolhido (`banco_agencia` + `banco_conta` gravados no lote)
+
+##### Tab "Lotes" — bordero + retorno
+- Lista de lotes com status, contadores, banco, valor total
+- Botão **"Enviar ao Protheus"** (em status `CRIADO`) → chama `lote-enviar-protheus`. Auth Basic, timeout 60s, max 500 títulos/chamada. Response grava `lote_protheus` (nº do bordero), contadores e `protheus_resposta` completa em jsonb. **Audita CRITICO em sucesso, ALERTA em falha**
 - Sucesso parcial (`qt_rejeitados > 0` mas `qt_processados > 0`) **continua** `ENVIADO_PROTHEUS` — operador vê o detalhe na resposta
+- Botão **"Atualizar banco"** (em `ENVIADO_PROTHEUS`) → chama `lote-sincronizar`. Lê SE1 atualizada (`E1_OCORREN`, `E1_NUMBOR`, `E1_NUMBCO`, `E1_BAIXA`) e popula `tab_boleto_envio_lote_retorno`. Mapeamento `MAP_OCORRENCIA`:
+  - `02` REGISTRADO · `03/12/13/32/33/34` REJEITADO · `06/15/17` LIQUIDADO · `09/10` BAIXADO · `11/14/20/23/24` REGISTRADO
+  - Códigos não mapeados → `DESCONHECIDO` (operador investiga)
+  - Override: se `E1_BAIXA` preenchida E `E1_VALLIQ > 0` → `LIQUIDADO` independente do ocorren
+- Query MSSQL em batches de 100 OR-clauses (limite ~2100 params)
 
-##### Onda 3 — Sincronização do retorno bancário (implementado)
-- **Endpoint**: [POST /financeiro/boleto-lote/:id/sincronizar](resources/financeiro/financeiro.boleto-lote-sincronizar.js)
-- Operador roda **FINA130/140** no Protheus pra processar o arquivo CNAB `.RET` do banco → atualiza E1_OCORREN, E1_NUMBOR, E1_NUMBCO, E1_BAIXA
-- A Intranet **apenas consulta** SE1 (não parseia CNAB) em batches de 100 OR-clauses (limite ~2100 params do MSSQL)
-- Mapeamento `MAP_OCORRENCIA` (E1_OCORREN → status interno): `02` REGISTRADO · `03/12/13/32/33/34` REJEITADO · `06/15/17` LIQUIDADO · `09/10` BAIXADO · `11/14/20/23/24` REGISTRADO. Códigos não mapeados viram `DESCONHECIDO` (operador investiga)
-- Lógica de classificação: se `E1_BAIXA` preenchida E `E1_VALLIQ > 0` → LIQUIDADO independente do ocorren
-- Vira `RETORNADO` quando todos títulos têm retorno (sem PENDENTE/NAO_ENCONTRADO/DESCONHECIDO)
-- Audita INFO com stats por status
+##### Tab "Importar retorno" — upload .RET
+- Operador faz upload do CNAB `.RET` (240/400) do banco
+- POST `/financeiro/boleto-importar-retorno` com `{nome_arquivo, conteudo_base64, banco, agencia, conta, simular}`
+- **Modo dry-run** (`simular:true`, default seguro): preview de quantos registros, sem gravar
+- **Modo real** (`simular:false`): exige `banco+agencia+conta` (Diego faz `DbSeek` na `SEE` pra achar a carteira / `EE_DIRREC`). Sem isso → `LAYOUT_NAO_SUPORTADO`
+- **Banner de progresso**: enquanto Diego processa, frontend mostra `qtd_registros / qtd_registrados / qtd_liquidados / qtd_rejeitados`
+- Auditoria INFO em dry-run, CRITICO em import real (grava no Protheus via FINA205)
+- ⚠️ **GNATUS não importava o .RET historicamente** — registrava e baixava título manualmente. Este endpoint depende do `boleto-adotar-se1` retroativo enquanto o operador não adota o novo fluxo
 
-##### Onda 3.4-3.6 (planejado)
-- Disparar boleto por WhatsApp/email a partir de `status_banco = 'REGISTRADO'`
-- Gerar PDF do boleto próprio (não depende do ESF050)
+##### Endpoint `boleto-adotar-se1` — adoção retroativa
+Para títulos já registrados no banco antes da Intranet existir (remessa direta pelo Protheus, ou pós-import de bordero externo). Critério SE1:
+```
+E1_OCORREN = '02'  (entrada confirmada pelo banco)
+E1_NUMBCO <> ''     (nosso_numero atribuído)
+E1_STATUS = 'A'     (aberto)
+E1_VALOR > 0
+```
+- **Idempotência**: cruza com `tab_boleto_envio_lote_titulo` — só adota títulos que **ainda não estão em lote algum**. Pode rodar várias vezes sem duplicar
+- Agrupa por carteira (banco + agência + conta SA6 — descobertos via `SA6_NUMCON`) e cria um lote `RETORNADO` retroativo por carteira, populando `tab_boleto_envio_lote_titulo` + `tab_boleto_envio_lote_retorno`
+- Body opcional `{banco: '033'}` filtra por `E1_PORTADO` específico
+- Audita INFO com `adotados[]` (lotes criados + qt títulos)
+- **Botão "Buscar no Protheus"** na tab "Disparar" chama este endpoint sob demanda
+
+##### Tab "Disparar" — envio ao cliente
+- Lista de títulos com `status_banco='REGISTRADO'` e `disparado_em IS NULL` (default), via `GET /financeiro/boleto-a-enviar`
+- Enriquecido com contato SA1 (e-mail + telefone) do Protheus
+- Operador seleciona checkbox → botão "Disparar selecionados" chama `POST /financeiro/boleto-disparar` com `{ids:[...], canais:['EMAIL']}`
+- **Para cada título**:
+  1. Carrega retorno + lote (banco/agência/conta) + título (valor/venc/cliente);
+  2. Exige `status_banco='REGISTRADO'`;
+  3. Busca e-mail do cliente na SA1 (`A1_EMAIL`);
+  4. Chama `GET /rest/Cobranca/boleto-linha` (Diego) → linha digitável + código de barras;
+  5. Envia e-mail HTML com logo + linha digitável + KPIs (valor, vencimento, NF/Pedido, banco curto);
+  6. Marca `disparado_em=NOW()`, `canais_disparo` (lista) e audita INFO
+- **WhatsApp**: template `BOLETO` cadastrado na Suri (parâmetros: `cliente`, `nf_pedido`, `vencimento`, `valor`, `linha_digitavel`, `banco`). Atualmente fica `pendente_template` — depende de aprovação Meta
+
+##### Template de e-mail ao cliente
+- **Subject**: `Gnatus — Boleto NF/Pedido <numero> | Vencimento <dd/mm/yyyy>`
+- **HTML minimalista** (compatível Outlook):
+  - Logo Gnatus no topo (URL pública em `public/logo-gnatus.png`)
+  - KPIs em tabela 2 colunas: NF/Pedido, Vencimento, Valor, Banco (nome curto via `nomeBancoCurto`)
+  - Linha digitável em fonte monoespaçada, fácil de copiar
+  - Código de barras como string (não imagem — Outlook bloqueia)
+  - Rodapé: razão social + CNPJ + contato cobrança
+- Variáveis disponíveis no template: `{cliente, nf_pedido, vencimento, valor, linha_digitavel, codigo_barras, banco_nome_curto}`
+- Envio via `services/emailService.js` (Microsoft Graph com a conta `cobranca@gnatus.com.br`)
+
+##### Casos especiais já tratados
+| Cenário | Tratamento |
+|---|---|
+| Título com `E1_NUMBOR=''` (remessa direta pelo Protheus, pré-Intranet) | Patch A da R36: `boleto-linha` aceita títulos sem `E1_NUMBOR` |
+| `parcela=NULL` no `tab_boleto_envio_lote_titulo` vs `''` no `_retorno` | JOINs usam `COALESCE(parcela, '')` em `boleto-a-enviar` e `boleto-disparar` (commit `140cc5f`) |
+| Lote com 2+ contas do mesmo banco | Bloqueia no frontend; força operador a curar |
+| Conta com DV vs sem DV | Intranet envia `A6_NUMCON` puro (sem DV); Diego mudou de SEE pra SA6 lookup (commit `d08db3d`) |
+| Re-envio de lote já `ENVIADO_PROTHEUS` | Bloqueado — operador deve criar lote novo |
+| Cliente sem e-mail na SA1 | Disparo retorna `codigo_erro:'SEM_EMAIL'`; auditado ALERTA, título fica como pendente |
+| Linha digitável indisponível (endpoint Diego ainda não publicado) | Retorna `codigo_erro:'INDISPONIVEL'`; UI mostra "linha indisponível" sem bloquear |
+| Banco do cliente diferente do convênio cadastrado | `CONVENIO_POR_BANCO[banco]` retorna `undefined` → não injeta `?convenio=`; Diego usa fallback do `MV_CONV<BBB>` |
+| MSSQL Protheus intermitente (ddns.gnatus.com.br:1433) | Botão "Atualizar" no banner pra refazer consulta; auditoria registra `build_tag` + `mensagem` do Diego |
 
 #### Liberação Financeira · `/financeiro/liberacao-financeira` · perm 8006
 > Substitui o processo manual: a operadora baixava a planilha de "carteira de pedidos" do **intranet PHP antigo**, montava uma tabela dinâmica filtrando status = "aguardando liberação do financeiro" + tipo + forma pgto + nº pedido, adicionava 2 colunas (Ações, Observações) e então liberava os pedidos no Protheus.
@@ -455,13 +546,18 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 - **Mapeamento equipe → perfil** definido em `tab_cobranca_bu_equipe.perfil` (seed na migration 40)
 
-#### Borderô (integração com Protheus) — em construção
-- **Endpoint Protheus** (custom Diego): `POST http://protheus.gnatus.com.br:8081/rest/Cobranca/gerar-bordero`
-- Auth Basic (`admin:Gn@tu5` — mesmas credenciais do AprovaCompras)
-- **Spec do contrato**: validações 400/413, payload `{filial, banco, operador, observacao, titulos[]}`, response `{ok, qtd_processados, qtd_rejeitados, lote, detalhes:[{prefixo, numero, parcela, cliente, loja, status, codigo_erro?, mensagem?}]}`
+#### Borderô (integração com Protheus) — integrado em §3.5
+- **Status (2026-05-29)**: ✅ implementado e em produção como parte do módulo **Envio de Boleto** (§3.5). Bordero, retorno bancário e disparo ao cliente compartilham a mesma página `/financeiro/envio-boleto` e as tabelas `tab_boleto_envio_lote*`
+- **Endpoint Protheus** (custom Diego): `POST http://protheus.gnatus.com.br:8081/rest/Cobranca/gerar-bordero` — auth Basic com `PROTHEUS_API_USER/PROTHEUS_API_PASS`
+- **Service wrapper**: [services/protheusCobranca.js](services/protheusCobranca.js)
+- **Endpoint Intranet**: [POST /financeiro/boleto-lote/:id/enviar-protheus](resources/financeiro/financeiro.boleto-lote-enviar-protheus.js)
+- **Spec do contrato**: ver [docs/spec-protheus-multi-banco-santander.md](../docs/spec-protheus-multi-banco-santander.md). Resumo: payload `{filial, banco, agencia, conta, operador, observacao, titulos[]}`, response `{ok, lote, qt_processados, qt_rejeitados, detalhes:[{prefixo, numero, parcela, cliente, loja, status, codigo_erro?, mensagem?}]}` (echo de identificadores em **todos** os itens, mesmo rejeitados)
+- **Histórico relevante de builds Diego**:
+  - R28-R31: bug `BANCO_INVALIDO` intermitente → resolvido em R32 com `detalhes[]` granular + `force:true`
+  - R32: corrigiu perda silenciosa (111 dry-run vs 91 real)
+  - R33-R34: sub-bugs A (prefixo PED hardcoded) + B (ambiguidade NF+parcela) + C (overwrite NUMBCO)
+  - R36: Patch A — `boleto-linha` aceita títulos sem `E1_NUMBOR` (legado pré-Intranet)
 - **Script de teste**: [scripts/test-cobranca-gerar-bordero.js](scripts/test-cobranca-gerar-bordero.js) — 10 cenários (auth/validações/payload válido). Roda com `node scripts/test-cobranca-gerar-bordero.js`
-- **Status atual** (2026-05-13): stub validado 10/10. `ProcBord` real implementado mas com pequeno ajuste pendente (echo de `prefixo/numero/parcela/cliente/loja` em `detalhes[]` mesmo nos erros, pra Intranet conseguir casar a rejeição com o item enviado)
-- **Integração com a Intranet**: pendente. Plano: service `services/protheus-cobranca.js` + endpoint `POST /cobranca/bordero-enviar` + botão "Enviar ao Protheus" na tela de Envio de Boleto
 
 #### Recuperados (tab no Dashboard) · perm 9001
 - **Endpoint**: [GET /cobranca/recuperados](resources/cobranca/cobranca.recuperados.js)
