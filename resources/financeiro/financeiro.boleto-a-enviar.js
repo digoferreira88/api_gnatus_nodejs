@@ -6,12 +6,22 @@
 // registro (após "Atualizar banco"). Enriquecido com valor/vencimento (do
 // lote_titulo) e contato do cliente (SA1 do Protheus: telefone/e-mail).
 //
-// Query: ?pendentes=1 (só os ainda não disparados) | ?busca=
+// Query:
+//   ?pendentes=1            só os ainda não disparados
+//   ?busca=                  cliente / NF / cod cliente
+//   ?dataDisparoIni=YYYY-MM-DD  filtra r.disparado_em >= ini
+//   ?dataDisparoFim=YYYY-MM-DD  filtra r.disparado_em < (fim + 1 dia)
+//   ?bordero=                numero do lote_protheus (l.lote_protheus = ?)
+//
+// Quando dataDisparoIni/Fim ou bordero estão setados, "pendentes" é IGNORADO —
+// nao faz sentido cruzar "so nao disparados" com "filtrar por data de disparo".
 // Permissão 8005.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
+// YYYY-MM-DD valida (ou vazio). Bloqueia injecao de SQL no Date filter.
+const isYmd = (v) => /^\d{4}-\d{2}-\d{2}$/.test(trim(v));
 
 module.exports = (app) => ({
   verb: 'get',
@@ -20,8 +30,13 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;
-    const soPendentes = String(req.query.pendentes || '') === '1';
     const busca = trim(req.query.busca).toUpperCase();
+    const dataDisparoIni = isYmd(req.query.dataDisparoIni) ? trim(req.query.dataDisparoIni) : '';
+    const dataDisparoFim = isYmd(req.query.dataDisparoFim) ? trim(req.query.dataDisparoFim) : '';
+    const bordero = trim(req.query.bordero);
+    // "pendentes=1" e os filtros de disparo/bordero sao mutuamente exclusivos
+    const temFiltroDisparo = !!(dataDisparoIni || dataDisparoFim || bordero);
+    const soPendentes = !temFiltroDisparo && String(req.query.pendentes || '') === '1';
 
     const conds = [`r.status_banco = 'REGISTRADO'`];
     const params = {};
@@ -30,6 +45,19 @@ module.exports = (app) => ({
       conds.push(`(UPPER(t.cliente_nome) LIKE '%' || @q || '%' OR r.numero LIKE '%' || @q || '%' OR r.cliente_cod = @q)`);
       params.q = busca;
     }
+    if (dataDisparoIni) {
+      conds.push(`r.disparado_em >= @dispIni::timestamp`);
+      params.dispIni = dataDisparoIni;
+    }
+    if (dataDisparoFim) {
+      // Fim exclusivo do dia seguinte: usa < (fim+1 dia) pra incluir 23:59:59
+      conds.push(`r.disparado_em < (@dispFim::date + INTERVAL '1 day')`);
+      params.dispFim = dataDisparoFim;
+    }
+    if (bordero) {
+      conds.push(`TRIM(COALESCE(l.lote_protheus, '')) = @bordero`);
+      params.bordero = bordero;
+    }
 
     try {
       const rows = await Pg.connectAndQuery(`
@@ -37,7 +65,8 @@ module.exports = (app) => ({
                r.cliente_cod, r.cliente_loja, r.nosso_numero,
                r.status_banco, r.disparado_em, r.canais_disparo,
                t.cliente_nome, t.valor, t.saldo, t.vencimento, t.tipo,
-               l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta
+               l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta,
+               TRIM(COALESCE(l.lote_protheus, '')) AS bordero
           FROM tab_boleto_envio_lote_retorno r
           JOIN tab_boleto_envio_lote l ON l.id = r.id_lote
           -- COALESCE em prefixo/parcela porque o INSERT do sincronizar grava ''
@@ -90,7 +119,8 @@ module.exports = (app) => ({
           banco: trim(r.banco_cod), bancoNome: trim(r.banco_nome),
           valor: N(r.valor), saldo: N(r.saldo), vencimento: trim(r.vencimento),
           email: contato.email, telefone: contato.telefone,
-          disparadoEm: r.disparado_em, canaisDisparo: trim(r.canais_disparo)
+          disparadoEm: r.disparado_em, canaisDisparo: trim(r.canais_disparo),
+          bordero: trim(r.bordero)
         };
       });
 
