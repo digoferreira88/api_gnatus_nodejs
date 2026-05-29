@@ -10,3 +10,4 @@ debug_*.js
 # Storage de uploads (cobranca/anexos, etc) — nao versionar
 uploads/
 pipe_cards.json
+scripts/_out/

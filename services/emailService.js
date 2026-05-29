@@ -27,13 +27,14 @@ async function sendVerificationEmail(to, codigo) {
 // Envio generico — usado pelos modulos que mandam e-mail livre (alertas de
 // contrato, boleto-disparar, etc). O m365.sendMail trata strings com ',' ou
 // ';' como multiplos destinatarios.
-async function sendEmail({ to, subject, text, html, cc, bcc }) {
+async function sendEmail({ to, subject, text, html, cc, bcc, attachments }) {
     if (!to) throw new Error('Destinatario obrigatorio.');
     if (isDev) {
-        console.log(`[emailService] DEV — email pra ${to}: "${subject}"`);
+        const anexos = Array.isArray(attachments) ? attachments.length : 0;
+        console.log(`[emailService] DEV — email pra ${to}: "${subject}"${anexos ? ` (${anexos} anexo(s))` : ''}`);
         return { dev: true };
     }
-    return await m365.sendMail({ from: SENDER, to, cc, bcc, subject, text, html });
+    return await m365.sendMail({ from: SENDER, to, cc, bcc, subject, text, html, attachments });
 }
 
 module.exports = { sendVerificationEmail, sendEmail };

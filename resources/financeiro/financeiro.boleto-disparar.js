@@ -17,8 +17,18 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const Auditoria = require('../../services/auditoria');
 const ProtheusBoleto = require('../../services/protheusBoleto');
+const BoletoPdf = require('../../services/boletoPdf');
 const Email = require('../../services/emailService');
 const Suri = require('../../services/suri');
+
+// Cedente fixo (espelho do endpoint /boleto-pdf — manter sincronizado)
+const BENEFICIARIO_GNATUS = {
+  nome: 'GNATUS PRODUTOS MEDICOS E ODONTOLOGICOS LTDA - EPP',
+  cnpj: '09609356000100',
+  endereco: 'AV DOS MACONS, 405 - JARDIM RAMOS - BARRETOS - SP - CEP 14783-167'
+};
+const ESPECIE_POR_BANCO = { '341': 'DMI', '033': 'DM' };
+const CARTEIRA_LABEL = { '101': 'PENH. ELETR', '109': '109' };
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
@@ -195,8 +205,11 @@ module.exports = (app) => ({
 
       if (!rows.length) return res.status(404).json({ message: 'Nenhum boleto encontrado para os ids informados.' });
 
-      // 2) Contatos (e-mail) da SA1 — em lote
+      // 2) Contatos + endereco da SA1 e dados extras do SE1 — em lote
+      // SA1: e-mail/telefone (envio) + nome completo/endereco/CNPJ (PDF do boleto)
+      // SE1: E1_EMISSAO (data documento), E1_VALJUR (juros R$/dia), E1_MULTA (% multa)
       const contatoMap = new Map();
+      const se1Map = new Map();   // chave: prefixo|numero|parcela|cliente|loja
       const chaves = [...new Set(rows.map(r => `${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`))].filter(Boolean);
       if (chaves.length) {
         const p = {};
@@ -207,14 +220,41 @@ module.exports = (app) => ({
         try {
           const sa1 = await Protheus.connectAndQuery(`
             SELECT RTRIM(sa1.A1_COD) cod, RTRIM(sa1.A1_LOJA) loja,
-                   RTRIM(sa1.A1_EMAIL) email, RTRIM(sa1.A1_DDD) ddd, RTRIM(sa1.A1_TEL) tel
+                   RTRIM(sa1.A1_NOME) nome, RTRIM(sa1.A1_CGC) cgc,
+                   RTRIM(sa1.A1_EMAIL) email, RTRIM(sa1.A1_DDD) ddd, RTRIM(sa1.A1_TEL) tel,
+                   RTRIM(sa1.A1_END) endereco, RTRIM(sa1.A1_BAIRRO) bairro,
+                   RTRIM(sa1.A1_MUN) municipio, RTRIM(sa1.A1_EST) uf, RTRIM(sa1.A1_CEP) cep
               FROM SA1010 sa1 WITH (NOLOCK)
              WHERE sa1.D_E_L_E_T_ <> '*' AND (${ors})`, p);
           sa1.forEach(s => contatoMap.set(`${trim(s.cod)}|${trim(s.loja)}`, {
-            email: trim(s.email), telefone: `${trim(s.ddd)}${trim(s.tel)}`
+            email: trim(s.email), telefone: `${trim(s.ddd)}${trim(s.tel)}`,
+            nome: trim(s.nome), cgc: trim(s.cgc),
+            endereco: trim(s.endereco), bairro: trim(s.bairro),
+            municipio: trim(s.municipio), uf: trim(s.uf), cep: trim(s.cep)
           }));
         } catch (e) {
           console.warn('boleto-disparar: falha ao buscar contatos SA1 —', e.message);
+        }
+        // SE1: pega emissao + juros/multa para montar instrucoes do boleto
+        try {
+          const pE = {};
+          const orsE = rows.map((r, i) => {
+            pE[`p${i}`] = trim(r.prefixo); pE[`n${i}`] = trim(r.numero);
+            pE[`pa${i}`] = trim(r.parcela); pE[`c${i}`] = trim(r.cliente_cod); pE[`l${i}`] = trim(r.cliente_loja);
+            return `(se1.E1_PREFIXO = @p${i} AND se1.E1_NUM = @n${i} AND se1.E1_PARCELA = @pa${i} AND se1.E1_CLIENTE = @c${i} AND se1.E1_LOJA = @l${i})`;
+          }).join(' OR ');
+          const se1 = await Protheus.connectAndQuery(`
+            SELECT RTRIM(se1.E1_PREFIXO) prefixo, RTRIM(se1.E1_NUM) numero, RTRIM(se1.E1_PARCELA) parcela,
+                   RTRIM(se1.E1_CLIENTE) cliente, RTRIM(se1.E1_LOJA) loja,
+                   RTRIM(se1.E1_EMISSAO) emissao, se1.E1_VALJUR juros_dia, se1.E1_MULTA multa_pct
+              FROM SE1010 se1 WITH (NOLOCK)
+             WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01' AND (${orsE})`, pE);
+          se1.forEach(s => se1Map.set(
+            `${trim(s.prefixo)}|${trim(s.numero)}|${trim(s.parcela)}|${trim(s.cliente)}|${trim(s.loja)}`,
+            { emissao: trim(s.emissao), jurosDia: N(s.juros_dia), multaPct: N(s.multa_pct) }
+          ));
+        } catch (e) {
+          console.warn('boleto-disparar: falha ao buscar SE1 (juros/multa) —', e.message);
         }
       }
 
@@ -253,6 +293,42 @@ module.exports = (app) => ({
         const enviados = [];
         const erros = [];
 
+        // 3.5) Gera PDF do boleto (anexo do e-mail). Se falhar, manda email
+        // mesmo assim — linha digitavel no HTML cobre o caso.
+        let pdfAttachment = null;
+        const codigoBarras = trim(lin.body?.codigo_barras);
+        if (querEmail && codigoBarras) {
+          try {
+            const seKey = `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}|${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`;
+            const se1 = se1Map.get(seKey) || { emissao: '', jurosDia: 0, multaPct: 0 };
+            const instrucoes = BoletoPdf.montarInstrucoes({
+              jurosDia: se1.jurosDia, multaPct: se1.multaPct,
+              valor: r.valor, vencimento: r.vencimento
+            });
+            const pdfBuf = await BoletoPdf.gerarBoletoPdf({
+              banco: trim(r.banco_cod),
+              beneficiario: BENEFICIARIO_GNATUS,
+              pagador: {
+                nome: contato.nome || trim(r.cliente_nome), cgc: contato.cgc || '',
+                endereco: contato.endereco || '', bairro: contato.bairro || '',
+                municipio: contato.municipio || '', uf: contato.uf || '', cep: contato.cep || ''
+              },
+              valor: N(r.valor), vencimento: trim(r.vencimento),
+              numeroDocumento: trim(r.numero),
+              dataDocumento: se1.emissao || trim(r.vencimento),
+              nossoNumero: trim(r.nosso_numero) || trim(lin.body?.nosso_numero),
+              agencia: trim(r.banco_agencia), conta: trim(r.banco_conta),
+              carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (trim(r.banco_cod) === '033' ? 'PENH. ELETR' : '109'),
+              especieDoc: ESPECIE_POR_BANCO[trim(r.banco_cod)] || 'DM',
+              linhaDigitavel: linha, codigoBarras, instrucoes
+            });
+            const fname = `boleto_${trim(r.numero)}${trim(r.parcela) ? '-' + trim(r.parcela) : ''}.pdf`;
+            pdfAttachment = { name: fname, contentType: 'application/pdf', content: pdfBuf };
+          } catch (e) {
+            console.warn('boleto-disparar: falha ao gerar PDF —', e.message);
+          }
+        }
+
         // 4) E-mail
         if (querEmail) {
           if (!contato.email) {
@@ -264,7 +340,10 @@ module.exports = (app) => ({
                 valor: r.valor, vencimento: r.vencimento,
                 banco: nomeBancoCurto(r.banco_cod, r.banco_nome), linha
               });
-              await Email.sendEmail({ to: contato.email, subject, text, html });
+              await Email.sendEmail({
+                to: contato.email, subject, text, html,
+                attachments: pdfAttachment ? [pdfAttachment] : undefined
+              });
               enviados.push('EMAIL');
             } catch (e) {
               erros.push('e-mail: ' + e.message);
