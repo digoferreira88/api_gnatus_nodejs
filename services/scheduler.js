@@ -112,7 +112,7 @@ function extrairTelefone(row, suri) {
 //   D0:  [nome, nf, valor]                -> 3
 //   D+3: [nome, nf, valor, vencimento]    -> 4
 function montarParametros(tipo, row) {
-  const nome  = String(row.cliente_nome || 'Cliente').split(/\s+/)[0]; // primeiro nome
+  const nome  = String(row.cliente_nome || 'Cliente').trim();
   const venc  = fmtDataBR(row.vencimento);
   const nf    = row.numero || '—';
   const valor = fmtMoeda(row.saldo);
