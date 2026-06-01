@@ -118,19 +118,24 @@ module.exports = (app) => ({
         console.warn('boleto-pdf: falha SE1 —', e.message);
       }
 
-      // 4) Linha digitavel via Protheus (Diego)
+      // 4) Linha digitavel — calculada localmente a partir dos dados base
+      //    (NN do PG, ag/conta do lote, valor/venc do titulo). O endpoint
+      //    do Diego foi descartado depois que detectamos NN e carteira
+      //    errados nos PDFs samples (2026-05-29).
       const lin = await ProtheusBoleto.linhaDigitavel({
-        filial: '01',
-        prefixo: trim(r.prefixo), numero: trim(r.numero), parcela: trim(r.parcela),
-        cliente: trim(r.cliente_cod), loja: trim(r.cliente_loja), tipo: trim(r.tipo),
-        banco: trim(r.banco_cod)
+        banco: trim(r.banco_cod),
+        agencia: trim(r.banco_agencia),
+        conta: trim(r.banco_conta),
+        nossoNumero: trim(r.nosso_numero),
+        valor: N(r.valor),
+        vencimento: trim(r.vencimento)
       });
       const linhaDigitavel = trim(lin.body?.linha_digitavel);
       const codigoBarras = trim(lin.body?.codigo_barras);
       if (!lin.ok || !linhaDigitavel || !codigoBarras) {
         return res.status(502).json({
-          message: lin.body?.mensagem || 'Nao foi possivel obter a linha digitavel/codigo de barras no Protheus.',
-          codigo_erro: lin.body?.codigo_erro || 'INDISPONIVEL'
+          message: lin.body?.mensagem || 'Nao foi possivel calcular a linha digitavel.',
+          codigo_erro: lin.body?.codigo_erro || 'CALCULO'
         });
       }
 

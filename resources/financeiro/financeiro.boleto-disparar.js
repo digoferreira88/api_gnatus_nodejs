@@ -272,12 +272,16 @@ module.exports = (app) => ({
           continue;
         }
 
-        // 3) Linha digitavel via Protheus (Diego)
+        // 3) Linha digitavel — calculada localmente a partir dos dados base
+        //    (substitui Diego boleto-linha que retornava NN+carteira errados,
+        //    detectado 2026-05-29 contra PDFs samples Santander/Itau).
         const lin = await ProtheusBoleto.linhaDigitavel({
-          filial: '01',
-          prefixo: trim(r.prefixo), numero: trim(r.numero), parcela: trim(r.parcela),
-          cliente: trim(r.cliente_cod), loja: trim(r.cliente_loja), tipo: trim(r.tipo),
-          banco: trim(r.banco_cod)
+          banco: trim(r.banco_cod),
+          agencia: trim(r.banco_agencia),
+          conta: trim(r.banco_conta),
+          nossoNumero: trim(r.nosso_numero),
+          valor: N(r.valor),
+          vencimento: trim(r.vencimento)
         });
         const linha = trim(lin.body?.linha_digitavel);
         if (!lin.ok || !linha) {
