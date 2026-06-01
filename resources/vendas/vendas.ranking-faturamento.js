@@ -52,10 +52,16 @@ module.exports = (app) => ({
        AND bu_sx5.D_E_L_E_T_ <> '*'
     `;
 
+    // LEFT JOIN SA3 (em vez de INNER): NFs sem vendedor preenchido no SF2
+    // (F2_VEND1 vazio, ou apontando pra um SA3 deletado) NAO sao descartadas —
+    // viram uma linha agregada "(Sem vendedor)" no fim do ranking. Sem isso,
+    // a soma do ranking fica menor que a soma das BUs e o operador estranha.
+    // Caso documentado: NF 084028 jan/2026 (cliente SAYURI PRADO UEDA) sem
+    // F2_VEND* preenchido — R$ 25.918,80 sumiam do ranking.
     const sql = `
       SELECT
-        sf2.f2_vend1 AS cod_vendedor,
-        MAX(sa3.A3_NOME) AS nome,
+        ISNULL(NULLIF(RTRIM(sf2.f2_vend1), ''), '(sem)') AS cod_vendedor,
+        MAX(ISNULL(sa3.A3_NOME, '(Sem vendedor)')) AS nome,
         CAST(SUM(sd2.d2_valbrut - sd2.d2_valdev) AS DECIMAL(15,2)) AS total
       FROM dbo.Sf2010 sf2 WITH (NOLOCK)
       INNER JOIN Sd2010 sd2 WITH (NOLOCK)
@@ -64,7 +70,7 @@ module.exports = (app) => ({
             AND sd2.D2_SERIE = sf2.f2_serie
             AND sd2.D2_CLIENTE = sf2.F2_CLIENTE
             AND sd2.D2_LOJA = sf2.F2_LOJA)
-      INNER JOIN sa3010 sa3 WITH (NOLOCK)
+      LEFT JOIN sa3010 sa3 WITH (NOLOCK)
         ON (sf2.f2_vend1 = sa3.a3_cod AND sa3.D_E_L_E_T_ <> '*')
       ${joinPedidoBu}
       WHERE sf2.D_E_L_E_T_ <> '*'
@@ -78,7 +84,7 @@ module.exports = (app) => ({
         AND sd2.D2_CF IN (${cfopList})
         ${condVendedor}
         ${condBu}
-      GROUP BY sf2.f2_vend1
+      GROUP BY ISNULL(NULLIF(RTRIM(sf2.f2_vend1), ''), '(sem)')
       ORDER BY SUM(sd2.d2_valbrut - sd2.d2_valdev) DESC
     `;
 
