@@ -243,15 +243,28 @@ module.exports = (app) => ({
             pE[`pa${i}`] = trim(r.parcela); pE[`c${i}`] = trim(r.cliente_cod); pE[`l${i}`] = trim(r.cliente_loja);
             return `(se1.E1_PREFIXO = @p${i} AND se1.E1_NUM = @n${i} AND se1.E1_PARCELA = @pa${i} AND se1.E1_CLIENTE = @c${i} AND se1.E1_LOJA = @l${i})`;
           }).join(' OR ');
+          // E1_VENCTO = vencimento ORIGINAL (usado pra emitir o boleto no banco).
+          // E1_VENCREA = vencimento REAL (com prorrogacoes posteriores). A linha
+          // digitavel precisa bater com a do boleto FISICO que o cliente recebeu
+          // do banco — entao usamos E1_VENCTO (original), nao E1_VENCREA.
+          // Caso descoberto 2026-05-29 com titulo 092647/02 (Itau) prorrogado de
+          // 20/06 -> 22/06 apos bordero; linha gerada com 22/06 nao casava com
+          // a do PDF do banco (que tinha 20/06).
           const se1 = await Protheus.connectAndQuery(`
             SELECT RTRIM(se1.E1_PREFIXO) prefixo, RTRIM(se1.E1_NUM) numero, RTRIM(se1.E1_PARCELA) parcela,
                    RTRIM(se1.E1_CLIENTE) cliente, RTRIM(se1.E1_LOJA) loja,
-                   RTRIM(se1.E1_EMISSAO) emissao, se1.E1_VALJUR juros_dia, se1.E1_MULTA multa_pct
+                   RTRIM(se1.E1_EMISSAO) emissao, RTRIM(se1.E1_VENCTO) vencto_original,
+                   se1.E1_VALJUR juros_dia, se1.E1_MULTA multa_pct
               FROM SE1010 se1 WITH (NOLOCK)
              WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01' AND (${orsE})`, pE);
           se1.forEach(s => se1Map.set(
             `${trim(s.prefixo)}|${trim(s.numero)}|${trim(s.parcela)}|${trim(s.cliente)}|${trim(s.loja)}`,
-            { emissao: trim(s.emissao), jurosDia: N(s.juros_dia), multaPct: N(s.multa_pct) }
+            {
+              emissao: trim(s.emissao),
+              venctoOriginal: trim(s.vencto_original),
+              jurosDia: N(s.juros_dia),
+              multaPct: N(s.multa_pct)
+            }
           ));
         } catch (e) {
           console.warn('boleto-disparar: falha ao buscar SE1 (juros/multa) —', e.message);
@@ -272,16 +285,23 @@ module.exports = (app) => ({
           continue;
         }
 
-        // 3) Linha digitavel — calculada localmente a partir dos dados base
-        //    (substitui Diego boleto-linha que retornava NN+carteira errados,
-        //    detectado 2026-05-29 contra PDFs samples Santander/Itau).
+        // 3) Linha digitavel — calculada localmente a partir dos dados base.
+        //    O VENCIMENTO usado e' o E1_VENCTO (original do SE1, que foi
+        //    usado pra emitir o boleto no banco) e nao o `r.vencimento`
+        //    do PG (que pode ter E1_VENCREA = prorrogado). Sem isso, a
+        //    linha digitavel nao bate com a do PDF fisico que o cliente
+        //    recebeu do banco — caso detectado em 092647/02 Itau, prorrogado
+        //    de 20/06 -> 22/06 apos bordero.
+        const seKeyL = `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}|${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`;
+        const se1L = se1Map.get(seKeyL) || {};
+        const venctoCalc = trim(se1L.venctoOriginal) || trim(r.vencimento);
         const lin = await ProtheusBoleto.linhaDigitavel({
           banco: trim(r.banco_cod),
           agencia: trim(r.banco_agencia),
           conta: trim(r.banco_conta),
           nossoNumero: trim(r.nosso_numero),
           valor: N(r.valor),
-          vencimento: trim(r.vencimento)
+          vencimento: venctoCalc
         });
         const linha = trim(lin.body?.linha_digitavel);
         if (!lin.ok || !linha) {
@@ -303,11 +323,13 @@ module.exports = (app) => ({
         const codigoBarras = trim(lin.body?.codigo_barras);
         if (querEmail && codigoBarras) {
           try {
-            const seKey = `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}|${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`;
-            const se1 = se1Map.get(seKey) || { emissao: '', jurosDia: 0, multaPct: 0 };
+            // O PDF tem que mostrar o MESMO vencimento usado pra calcular a
+            // linha (senao a ficha visualmente diverge do codigo de barras).
+            // Usamos venctoCalc = E1_VENCTO original (ja calculado acima).
+            const se1 = se1L || { emissao: '', jurosDia: 0, multaPct: 0 };
             const instrucoes = BoletoPdf.montarInstrucoes({
               jurosDia: se1.jurosDia, multaPct: se1.multaPct,
-              valor: r.valor, vencimento: r.vencimento
+              valor: r.valor, vencimento: venctoCalc
             });
             const pdfBuf = await BoletoPdf.gerarBoletoPdf({
               banco: trim(r.banco_cod),
@@ -317,9 +339,9 @@ module.exports = (app) => ({
                 endereco: contato.endereco || '', bairro: contato.bairro || '',
                 municipio: contato.municipio || '', uf: contato.uf || '', cep: contato.cep || ''
               },
-              valor: N(r.valor), vencimento: trim(r.vencimento),
+              valor: N(r.valor), vencimento: venctoCalc,
               numeroDocumento: trim(r.numero),
-              dataDocumento: se1.emissao || trim(r.vencimento),
+              dataDocumento: se1.emissao || venctoCalc,
               nossoNumero: trim(r.nosso_numero) || trim(lin.body?.nosso_numero),
               agencia: trim(r.banco_agencia), conta: trim(r.banco_conta),
               carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (trim(r.banco_cod) === '033' ? 'PENH. ELETR' : '109'),

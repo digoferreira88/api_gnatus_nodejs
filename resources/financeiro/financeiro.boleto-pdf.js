@@ -95,11 +95,15 @@ module.exports = (app) => ({
         console.warn('boleto-pdf: falha SA1 —', e.message);
       }
 
-      // 3) SE1 — juros/multa/emissao
-      let se1 = { emissao: '', jurosDia: 0, multaPct: 0 };
+      // 3) SE1 — juros/multa/emissao + E1_VENCTO (vencimento ORIGINAL).
+      // O banco emite o boleto com base em E1_VENCTO. Depois o titulo pode
+      // ser prorrogado (E1_VENCREA muda) mas a linha digitavel do boleto
+      // fisico continua com a data original — entao usamos E1_VENCTO no
+      // calculo, nao r.vencimento (que pode estar com VENCREA).
+      let se1 = { emissao: '', venctoOriginal: '', jurosDia: 0, multaPct: 0 };
       try {
         const r1 = await Protheus.connectAndQuery(`
-          SELECT RTRIM(se1.E1_EMISSAO) emissao,
+          SELECT RTRIM(se1.E1_EMISSAO) emissao, RTRIM(se1.E1_VENCTO) vencto_original,
                  se1.E1_VALJUR juros_dia, se1.E1_MULTA multa_pct
             FROM SE1010 se1 WITH (NOLOCK)
            WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
@@ -110,6 +114,7 @@ module.exports = (app) => ({
         if (r1.length) {
           se1 = {
             emissao: trim(r1[0].emissao),
+            venctoOriginal: trim(r1[0].vencto_original),
             jurosDia: N(r1[0].juros_dia),
             multaPct: N(r1[0].multa_pct)
           };
@@ -118,17 +123,18 @@ module.exports = (app) => ({
         console.warn('boleto-pdf: falha SE1 —', e.message);
       }
 
+      // Vencimento usado pra calcular linha + mostrar no PDF (precisam bater).
+      const venctoCalc = se1.venctoOriginal || trim(r.vencimento);
+
       // 4) Linha digitavel — calculada localmente a partir dos dados base
-      //    (NN do PG, ag/conta do lote, valor/venc do titulo). O endpoint
-      //    do Diego foi descartado depois que detectamos NN e carteira
-      //    errados nos PDFs samples (2026-05-29).
+      //    (NN do PG, ag/conta do lote, valor do titulo, E1_VENCTO original).
       const lin = await ProtheusBoleto.linhaDigitavel({
         banco: trim(r.banco_cod),
         agencia: trim(r.banco_agencia),
         conta: trim(r.banco_conta),
         nossoNumero: trim(r.nosso_numero),
         valor: N(r.valor),
-        vencimento: trim(r.vencimento)
+        vencimento: venctoCalc
       });
       const linhaDigitavel = trim(lin.body?.linha_digitavel);
       const codigoBarras = trim(lin.body?.codigo_barras);
@@ -144,7 +150,7 @@ module.exports = (app) => ({
         jurosDia: se1.jurosDia,
         multaPct: se1.multaPct,
         valor: r.valor,
-        vencimento: r.vencimento
+        vencimento: venctoCalc
       });
 
       // 6) Gera o PDF
@@ -153,9 +159,9 @@ module.exports = (app) => ({
         beneficiario: BENEFICIARIO_GNATUS,
         pagador,
         valor: N(r.valor),
-        vencimento: trim(r.vencimento),
+        vencimento: venctoCalc,
         numeroDocumento: trim(r.numero),
-        dataDocumento: se1.emissao || trim(r.vencimento),
+        dataDocumento: se1.emissao || venctoCalc,
         nossoNumero: trim(r.nosso_numero) || trim(lin.body?.nosso_numero),
         agencia: trim(r.banco_agencia),
         conta: trim(r.banco_conta),
