@@ -322,8 +322,9 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 | `POST /financeiro/boleto-lote/:id/sincronizar` ([file](resources/financeiro/financeiro.boleto-lote-sincronizar.js)) | Lê SE1 atualizada pós-FINA130/140 e popula `tab_boleto_envio_lote_retorno` |
 | `POST /financeiro/boleto-importar-retorno` ([file](resources/financeiro/financeiro.boleto-importar-retorno.js)) | Upload `.RET` em base64 → Diego processa via FINA205 (registra/baixa); `simular:true` é dry-run |
 | `POST /financeiro/boleto-adotar-se1` ([file](resources/financeiro/financeiro.boleto-adotar-se1.js)) | Adota retroativamente títulos SE1 já registrados que não passaram pelo fluxo Intranet (remessa direta no Protheus) |
-| `GET /financeiro/boleto-a-enviar` ([file](resources/financeiro/financeiro.boleto-a-enviar.js)) | Lista títulos `REGISTRADO` prontos pra disparar ao cliente (com contato SA1 + linha digitável on-demand) |
-| `POST /financeiro/boleto-disparar` ([file](resources/financeiro/financeiro.boleto-disparar.js)) | Envia boleto ao cliente por e-mail (linha digitável + código de barras) |
+| `GET /financeiro/boleto-a-enviar` ([file](resources/financeiro/financeiro.boleto-a-enviar.js)) | Lista títulos `REGISTRADO` prontos pra disparar ao cliente (com contato SA1). Filtros: `pendentes`, `busca`, `dataDisparoIni`/`dataDisparoFim`, `bordero` |
+| `POST /financeiro/boleto-disparar` ([file](resources/financeiro/financeiro.boleto-disparar.js)) | Envia boleto ao cliente por e-mail (HTML com linha digitável + **PDF anexo**) e/ou WhatsApp |
+| `GET /financeiro/boleto-pdf/:id` ([file](resources/financeiro/financeiro.boleto-pdf.js)) | Gera PDF Febraban 102 (recibo + ficha + I2of5) do título — `application/pdf` inline. Usado tanto no anexo do e-mail quanto no botão "Baixar PDF" do frontend |
 
 ##### Endpoints Protheus (REST custom Diego)
 Auth Basic `PROTHEUS_API_USER:PROTHEUS_API_PASS` (mesmas creds do AprovaCompras). Host `http://protheus.gnatus.com.br:8081`. **Intranet é read-only no MSSQL — quem escreve no SE1/SEE é a Diego REST chamando FINA070/FINA205**.
@@ -332,9 +333,18 @@ Auth Basic `PROTHEUS_API_USER:PROTHEUS_API_PASS` (mesmas creds do AprovaCompras)
 |---|---|---|
 | `POST /rest/Cobranca/gerar-bordero` | Gera bordero (FINA070) — registra títulos no banco. Body `{filial, banco, agencia, conta, operador, observacao, titulos[]}`. Response `{ok, lote, qt_processados, qt_rejeitados, detalhes:[{prefixo, numero, parcela, cliente, loja, status, codigo_erro?, mensagem?}]}` | [services/protheusCobranca.js](services/protheusCobranca.js) |
 | `POST /rest/Cobranca/importar-retorno` | Processa CNAB `.RET` (FINA205) — registra/baixa títulos. Body `{filial, banco, agencia, conta, nomeArquivo, conteudoBase64, operador, simular}`. Response `{ok, layout, qtd_registros, qtd_registrados, qtd_liquidados, qtd_rejeitados, qtd_nao_localizados, build_tag}` | [services/protheusRetorno.js](services/protheusRetorno.js) |
-| `GET /rest/Cobranca/boleto-linha` | Devolve linha digitável + código de barras de um título já registrado. Query `?filial&prefixo&numero&parcela&cliente&loja&tipo&convenio`. Response `{ok, linha_digitavel, codigo_barras, nosso_numero, banco, vencimento, valor}`. ⚠️ Linha NÃO fica gravada em E1_CODBAR/E1_CODDIG — o Protheus gera na impressão, por isso buscamos via REST na hora do disparo | [services/protheusBoleto.js](services/protheusBoleto.js) |
+| ~~`GET /rest/Cobranca/boleto-linha`~~ | **DESCONTINUADO** (2026-05-29). O cálculo do Diego em AdvPL devolvia NN deslocado 1 posição no campo livre + carteira fixa 101 quando o Santander usa 104. Validado contra PDFs OFICIAIS do banco. Migrado pra cálculo local — ver §3.5 "Cálculo Febraban local". | — |
 
 Spec completa do contrato em [docs/spec-protheus-multi-banco-santander.md](../docs/spec-protheus-multi-banco-santander.md).
+
+##### Cálculo Febraban local (linha digitável + código de barras + PDF)
+Substituto do `GET /rest/Cobranca/boleto-linha` do Diego. Implementação 100% na Intranet em Node — Mod 10/Mod 11/fator de vencimento + campo livre específico por banco. Validado char-by-char contra 2 PDFs oficiais (Santander 085299/03 e Itaú 092647/02) em [scripts/test-linha-digitavel.js](scripts/test-linha-digitavel.js).
+
+- **[services/linhaDigitavel.js](services/linhaDigitavel.js)**: `calcular({banco, agencia, conta, cedente, nossoNumero, carteira, valor, vencimento}) → {linhaDigitavel, codigoBarras}`. Fator base 22/02/2025 (= fator 1000, pós-overflow Febraban). Bancos suportados hoje: **033 Santander** (carteira 104 — Penhor Eletrônico com registro) e **341 Itaú** (carteira 109). Outros bancos lançam `BANCO_NAO_SUPORTADO` — adicionar a função de campo livre quando aparecer o primeiro título do banco.
+- **[services/protheusBoleto.js](services/protheusBoleto.js)**: wrapper com mesma assinatura externa (`linhaDigitavel({banco, agencia, conta, nossoNumero, valor, vencimento})`) — internamente chama o calculador local. Mantido pra não quebrar callers (`boleto-disparar`, `boleto-pdf`).
+- **`CARTEIRA_POR_BANCO`**: `033 → 104`, `341 → 109`. `CONVENIO_POR_BANCO['033'] = '3418790'` (cedente Santander; Itaú usa a conta corrente como cedente direto).
+- **Vencimento usado no cálculo**: SEMPRE `E1_VENCTO` (original) do SE1, não `E1_VENCREA` (real/prorrogado). Razão: o banco emitiu o boleto físico com a data original; se o título for prorrogado depois (E1_VENCREA muda), a linha digitável continua com o fator antigo pra bater com o boleto físico. Caso descoberto com o título 092647/02 do Itaú (prorrogado 20/06 → 22/06).
+- **PDF Febraban 102** ([services/boletoPdf.js](services/boletoPdf.js)): gera com `pdfkit` + `bwip-js` (Interleaved 2 of 5). 2 blocos (recibo + ficha) separados por linha pontilhada "Corte na Linha Pontilhada". Logo do banco em PNG via [assets/bancos/{033,341}.png](assets/bancos/); fallback de caixa colorida com nome quando o PNG não existe. Configuração por banco em `BANCOS = {codigo, nome, corFundo, corTexto, localPgto, aceite}`.
 
 ##### Configuração de bancos
 - **Bancos comerciais aceitos** (filtro hardcoded em `boleto-bancos`): `001` BB · `033` Santander · `104` CEF · `237` Bradesco · `341` Itaú · `422` Safra · `748` Sicredi · `756` Sicoob — exclui FIDCs/cartões/aplicações dos 156 cadastros SA6010
@@ -394,17 +404,22 @@ E1_VALOR > 0
 - **Botão "Buscar no Protheus"** na tab "Disparar" chama este endpoint sob demanda
 
 ##### Tab "Disparar" — envio ao cliente
-- Lista de títulos com `status_banco='REGISTRADO'` e `disparado_em IS NULL` (default), via `GET /financeiro/boleto-a-enviar`
+- Lista de títulos com `status_banco='REGISTRADO'`, via `GET /financeiro/boleto-a-enviar`
+- Filtros disponíveis: busca (cliente/NF/cód), checkbox **"Só não enviados"** (default), **"Disparo de/até"** (range em `disparado_em`), **"Borderô"** (match exato em `lote_protheus`). Quando algum filtro de disparo/borderô está ativo, "só não enviados" é ignorado no backend
+- Coluna **Borderô** na tabela (verde quando preenchido) + coluna **Disparo** mostra data/hora inline
+- Botão **"Baixar PDF"** por linha — abre `GET /financeiro/boleto-pdf/:id` com Bearer JWT (fetch authenticated + blob download)
 - Enriquecido com contato SA1 (e-mail + telefone) do Protheus
 - Operador seleciona checkbox → botão "Disparar selecionados" chama `POST /financeiro/boleto-disparar` com `{ids:[...], canais:['EMAIL']}`
-- **Para cada título**:
+- **Batch de 30 ids/chamada no frontend** (`BATCH_DISPARO=30` em [EnvioBoleto.tsx](../frontend_intranet_react/src/pages/Financeiro/EnvioBoleto.tsx)). Cada disparo leva ~1.5-2s (calcula linha local + Microsoft Graph + UPDATE PG); 30 cabe folgado no timeout 120s do axios. Barra de progresso fixa "Disparando X/Y" mostra o andamento. Se um chunk falha, marca o restante como falha e mantém o acumulado dos anteriores. **Antes era 1 chamada única** → axios desistia em 120s embora o backend continuasse rodando até nginx matar em 300s, e o operador via "falha" mesmo com ~100 boletos enviados
+- **Para cada título** (loop sequencial no backend):
   1. Carrega retorno + lote (banco/agência/conta) + título (valor/venc/cliente);
   2. Exige `status_banco='REGISTRADO'`;
-  3. Busca e-mail do cliente na SA1 (`A1_EMAIL`);
-  4. Chama `GET /rest/Cobranca/boleto-linha` (Diego) → linha digitável + código de barras;
-  5. Envia e-mail HTML com logo + linha digitável + KPIs (valor, vencimento, NF/Pedido, banco curto);
-  6. Marca `disparado_em=NOW()`, `canais_disparo` (lista) e audita INFO
-- **WhatsApp**: template `BOLETO` cadastrado na Suri (parâmetros: `cliente`, `nf_pedido`, `vencimento`, `valor`, `linha_digitavel`, `banco`). Atualmente fica `pendente_template` — depende de aprovação Meta
+  3. Lê `E1_VENCTO` (vencimento ORIGINAL), `E1_VALJUR`, `E1_MULTA`, `E1_EMISSAO` da SE1 em batch (1 query OR-clause pros N títulos);
+  4. **Calcula linha digitável + código de barras localmente** ([services/linhaDigitavel.js](services/linhaDigitavel.js)) — substituiu o GET Diego (que retornava NN errado);
+  5. **Gera PDF Febraban 102** ([services/boletoPdf.js](services/boletoPdf.js)) — falha silenciosa não bloqueia o e-mail (linha no HTML cobre);
+  6. Envia e-mail HTML com logo + linha digitável + KPIs (valor, vencimento, NF/Pedido, banco curto) + PDF anexo via Microsoft Graph (`message.attachments[]`);
+  7. Marca `disparado_em=NOW()`, `canais_disparo` (lista) e audita INFO
+- **WhatsApp**: template `BOLETO` (Suri, id `985500087510569`) — parâmetros: `nome`, `nf`, `valor` (sem R$), `vencimento`, `linha_digitavel`. NÃO envia PDF (limitação do template Meta categoria Utility — pra anexar seria preciso cadastrar template MEDIA). Testado contra `5517981017615` com sucesso (2026-05-29)
 
 ##### Template de e-mail ao cliente
 - **Subject**: `Gnatus — Boleto NF/Pedido <numero> | Vencimento <dd/mm/yyyy>`
@@ -420,15 +435,16 @@ E1_VALOR > 0
 ##### Casos especiais já tratados
 | Cenário | Tratamento |
 |---|---|
-| Título com `E1_NUMBOR=''` (remessa direta pelo Protheus, pré-Intranet) | Patch A da R36: `boleto-linha` aceita títulos sem `E1_NUMBOR` |
+| Título com `E1_NUMBOR=''` (remessa direta pelo Protheus, pré-Intranet) | Patch A da R36 no Diego (`boleto-linha` aceita títulos sem `E1_NUMBOR`); hoje irrelevante pra linha (cálculo é local) — só importa no caminho do `gerar-bordero` |
 | `parcela=NULL` no `tab_boleto_envio_lote_titulo` vs `''` no `_retorno` | JOINs usam `COALESCE(parcela, '')` em `boleto-a-enviar` e `boleto-disparar` (commit `140cc5f`) |
 | Lote com 2+ contas do mesmo banco | Bloqueia no frontend; força operador a curar |
 | Conta com DV vs sem DV | Intranet envia `A6_NUMCON` puro (sem DV); Diego mudou de SEE pra SA6 lookup (commit `d08db3d`) |
 | Re-envio de lote já `ENVIADO_PROTHEUS` | Bloqueado — operador deve criar lote novo |
 | Cliente sem e-mail na SA1 | Disparo retorna `codigo_erro:'SEM_EMAIL'`; auditado ALERTA, título fica como pendente |
-| Linha digitável indisponível (endpoint Diego ainda não publicado) | Retorna `codigo_erro:'INDISPONIVEL'`; UI mostra "linha indisponível" sem bloquear |
-| Banco do cliente diferente do convênio cadastrado | `CONVENIO_POR_BANCO[banco]` retorna `undefined` → não injeta `?convenio=`; Diego usa fallback do `MV_CONV<BBB>` |
 | MSSQL Protheus intermitente (ddns.gnatus.com.br:1433) | Botão "Atualizar" no banner pra refazer consulta; auditoria registra `build_tag` + `mensagem` do Diego |
+| **Disparo em massa parecia limitado a 100 boletos** (2026-05-29) | Causa raiz: axios timeout 120s + loop sequencial no backend (~1.5-2s/boleto). Backend seguia ate 300s mas frontend desistia em 120s. **Fix**: frontend quebra `ids[]` em chunks de 30 com barra de progresso. Bug colateral: `entidade_id = ids.join(',')` estourava varchar(80) da `tab_auditoria` → trocado por `lote_<id>_<N>ids` (lista completa no `meta.ids` jsonb) |
+| **Linha digitável errada do Diego** (2026-05-29) | NN deslocado 1 posição no campo livre + carteira fixa 101 quando Santander usa 104. **Fix**: cálculo Mod 10/Mod 11/fator vencimento implementado localmente em [services/linhaDigitavel.js](services/linhaDigitavel.js), validado char-by-char contra PDFs oficiais. Aviso visual "⚠ linha antiga" no frontend para os ~314 disparos pré-fix (cutoff `2026-05-29 19:30 UTC`); operador redispara pontualmente |
+| **Vencimento prorrogado pós-bordero** (2026-05-29) | Título 092647/02 Itaú prorrogado 20/06 → 22/06 após bordero. `tab_boleto_envio_lote_titulo.vencimento` ficou com E1_VENCREA atualizado, mas o banco emitiu o boleto físico com E1_VENCTO original. **Fix**: tanto `boleto-pdf` quanto `boleto-disparar` agora leem `E1_VENCTO` (original) da SE1 e usam essa data pra calcular a linha digitável + montar o PDF |
 
 #### Liberação Financeira · `/financeiro/liberacao-financeira` · perm 8006
 > Substitui o processo manual: a operadora baixava a planilha de "carteira de pedidos" do **intranet PHP antigo**, montava uma tabela dinâmica filtrando status = "aguardando liberação do financeiro" + tipo + forma pgto + nº pedido, adicionava 2 colunas (Ações, Observações) e então liberava os pedidos no Protheus.
@@ -628,6 +644,51 @@ E1_VALOR > 0
   - sem padrão → PENDENTE (fica de fora até reclassificação contábil)
 - Drill-down lazy de lançamentos por natureza (`/gerencia/dre/lancamentos?natureza=...`)
 - Botão "Auditoria 211" gera CSV pra contabilidade reclassificar (`/gerencia/dre/auditoria-211`)
+
+#### Dashboard de Receita · `/gerencia/dashboard-receita` · perm 10001
+
+> Replica visualmente um dashboard Power BI de receita. Reaproveita as fontes de dados do DRE Gerencial (SF2+SD2 receita, SE2 despesas, D2_CUSTO1 CMV) mas entrega numa página única com KPIs + gráficos + comparação YoY.
+
+- **Página**: [DashboardReceita.tsx](../frontend_intranet_react/src/pages/Gerencia/DashboardReceita.tsx) — paleta azul corporativa Gnatus (`#1a3f82` / `#1e5fb5` / `#60a5fa`), Recharts em todos os gráficos
+- **2 abas**: Visão Geral (KPIs + gráficos) e Detalhamento (tabela cliente completa)
+- **6 KPI cards** com sparkline de 12 meses + variação YoY:
+  - Receita Total (azul escuro), Custos Totais (azul médio), Despesas Totais (azul claro)
+  - Lucro Líquido (laranja), Margem de Lucro (verde), Clientes Ativos (cinza)
+- **6 visualizações**:
+  - ComposedChart (bar + line) Receita/Lucro mensal
+  - PieChart Receita por Origem (Operacional vs Não-Op)
+  - BarChart horizontal Top 5 Clientes (por receita)
+  - BarChart stacked 100% Custos/Despesas por Tipo (Variável vs Fixo, mensal)
+  - PieChart Custos vs Despesas (total)
+  - Cards Margem Bruta + Líquida
+  - BarChart Saídas por Tipo (CMV, Despesas Fixas, Variáveis, Não-Op)
+  - KPI Crescimento da Receita (vs ano anterior)
+- **Tabela Detalhamento por Cliente** (top 50 na Visão Geral, completa na aba Detalhamento): Cliente, Receita, CMV, Margem Bruta, Margem % (colorida verde/laranja/vermelho por faixa)
+
+##### Endpoint
+- **`GET /gerencia/dashboard-receita?inicio=YYYYMMDD&fim=YYYYMMDD`** ([file](resources/gerencia/gerencia.dashboard-receita.js))
+- Roda **2× as queries**: período atual + mesmo período do ano anterior (pra calcular YoY dos 6 KPIs + sparklines de 12 meses)
+- Em paralelo (Promise.all): receita mensal SF2+SD2 + receita/CMV por cliente + despesas SE2 por (mês, natureza)
+- Classifica cada natureza SE2 via `tab_natureza_classificacao` (match exato, depois prefixo 3 chars, default DESPESA/FIXO/operacional)
+- Exclui naturezas 201/202/203 da soma de despesas (MP já entra via CMV, evita double-counting)
+- Response inclui `latenciaMs` pra monitorar tempo de query — alvo <5s pra período de 1 ano
+- Timeout 180s no axios do frontend (gerencia.dashboard-receita.js no backend não tem timeout dedicado — depende do MSSQL Protheus)
+
+##### Tabela `tab_natureza_classificacao` (Postgres)
+- [Migration 53](database/postgres/53-natureza-classificacao.sql): `(natureza varchar(20), tipo CUSTO|DESPESA|RECEITA, classificacao VARIAVEL|FIXO, operacional bool, descricao, obs)`
+- Seed inicial (12 linhas) espelhando o `MAPA_DESPESAS` + `MAPA_INSUMOS` + `GRUPO_FINANCEIRO` que estavam HARDCODED em `gerencia.dre.js`. Permite ao financeiro reclassificar sem deploy (Fase 3 — tela de gestão pendente)
+- Match no SQL: primeiro tenta natureza completa (ex.: `21101`); senão, prefixo 3 chars (`211`); senão, default `DESPESA/FIXO/operacional`
+- **`GET /gerencia/natureza-classificacao`** ([file](resources/gerencia/gerencia.natureza-classificacao.js)) expõe o mapping (perm 10001) — usado pelo dashboard e disponível pra Fase 3
+
+##### Decisões de produto
+- **Custos/Despesas por Cliente** (tabela inferior): só **CMV** (D2_CUSTO1 dos itens vendidos pro cliente). Despesas operacionais não são rateadas — replicar o Power BI rateando proporcional à receita "engana" (cliente grande aparenta gastar mais com aluguel/salários). Aceito custo: a tabela mostra **Margem Bruta** por cliente, não Margem Líquida.
+- **Operacional vs Não-Op**: hoje toda receita SF2 vai como Operacional (donut "Não Op" fica 0). Despesas: padrão é operacional, naturezas marcadas `operacional=false` na tabela viram Não-Op (default seed: só 211 = financeiro)
+- **Variável vs Fixo**: classificação determinada pela tabela, não inferida do código. Default conservador: `DESPESA/FIXO/operacional` se a natureza não está cadastrada
+- **YoY sem cache** (primeira versão): roda 2× as queries inline. Se passar de 8-10s em períodos grandes, considerar materializar agregado mensal em `tab_dre_mensal_cache` populado por job 1×/dia
+
+##### Fase 3 (planejado)
+- Tela `/gerencia/natureza-classificacao` (perm 10001) pra financeiro revisar/editar a classificação inline (mesmo padrão da tela de orçamento de CC)
+- Botão "Sincronizar com SE2" pra detectar naturezas novas no Protheus que ainda não estão classificadas (caem hoje como default)
 
 ---
 
@@ -1089,8 +1150,10 @@ E1_VALOR > 0
 
 ### 4.13 Protheus REST (Diego — endpoints custom)
 - **Wrapper services**:
-  - [services/protheus.js](services/protheus.js) — MSSQL Protheus (leitura)
-  - [services/protheusCobranca.js](services/protheusCobranca.js) — `POST /Cobranca/gerar-bordero` (Envio de Boleto)
+  - [services/protheus.js](services/protheus.js) — MSSQL Protheus (leitura direta)
+  - [services/protheusCobranca.js](services/protheusCobranca.js) — `POST /Cobranca/gerar-bordero` (Envio de Boleto §3.5)
+  - [services/protheusRetorno.js](services/protheusRetorno.js) — `POST /Cobranca/importar-retorno` (upload .RET → FINA205)
+  - [services/protheusBoleto.js](services/protheusBoleto.js) — wrapper de linha digitável + código de barras. ⚠️ **NÃO chama mais Diego** (2026-05-29) — delega pro [services/linhaDigitavel.js](services/linhaDigitavel.js) (cálculo Febraban local). Mantida pra preservar a assinatura externa dos callers
   - [services/protheusSolicCompra.js](services/protheusSolicCompra.js) — `POST /SolicCompra/incluir` (Solicitar SC)
 - **Endpoint padrão**: `POST {PROTHEUS_API_URL}/<recurso>/<acao>` — Basic Auth (`PROTHEUS_API_USER`/`PROTHEUS_API_PASS`, default `admin:Gn@tu5`)
 - `.env`:
@@ -1101,6 +1164,7 @@ E1_VALOR > 0
   - `PROTHEUS_API_PATH_SOLIC_COMPRA=/SolicCompra/incluir` (override opcional)
 - Timeout: 60s pra Cobrança · 180s pra SolicCompra (anexos inflam payload, AdvPL leva ~80s/MB)
 - **AprovaCompras** (também custom Diego) é chamado direto do endpoint de Aprovações — não tem service-wrapper isolado
+- **`GET /Cobranca/boleto-linha` DESCONTINUADO**: o endpoint existe na build R36+ mas a Intranet não usa mais. Razão: cálculo do Diego em AdvPL devolvia NN deslocado + carteira fixa 101 (Santander usa 104). Validado contra PDFs OFICIAIS do banco. Migração 100% pra cálculo local em [services/linhaDigitavel.js](services/linhaDigitavel.js) — ver §3.5 "Cálculo Febraban local"
 
 ---
 
