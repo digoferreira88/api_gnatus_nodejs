@@ -117,8 +117,9 @@ async function carregarPeriodo({ Protheus, filial, inicio, fim, mapaNat }) {
        AND sf2.F2_SERIE = sd2.D2_SERIE AND sf2.F2_CLIENTE = sd2.D2_CLIENTE
        AND sf2.F2_LOJA = sd2.D2_LOJA AND sf2.D_E_L_E_T_ <> '*'
       LEFT JOIN SA1010 sa1 WITH (NOLOCK)
-        ON sa1.A1_FILIAL = '' AND sa1.A1_COD = sd2.D2_CLIENTE
-       AND sa1.A1_LOJA = sd2.D2_LOJA AND sa1.D_E_L_E_T_ <> '*'
+        ON sa1.A1_COD = sd2.D2_CLIENTE
+       AND sa1.A1_LOJA = sd2.D2_LOJA
+       AND sa1.D_E_L_E_T_ <> '*'
      WHERE sd2.D_E_L_E_T_ <> '*' AND sd2.D2_FILIAL = @filial
        AND sd2.D2_EMISSAO BETWEEN @inicio AND @fim
        AND sf2.F2_EMISSAO BETWEEN @inicio AND @fim
