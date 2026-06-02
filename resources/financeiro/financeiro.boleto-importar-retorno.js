@@ -55,17 +55,28 @@ module.exports = (app) => ({
 
       const body = r.body || {};
 
-      // Auditoria: dry-run = INFO; import real = CRITICO (escreve no Protheus)
+      // Auditoria. Severidade reflete o RESULTADO, nao so o modo:
+      //   simular + ok      -> INFO   (preview sem gravar)
+      //   simular + falhou   -> ALERTA (Diego deu erro; nao era so "0 registros")
+      //   real    + ok      -> CRITICO (escreveu no Protheus)
+      //   real    + falhou   -> ALERTA
+      // Antes: dry-run que falhava (ex.: HTTP 500 Santander) virava INFO
+      // "Simulou ... 0 registros", mascarando a falha. (2026-06-02)
+      const sev = r.ok ? (simular ? 'INFO' : 'CRITICO') : 'ALERTA';
+      // Mensagem de erro do Diego: pode vir como codigo_erro/mensagem
+      // (estruturado) ou como {code, message} (500 generico do AppServer).
+      const erroProtheus = body.codigo_erro || body.mensagem || body.message
+        || (body.code ? `HTTP ${body.code}` : '') || 'erro Protheus (sem detalhe)';
       Auditoria.registrar(app, {
         modulo: 'Financeiro', submodulo: 'EnvioBoleto',
         acao: simular ? 'RETORNO_SIMULAR' : 'RETORNO_IMPORTAR',
-        severidade: simular ? 'INFO' : (r.ok ? 'CRITICO' : 'ALERTA'),
+        severidade: sev,
         req, entidade: 'boleto_retorno_arquivo', entidadeId: nomeArquivo || '(sem nome)',
-        descricao: simular
-          ? `Simulou import do retorno ${nomeArquivo || '(arquivo)'} — ${N(body.qtd_registros)} registro(s)`
-          : (r.ok
-            ? `IMPORTOU retorno ${nomeArquivo || '(arquivo)'} no Protheus — ${N(body.qtd_registrados)} reg, ${N(body.qtd_liquidados)} liq, ${N(body.qtd_rejeitados)} rej (de ${N(body.qtd_registros)})`
-            : `FALHA ao importar retorno ${nomeArquivo || '(arquivo)'} (HTTP ${r.httpStatus}, ${body.codigo_erro || '?'})`),
+        descricao: !r.ok
+          ? `FALHA ${simular ? 'na simulação' : 'ao importar'} do retorno ${nomeArquivo || '(arquivo)'} (HTTP ${r.httpStatus} — ${erroProtheus})`
+          : (simular
+            ? `Simulou import do retorno ${nomeArquivo || '(arquivo)'} — ${N(body.qtd_registros)} registro(s)`
+            : `IMPORTOU retorno ${nomeArquivo || '(arquivo)'} no Protheus — ${N(body.qtd_registrados)} reg, ${N(body.qtd_liquidados)} liq, ${N(body.qtd_rejeitados)} rej (de ${N(body.qtd_registros)})`),
         meta: {
           arquivo: nomeArquivo, banco: body.banco || banco, layout: body.layout, simular,
           qtd_registros: N(body.qtd_registros), qtd_registrados: N(body.qtd_registrados),
@@ -76,6 +87,10 @@ module.exports = (app) => ({
           // capturamos a mensagem e o build_tag do Protheus quando vier erro.
           mensagem: body.mensagem,
           build_tag: body.build_tag,
+          // 500 generico do AppServer vem como {code, message} sem build_tag —
+          // capturamos pra distinguir exception AdvPL de erro de negocio.
+          http_code: body.code, http_message: body.message,
+          raw: typeof body.raw === 'string' ? body.raw.slice(0, 500) : undefined,
           // Conta enviada pra rastrear formato (SA6 vs SEE)
           conta_enviada: trim(req.body?.conta)
         }
