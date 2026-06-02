@@ -53,17 +53,25 @@ module.exports = (app) => ({
       const nossoPorChave = new Map();
       confirmados.forEach(d => nossoPorChave.set(`${d.prefixo}|${d.numero}|${d.parcela}`, d.nossoNumero));
 
-      // Guard: nao registrar titulo que ja foi baixado no Protheus.
+      // Guard (titulo ja baixado) + borderô (E1_NUMBOR) por chave. O borderô
+      // vai pro tab_boleto_envio_lote_retorno.bordero_protheus pra a tela de
+      // Disparar poder filtrar por borderô.
       const baixados = new Set();
+      const numborPorChave = new Map();
       const BATCH = 80;
       for (let b = 0; b < confirmados.length; b += BATCH) {
         const slice = confirmados.slice(b, b + BATCH); const p = {};
         const ors = slice.map((t, j) => { p[`pf${j}`]=t.prefixo;p[`nu${j}`]=t.numero;p[`pa${j}`]=t.parcela;
           return `(RTRIM(E1_PREFIXO)=@pf${j} AND RTRIM(E1_NUM)=@nu${j} AND RTRIM(E1_PARCELA)=@pa${j})`; }).join(' OR ');
         const rows = await Protheus.connectAndQuery(`
-          SELECT RTRIM(E1_PREFIXO) prefixo, RTRIM(E1_NUM) numero, RTRIM(E1_PARCELA) parcela, RTRIM(E1_STATUS) status, RTRIM(E1_BAIXA) baixa
+          SELECT RTRIM(E1_PREFIXO) prefixo, RTRIM(E1_NUM) numero, RTRIM(E1_PARCELA) parcela,
+                 RTRIM(E1_STATUS) status, RTRIM(E1_BAIXA) baixa, RTRIM(E1_NUMBOR) numbor
             FROM SE1010 WITH (NOLOCK) WHERE D_E_L_E_T_<>'*' AND E1_FILIAL='01' AND (${ors})`, p);
-        rows.forEach(r => { if (trim(r.status)==='B' || trim(r.baixa).length>=8) baixados.add(`${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}`); });
+        rows.forEach(r => {
+          const k = `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}`;
+          if (trim(r.status)==='B' || trim(r.baixa).length>=8) baixados.add(k);
+          if (trim(r.numbor)) numborPorChave.set(k, trim(r.numbor));
+        });
       }
 
       // Linhas de retorno existentes que casam com as chaves do .RET
@@ -75,7 +83,7 @@ module.exports = (app) => ({
           return `(COALESCE(TRIM(prefixo),'')=@pf${i} AND TRIM(numero)=@nu${i} AND COALESCE(TRIM(parcela),'')=@pa${i})`; }).join(' OR ');
         const rows = await Pg.connectAndQuery(`
           SELECT id, id_lote, COALESCE(TRIM(prefixo),'') prefixo, TRIM(numero) numero, COALESCE(TRIM(parcela),'') parcela,
-                 status_banco, COALESCE(TRIM(nosso_numero),'') nosso_numero
+                 status_banco, COALESCE(TRIM(nosso_numero),'') nosso_numero, COALESCE(TRIM(bordero_protheus),'') bordero_protheus
             FROM tab_boleto_envio_lote_retorno WHERE ${ors}`, p);
         rows.forEach(r => existentes.push(r));
       }
@@ -86,17 +94,20 @@ module.exports = (app) => ({
         existentesPorChave.get(k).push(r);
       });
 
-      // Classifica
-      const aAtualizar = [];   // {id, nosso}
+      // Classifica. Atualiza se: PENDENTE, ou sem nosso numero, ou sem borderô
+      // (este ultimo permite backfill do borderô em titulos ja registrados).
+      const aAtualizar = [];   // {id, id_lote, nosso, numbor}
       let jaOk = 0, baixadoSkip = 0;
       const orfaos = [];
       for (const [k, nosso] of nossoPorChave.entries()) {
         if (baixados.has(k)) { baixadoSkip++; continue; }
         const rows = existentesPorChave.get(k);
         if (!rows || !rows.length) { orfaos.push(k); continue; }
-        // pega a linha que precisa de update (PENDENTE ou sem nosso numero)
-        const pend = rows.find(r => trim(r.status_banco) !== 'REGISTRADO' || !trim(r.nosso_numero));
-        if (pend) aAtualizar.push({ id: pend.id, id_lote: pend.id_lote, nosso });
+        const numbor = numborPorChave.get(k) || '';
+        const pend = rows.find(r =>
+          trim(r.status_banco) !== 'REGISTRADO' || !trim(r.nosso_numero) ||
+          (numbor && !trim(r.bordero_protheus)));
+        if (pend) aAtualizar.push({ id: pend.id, id_lote: pend.id_lote, nosso, numbor });
         else jaOk++;
       }
 
@@ -123,8 +134,9 @@ module.exports = (app) => ({
         await Pg.connectAndQuery(`
           UPDATE tab_boleto_envio_lote_retorno
              SET nosso_numero = @nn, status_banco = 'REGISTRADO',
-                 ocorrencia_cod = '02', ocorrencia_desc = 'Entrada confirmada (.RET lido pela intranet)'
-           WHERE id = @id`, { id: u.id, nn: u.nosso });
+                 ocorrencia_cod = '02', ocorrencia_desc = 'Entrada confirmada (.RET lido pela intranet)',
+                 bordero_protheus = COALESCE(NULLIF(@bord, ''), bordero_protheus)
+           WHERE id = @id`, { id: u.id, nn: u.nosso, bord: u.numbor || '' });
         lotesTocados.add(u.id_lote);
       }
       // Atualiza status dos lotes tocados pra RETORNADO se nao houver mais PENDENTE

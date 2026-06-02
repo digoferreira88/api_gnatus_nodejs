@@ -55,7 +55,9 @@ module.exports = (app) => ({
       params.dispFim = dataDisparoFim;
     }
     if (bordero) {
-      conds.push(`TRIM(COALESCE(l.lote_protheus, '')) = @bordero`);
+      // Borderô vem do retorno (E1_NUMBOR, gravado no adotar-retorno/se1) com
+      // fallback pro lote_protheus (borderô gerado pela intranet via Diego).
+      conds.push(`COALESCE(NULLIF(TRIM(r.bordero_protheus), ''), TRIM(COALESCE(l.lote_protheus, ''))) = @bordero`);
       params.bordero = bordero;
     }
 
@@ -66,7 +68,7 @@ module.exports = (app) => ({
                r.status_banco, r.disparado_em, r.canais_disparo,
                t.cliente_nome, t.valor, t.saldo, t.vencimento, t.tipo,
                l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta,
-               TRIM(COALESCE(l.lote_protheus, '')) AS bordero
+               COALESCE(NULLIF(TRIM(r.bordero_protheus), ''), TRIM(COALESCE(l.lote_protheus, ''))) AS bordero
           FROM tab_boleto_envio_lote_retorno r
           JOIN tab_boleto_envio_lote l ON l.id = r.id_lote
           -- COALESCE em prefixo/parcela porque o INSERT do sincronizar grava ''
