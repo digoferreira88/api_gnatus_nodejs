@@ -13,9 +13,36 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const Auditoria = require('../../services/auditoria');
 const ProtheusRetorno = require('../../services/protheusRetorno');
+const CnabFiltro = require('../../services/cnabRetornoFiltro');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
+
+// Consulta a SE1 quais (prefixo,numero,parcela) estao com E1_STATUS='B'
+// (ja baixados). Em lotes de OR-clauses pra respeitar o limite de params.
+async function buscarBaixados(Protheus, chaves) {
+  const baixados = new Set();
+  const BATCH = 80;
+  for (let b = 0; b < chaves.length; b += BATCH) {
+    const slice = chaves.slice(b, b + BATCH);
+    const p = {};
+    const ors = slice.map((t, j) => {
+      p[`pf${j}`] = t.prefixo; p[`nu${j}`] = t.numero; p[`pa${j}`] = t.parcela;
+      return `(RTRIM(E1_PREFIXO)=@pf${j} AND RTRIM(E1_NUM)=@nu${j} AND RTRIM(E1_PARCELA)=@pa${j})`;
+    }).join(' OR ');
+    const rows = await Protheus.connectAndQuery(`
+      SELECT RTRIM(E1_PREFIXO) prefixo, RTRIM(E1_NUM) numero, RTRIM(E1_PARCELA) parcela,
+             RTRIM(E1_STATUS) status, RTRIM(E1_BAIXA) baixa
+        FROM SE1010 WITH (NOLOCK)
+       WHERE D_E_L_E_T_<>'*' AND E1_FILIAL='01' AND (${ors})`, p);
+    rows.forEach(r => {
+      if (trim(r.status) === 'B' || trim(r.baixa).length >= 8) {
+        baixados.add(`${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}`);
+      }
+    });
+  }
+  return baixados;
+}
 
 module.exports = (app) => ({
   verb: 'post',
@@ -42,18 +69,50 @@ module.exports = (app) => ({
 
     try {
       const operadorEmail = trim(user?.EMAIL) || `id_${user?.ID}`;
+
+      // ===== Pre-filtro Santander (033): remove linhas de titulo JA BAIXADO =====
+      // O endpoint do Diego estoura HTTP 500 ao reprocessar a liquidacao de um
+      // titulo ja baixado (E1_STATUS='B'). Como sao no-op, removemos do arquivo
+      // ANTES de enviar — destravando os registros/baixas das demais linhas.
+      // So Santander; Itau (341) funciona e nao e' tocado.
+      let conteudoEnvio = conteudoBase64;
+      let filtro = null;
+      if (banco === '033') {
+        try {
+          const texto = Buffer.from(conteudoBase64, 'base64').toString('latin1');
+          const chaves = CnabFiltro.extrairChaves(texto);
+          if (chaves.length) {
+            const baixados = await buscarBaixados(app.services.Protheus, chaves);
+            if (baixados.size) {
+              const res2 = CnabFiltro.filtrarBaixados(texto, baixados);
+              if (res2.removidos.length) {
+                conteudoEnvio = Buffer.from(res2.conteudo, 'latin1').toString('base64');
+                filtro = { removidos: res2.removidos.length, mantidos: res2.mantidos, total: res2.total };
+                console.log(`boleto-importar-retorno: filtro Santander removeu ${res2.removidos.length} titulo(s) ja baixado(s) de ${res2.total}`);
+              }
+            }
+          }
+        } catch (e) {
+          // Filtro e' best-effort: se falhar, manda o arquivo original (Diego
+          // pode estourar, mas nao pioramos o cenario).
+          console.warn('boleto-importar-retorno: falha no pre-filtro Santander —', e.message);
+        }
+      }
+
       const r = await ProtheusRetorno.importar({
         filial: '01',
         banco,
         agencia,
         conta,
         nomeArquivo,
-        conteudoBase64,
+        conteudoBase64: conteudoEnvio,
         operador: operadorEmail,
         simular
       });
 
       const body = r.body || {};
+      // expoe o filtro aplicado no corpo da resposta + auditoria
+      if (filtro) body.filtro_ja_baixados = filtro;
 
       // Auditoria. Severidade reflete o RESULTADO, nao so o modo:
       //   simular + ok      -> INFO   (preview sem gravar)
@@ -91,6 +150,8 @@ module.exports = (app) => ({
           // capturamos pra distinguir exception AdvPL de erro de negocio.
           http_code: body.code, http_message: body.message,
           raw: typeof body.raw === 'string' ? body.raw.slice(0, 500) : undefined,
+          // Pre-filtro Santander: quantos titulos ja-baixados foram removidos
+          filtro_ja_baixados: filtro || undefined,
           // Conta enviada pra rastrear formato (SA6 vs SEE)
           conta_enviada: trim(req.body?.conta)
         }
