@@ -2,6 +2,7 @@
 // Inclui o catalogo de etapas (descricao, campos esperados, checklist, etc).
 
 const { ETAPAS } = require('./_etapas');
+const { CTE_TEMPO_FASE } = require('./_tempoFase');
 
 module.exports = (app) => ({
   verb: 'get',
@@ -34,6 +35,24 @@ module.exports = (app) => ({
          WHERE a.registro_id = @id
          ORDER BY a.enviado_em DESC`, { id });
 
+      // Tempo de permanencia por fase DESTA OP (lead time = entrada na fase ->
+      // aprovacao, somando retrabalho). Mesma logica do /gestao/tempo-fase.
+      const tempoRows = await Pg.connectAndQuery(`
+        ${CTE_TEMPO_FASE}
+        SELECT etapa_codigo,
+               SUM(segundos)::numeric(14,2) AS segundos_total,
+               BOOL_OR(estimado)            AS estimado
+          FROM fase_evento
+         WHERE registro_id = @id
+         GROUP BY etapa_codigo`, { id });
+      const tempoPorEtapa = {};
+      tempoRows.forEach(t => {
+        tempoPorEtapa[Number(t.etapa_codigo)] = {
+          segundos: Number(t.segundos_total || 0),
+          estimado: t.estimado === true
+        };
+      });
+
       // Instrucoes de trabalho do produto (catalogo central) — devolve junto
       // pra UI mostrar dentro de cada accordion de etapa. Linkagem dinamica
       // via produto_codigo, sempre versao mais recente.
@@ -50,6 +69,7 @@ module.exports = (app) => ({
       // Junta etapa com metadata do catalogo
       const etapas = ETAPAS.map(meta => {
         const e = etapasRows.find(x => x.etapa_codigo === meta.codigo) || null;
+        const tempo = tempoPorEtapa[meta.codigo] || null;
         return {
           codigo: meta.codigo,
           nome: meta.nome,
@@ -57,6 +77,9 @@ module.exports = (app) => ({
           camposEsperados: meta.campos,
           checklist: meta.checklist || null,
           armazens: meta.armazens || null,
+          // tempo de permanencia DESTA OP nesta fase (null se ainda nao concluida)
+          tempoPermanenciaSegundos: tempo ? tempo.segundos : null,
+          tempoPermanenciaEstimado: tempo ? tempo.estimado : false,
           dados: e ? {
             id: e.id,
             status: e.status,
