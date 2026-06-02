@@ -166,13 +166,30 @@ module.exports = (app) => ({
           )
           ON CONFLICT (id_lote, prefixo, numero, parcela, cliente_cod, cliente_loja)
           DO UPDATE SET
-            status_banco     = EXCLUDED.status_banco,
-            ocorrencia_cod   = EXCLUDED.ocorrencia_cod,
-            ocorrencia_desc  = EXCLUDED.ocorrencia_desc,
-            nosso_numero     = EXCLUDED.nosso_numero,
-            bordero_protheus = EXCLUDED.bordero_protheus,
-            valor_liquidado  = EXCLUDED.valor_liquidado,
-            data_liquidacao  = EXCLUDED.data_liquidacao,
+            -- NAO rebaixa: se a SE1 vem sem info (PENDENTE/NAO_ENCONTRADO) mas a
+            -- linha ja esta REGISTRADO/LIQUIDADO/BAIXADO (ex.: registrado pelo
+            -- .RET via adotar-retorno — Santander, cujo SE1 nunca recebe o
+            -- E1_OCORREN), preserva o status e a ocorrencia atuais.
+            status_banco = CASE
+              WHEN EXCLUDED.status_banco IN ('PENDENTE','NAO_ENCONTRADO','DESCONHECIDO')
+                   AND tab_boleto_envio_lote_retorno.status_banco IN ('REGISTRADO','LIQUIDADO','BAIXADO')
+                THEN tab_boleto_envio_lote_retorno.status_banco
+              ELSE EXCLUDED.status_banco END,
+            ocorrencia_cod = CASE
+              WHEN EXCLUDED.status_banco IN ('PENDENTE','NAO_ENCONTRADO','DESCONHECIDO')
+                   AND tab_boleto_envio_lote_retorno.status_banco IN ('REGISTRADO','LIQUIDADO','BAIXADO')
+                THEN tab_boleto_envio_lote_retorno.ocorrencia_cod
+              ELSE EXCLUDED.ocorrencia_cod END,
+            ocorrencia_desc = CASE
+              WHEN EXCLUDED.status_banco IN ('PENDENTE','NAO_ENCONTRADO','DESCONHECIDO')
+                   AND tab_boleto_envio_lote_retorno.status_banco IN ('REGISTRADO','LIQUIDADO','BAIXADO')
+                THEN tab_boleto_envio_lote_retorno.ocorrencia_desc
+              ELSE EXCLUDED.ocorrencia_desc END,
+            -- nunca apaga um nosso numero / borderô ja preenchido
+            nosso_numero     = COALESCE(NULLIF(EXCLUDED.nosso_numero, ''), tab_boleto_envio_lote_retorno.nosso_numero),
+            bordero_protheus = COALESCE(NULLIF(EXCLUDED.bordero_protheus, ''), tab_boleto_envio_lote_retorno.bordero_protheus),
+            valor_liquidado  = CASE WHEN COALESCE(EXCLUDED.valor_liquidado,0) > 0 THEN EXCLUDED.valor_liquidado ELSE tab_boleto_envio_lote_retorno.valor_liquidado END,
+            data_liquidacao  = COALESCE(NULLIF(EXCLUDED.data_liquidacao::text, ''), tab_boleto_envio_lote_retorno.data_liquidacao),
             sincronizado_em  = NOW()`,
           {
             id,
@@ -186,6 +203,14 @@ module.exports = (app) => ({
           }
         );
       }
+
+      // 4.1) Recalcula stats pelo status EFETIVO gravado (pós-guarda de
+      // nao-rebaixamento), nao pelo que a SE1 sugeriu. Sem isso, titulos
+      // registrados pelo .RET (preservados) seriam contados como PENDENTE.
+      const efetivo = await Pg.connectAndQuery(
+        `SELECT status_banco, COUNT(*) qt FROM tab_boleto_envio_lote_retorno WHERE id_lote = @id GROUP BY status_banco`, { id });
+      Object.keys(stats).forEach(k => { stats[k] = 0; });
+      efetivo.forEach(r => { stats[trim(r.status_banco)] = N(r.qt); });
 
       // 5) Atualiza contadores do lote + status global
       // Se TODOS liquidados/baixados -> RETORNADO. Senao mantem ENVIADO_PROTHEUS (parcial)
