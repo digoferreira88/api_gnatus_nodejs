@@ -16,11 +16,40 @@
 // Bloco prefixo(3) + numero(6) + 3 espacos + parcela(2 ou 2 espacos) + (DP|NF)
 const RX_CHAVE = /([A-Z0-9 ]{3})(\d{6})   (\d{2}| {2})(DP|NF)/;
 
+// Linha completa Santander CNAB400 (retorno): apos a especie (DP|NF) vem
+//   9 espacos + nosso_numero(8 dig) + ... gap ... + ocorrencia(3 dig: 1 sub +
+//   2 cod) + data(6). Validado contra PDFs do banco (088318/02 -> 0000000191620,
+//   091811/04 -> 0000000191612) em 2026-06.
+const RX_DETALHE = /([A-Z0-9 ]{3})(\d{6})   (\d{2}| {2})(DP|NF) {9}(\d{8})\s+\d(\d{2})\d{6}/;
+
 // Extrai (prefixo, numero, parcela) de uma linha-detalhe; null se nao casar.
 function chaveLinha(l) {
   const m = String(l || '').match(RX_CHAVE);
   if (!m) return null;
   return { prefixo: m[1].trim(), numero: m[2], parcela: m[3].trim() };
+}
+
+// Parse completo das linhas-detalhe (tipo '1'): inclui ocorrencia e nosso numero.
+// Retorna [{prefixo, numero, parcela, especie, nossoNumero(8 dig), ocorrencia(2 dig)}].
+function parseDetalhes(conteudo) {
+  const linhas = String(conteudo || '').split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i < linhas.length; i++) {
+    const l = linhas[i];
+    if (!l || l[0] !== '1') continue;
+    const m = l.match(RX_DETALHE);
+    if (!m) continue;
+    out.push({
+      linha: i + 1,
+      prefixo: m[1].trim(),
+      numero: m[2],
+      parcela: m[3].trim(),
+      especie: m[4],
+      nossoNumero: m[5],          // 8 digitos (ex.: '00191620')
+      ocorrencia: m[6]            // 2 digitos (02=entrada confirmada, 03=rejeitada, 06=liquidacao...)
+    });
+  }
+  return out;
 }
 
 // Lista as chaves de todas as linhas-detalhe (tipo '1') de um conteudo CNAB.
@@ -75,4 +104,4 @@ function filtrarBaixados(conteudo, baixadosSet) {
   return { conteudo: out.join(eol) + eol, removidos, mantidos: mantidos.length, total: detalhes.length };
 }
 
-module.exports = { filtrarBaixados, extrairChaves, chaveLinha };
+module.exports = { filtrarBaixados, extrairChaves, chaveLinha, parseDetalhes };
