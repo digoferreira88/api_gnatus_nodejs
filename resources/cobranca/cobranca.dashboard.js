@@ -470,9 +470,66 @@ module.exports = (app) => ({
       const indiceInadimplencia      = totalEmAberto  > 0 ? (totalVencido  / totalEmAberto)  * 100 : 0;
       const indiceInadimplenciaGeral = globalEmAberto > 0 ? (globalVencido / globalEmAberto) * 100 : 0;
 
+      // ===== Foto no fechamento do mes (safra "congelada") =====
+      // Reconstroi a situacao da safra do mes no ULTIMO dia do mes (ou hoje, se o
+      // mes ainda nao fechou), pela data de baixa (E1_BAIXA) — mesmo criterio do
+      // modulo Recuperados (baixa total; E1_VALOR como valor). INCLUI titulos ja
+      // pagos (sem filtro saldo>0), pra a % nao dar 100% em meses passados:
+      //   base         = tudo que venceu/faturou no mes (pago + aberto)
+      //   recebido     = baixado ATE o fechamento (E1_BAIXA <= cutoff)
+      //   inadimplente = nao pago ate o fechamento E ja vencido no fechamento
+      // Respeita filtros de escopo cliente/UF/BU (nao carteira/equipe).
+      let safraMes = null;
+      if (fMes) {
+        try {
+          const anoM = Number(fMes.slice(0, 4)), mesM = Number(fMes.slice(4, 6));
+          const ultimoDia = new Date(anoM, mesM, 0);  // dia 0 do mes seguinte = ultimo dia do mes
+          const hojeD = new Date();
+          const cutoffD = ultimoDia < hojeD ? ultimoDia : hojeD;
+          const cutoff = `${cutoffD.getFullYear()}${String(cutoffD.getMonth() + 1).padStart(2, '0')}${String(cutoffD.getDate()).padStart(2, '0')}`;
+          const campoMes = modoMes === 'emissao' ? 'E1_EMISSAO' : 'E1_VENCREA';
+          const pagoAteCutoff   = `(RTRIM(se1.E1_BAIXA) <> '' AND ISDATE(se1.E1_BAIXA) = 1 AND CONVERT(date, se1.E1_BAIXA, 112) <= CONVERT(date, @cutoff, 112))`;
+          const vencidoNoCutoff = `(ISDATE(se1.E1_VENCREA) = 1 AND CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, @cutoff, 112))`;
+          const spSnap = { ...protheusParams, cutoff, fmes: fMes };
+          const snapRows = await Protheus.connectAndQuery(`
+            SELECT
+              SUM(se1.E1_VALOR) base,
+              SUM(CASE WHEN ${pagoAteCutoff} THEN se1.E1_VALOR ELSE 0 END) recebido,
+              SUM(CASE WHEN NOT ${pagoAteCutoff} AND ${vencidoNoCutoff} THEN se1.E1_VALOR ELSE 0 END) inadimplente,
+              COUNT(*) qt_total,
+              SUM(CASE WHEN NOT ${pagoAteCutoff} AND ${vencidoNoCutoff} THEN 1 ELSE 0 END) qt_inadimplente
+              FROM SE1010 se1 WITH (NOLOCK)
+              LEFT JOIN SA1010 sa1 WITH (NOLOCK)
+                ON sa1.A1_COD = se1.E1_CLIENTE AND sa1.A1_LOJA = se1.E1_LOJA AND sa1.D_E_L_E_T_ <> '*'
+              LEFT JOIN SC5010 sc5 WITH (NOLOCK)
+                ON sc5.C5_FILIAL = se1.E1_FILIAL AND sc5.C5_NUM = se1.E1_PEDIDO AND sc5.D_E_L_E_T_ <> '*'
+             WHERE se1.D_E_L_E_T_ <> '*'
+               AND se1.E1_FILIAL = @filial
+               AND SUBSTRING(se1.${campoMes}, 1, 6) = @fmes
+               AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+               ${condsProtheus.join(' ')}`, spSnap);
+          const s = snapRows[0] || {};
+          const base = toN(s.base), recebido = toN(s.recebido), inad = toN(s.inadimplente);
+          const emAberto = base - recebido;
+          safraMes = {
+            mes: fMes, modoMes, cutoff,
+            base, recebido, emAberto,
+            inadimplente: inad,
+            aVencer: Math.max(0, emAberto - inad),
+            pctRecebido: base > 0 ? (recebido / base) * 100 : 0,
+            pctInadimplencia: base > 0 ? (inad / base) * 100 : 0,
+            qtTotal: toN(s.qt_total),
+            qtInadimplente: toN(s.qt_inadimplente)
+          };
+        } catch (e) {
+          console.warn('cobranca/dashboard safraMes:', e.message);
+        }
+      }
+
       return res.json({
         geradoEm: new Date().toISOString(),
         recorte: { mes: fMes, modoMes },
+        safraMes,
         filtros: {
           cliente: req.query.cliente || null,
           uf: req.query.uf || null,
