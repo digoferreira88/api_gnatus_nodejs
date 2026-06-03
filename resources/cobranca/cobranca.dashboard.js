@@ -196,9 +196,21 @@ module.exports = (app) => ({
       const fFim      = req.query.fim    && /^\d{8}$/.test(String(req.query.fim))    ? String(req.query.fim)    : null;
       const fAno      = req.query.ano    && /^\d{4}$/.test(String(req.query.ano))    ? String(req.query.ano)    : null;
 
-      // Acumuladores GLOBAIS (sem filtros de periodo/aging — toda a carteira)
+      // Recorte MENSAL (novo). mes = 'YYYYMM'.
+      //   - parametro AUSENTE  => default = mes atual (dashboard abre sempre no mes corrente)
+      //   - 'todos' / invalido => sem filtro de mes (carteira inteira na visao principal)
+      // modoMes: qual data classifica o titulo no mes —
+      //   'vencimento' (E1_VENCREA) [default] ou 'emissao' (E1_EMISSAO).
+      const rawMes = req.query.mes;
+      const fMes = (rawMes !== undefined)
+        ? (/^\d{6}$/.test(String(rawMes)) ? String(rawMes) : null)
+        : `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+      const modoMes = String(req.query.modoMes || 'vencimento').toLowerCase() === 'emissao' ? 'emissao' : 'vencimento';
+
+      // Acumuladores GLOBAIS (sem filtros de periodo/aging/mes — toda a carteira)
       let globalEmAberto = 0, globalVencido = 0, globalAVencer = 0;
       const globalClientes = new Set(), globalClientesVencidos = new Set();
+      const porClienteGlobal = {}; // cliKey -> saldo total (pra curva ABC do acumulado geral)
 
       // Conta formas de pagamento DISTINTAS na carteira inteira (antes dos
       // filtros JS), pra popular o dropdown — igual o painel faz.
@@ -237,6 +249,7 @@ module.exports = (app) => ({
         if (passaCarteira && passaEquipe) {
           globalEmAberto += saldoNum;
           globalClientes.add(cliKey);
+          porClienteGlobal[cliKey] = (porClienteGlobal[cliKey] || 0) + saldoNum;
           if (dias > 0) {
             globalVencido += saldoNum;
             globalClientesVencidos.add(cliKey);
@@ -254,6 +267,11 @@ module.exports = (app) => ({
         if (fInicio    && trim(r.emissao) < fInicio)                          return;
         if (fFim       && trim(r.emissao) > fFim)                             return;
         if (fAno       && trim(r.emissao).slice(0, 4) !== fAno)               return;
+        // Recorte mensal: classifica pelo vencimento (E1_VENCREA) ou pela emissao
+        if (fMes) {
+          const dataRefMes = modoMes === 'emissao' ? trim(r.emissao) : trim(r.vencimento);
+          if (dataRefMes.slice(0, 6) !== fMes) return;
+        }
 
         const numero = trim(r.numero);
         titulos.push({
@@ -425,22 +443,36 @@ module.exports = (app) => ({
       const porAgingArr    = Object.values(porAging).sort((a, b) => a.ordem - b.ordem);
       const porSemanaArr   = Object.values(porSemana).sort((a, b) => a.chave.localeCompare(b.chave));
 
-      // Resumo ABC
+      // Resumo ABC (do recorte atual — mes/perspectiva/filtros)
       const resumoABC = { A: { qtd: 0, valor: 0 }, B: { qtd: 0, valor: 0 }, C: { qtd: 0, valor: 0 } };
       clientesArr.forEach(c => {
         resumoABC[c.classeABC].qtd += 1;
         resumoABC[c.classeABC].valor += c.totalEmAberto;
       });
 
-      // Regra da diretoria:
-      // - "Total em aberto" = SEMPRE fixo (toda a carteira), nao muda com filtros.
-      // - "Vencido / em atraso" = MUDA com filtros (aging, ano, periodo).
-      // - "% Inadimplencia" = vencido_FILTRADO / em_aberto_TOTAL * 100
-      //   (numerador acompanha filtro, denominador eh sempre o total da carteira)
-      const indiceInadimplencia = globalEmAberto > 0 ? (totalVencido / globalEmAberto) * 100 : 0;
+      // Resumo ABC GLOBAL (carteira toda, sem recorte de mes — pra aba "Acumulado geral")
+      const globalTotais = Object.values(porClienteGlobal).sort((a, b) => b - a);
+      const globalTotalAberto = globalTotais.reduce((s, v) => s + v, 0);
+      const resumoABCGlobal = { A: { qtd: 0, valor: 0 }, B: { qtd: 0, valor: 0 }, C: { qtd: 0, valor: 0 } };
+      let accG = 0;
+      globalTotais.forEach(v => {
+        accG += v;
+        const p = globalTotalAberto > 0 ? (accG / globalTotalAberto) * 100 : 0;
+        const cls = p <= 80 ? 'A' : p <= 95 ? 'B' : 'C';
+        resumoABCGlobal[cls].qtd += 1;
+        resumoABCGlobal[cls].valor += v;
+      });
+
+      // KPIs do TOPO = recorte do mes (default = mes atual). Decisao do negocio:
+      // "so o vencido do proprio mes" — entao a % inadimplencia do mes usa o
+      // em-aberto DO MES como denominador (vencido_mes / em_aberto_mes).
+      // O acumulado geral (carteira toda) vai em kpisGeral (aba secundaria).
+      const indiceInadimplencia      = totalEmAberto  > 0 ? (totalVencido  / totalEmAberto)  * 100 : 0;
+      const indiceInadimplenciaGeral = globalEmAberto > 0 ? (globalVencido / globalEmAberto) * 100 : 0;
 
       return res.json({
         geradoEm: new Date().toISOString(),
+        recorte: { mes: fMes, modoMes },
         filtros: {
           cliente: req.query.cliente || null,
           uf: req.query.uf || null,
@@ -452,19 +484,31 @@ module.exports = (app) => ({
           acao: req.query.acao || null,
           inicio: req.query.inicio || null,
           fim: req.query.fim || null,
-          ano: req.query.ano || null
+          ano: req.query.ano || null,
+          mes: fMes,
+          modoMes
         },
         kpis: {
-          // Total em aberto: SEMPRE fixo (toda a carteira)
-          totalEmAberto: globalEmAberto,
-          qtdClientes: globalClientes.size,
-          // Vencido + a vencer: respondem aos filtros aplicados (aging/ano/periodo)
+          // Recorte do mes/perspectiva (default = mes atual por vencimento)
+          totalEmAberto,
+          qtdClientes: clientesUnicos.size,
           totalVencido,
           totalAVencer,
           qtdTitulos: titulos.length,
           qtdClientesVencidos: clientesVencidos.size,
-          // % inadimplencia = vencido (filtrado) ÷ em aberto (total fixo)
+          // % inadimplencia do mes = vencido_mes ÷ em_aberto_mes
           indiceInadimplencia
+        },
+        // Acumulado geral — toda a carteira, sem recorte de mes (aba secundaria).
+        // Respeita filtros de escopo (cliente/uf/bu/carteira/equipe), nao aging/mes.
+        kpisGeral: {
+          totalEmAberto: globalEmAberto,
+          totalAVencer: globalAVencer,
+          totalVencido: globalVencido,
+          qtdClientes: globalClientes.size,
+          qtdClientesVencidos: globalClientesVencidos.size,
+          indiceInadimplencia: indiceInadimplenciaGeral,
+          resumoABC: resumoABCGlobal
         },
         porAging: porAgingArr,
         porCarteira: porCarteiraArr,
