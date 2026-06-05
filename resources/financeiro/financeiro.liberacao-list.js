@@ -102,9 +102,18 @@ module.exports = (app) => ({
         AND sc5.D_E_L_E_T_ <> '*'
         AND EXISTS (
           SELECT 1 FROM pedidos_estatus pe
+           JOIN SC6010 c6f WITH (NOLOCK)
+             ON c6f.C6_FILIAL = pe.c6_filial AND c6f.C6_NUM = pe.c6_num
+            AND c6f.C6_ITEM = pe.c6_item AND c6f.D_E_L_E_T_ <> '*'
            WHERE pe.c6_filial = sc5.C5_FILIAL
              AND pe.c6_num    = sc5.C5_NUM
              AND pe.estatus_cod = @est
+             -- Ignora itens JA totalmente faturados. A view pedidos_estatus
+             -- classifica cada item pelo ULTIMO SC9 (max RECNO), e o Protheus as
+             -- vezes cria liberacoes SC9 "fantasma" DEPOIS do faturamento (ex.:
+             -- pedido 093273 — re-liberacao pos-NF em 05/06), que reabririam o
+             -- pedido na lista. So conta como pendente quando ainda falta faturar.
+             AND c6f.C6_QTDENT < c6f.C6_QTDVEN
         )
         ${conds.join(' ')}
       ORDER BY sc5.C5_EMISSAO, sc5.C5_NUM`;
