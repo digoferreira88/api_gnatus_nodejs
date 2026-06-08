@@ -68,6 +68,8 @@ const CFOPS_VENDA = [
   '7101','7102','7105','7106','7127','7129','7251','7301','7358','7651','7654','7667'
 ];
 
+const FatInadFiltros = require('../../services/cobrancaFatInadFiltros');
+
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
 
 module.exports = (app) => ({
@@ -489,8 +491,10 @@ module.exports = (app) => ({
       //   inadimplencia      = SE1 saldo>0 e VENCIDO (VENCREA<=hoje) por mes de EMISSAO
       //   % inadimplencia    = inadimplencia / faturamento
       // emAberto/aVencer sao da SE1 (saldo>0, mesma emissao) so pra contexto.
-      // Sempre por EMISSAO (faturamento e' conceito de emissao) e SEM os filtros
-      // de cliente/UF/BU/carteira/equipe — reflete a empresa toda, igual o grafico.
+      // Sempre por EMISSAO (faturamento e' conceito de emissao). RESPEITA os
+      // filtros da tela (cliente/UF/BU/forma/carteira/equipe) via FatInadFiltros,
+      // pra a inadimplencia refletir o recorte (ex.: so Cartao). Sem filtro, os
+      // fragmentos sao vazios -> empresa toda, batendo com o grafico.
       let safraMes = null;
       if (fMes) {
         try {
@@ -498,25 +502,27 @@ module.exports = (app) => ({
           const ultimoDiaMes = new Date(Number(fMes.slice(0, 4)), Number(fMes.slice(4, 6)), 0).getDate();
           const fimMes = `${fMes}${String(ultimoDiaMes).padStart(2, '0')}`;
           const cfopList = CFOPS_VENDA.map(c => `'${c}'`).join(',');
+          const fi = await FatInadFiltros.montar({ Pg }, req.query);
+          const spFat = { filial, ini: iniMes, fim: fimMes, ...fi.params };
           const fatRows = await Protheus.connectAndQuery(`
             SELECT SUM(sd2.D2_VALBRUT) faturado
               FROM SF2010 sf2 WITH (NOLOCK)
               INNER JOIN SD2010 sd2 WITH (NOLOCK)
                 ON sd2.D2_FILIAL = sf2.F2_FILIAL AND sd2.D2_DOC = sf2.F2_DOC AND sd2.D2_SERIE = sf2.F2_SERIE
                AND sd2.D2_CLIENTE = sf2.F2_CLIENTE AND sd2.D2_LOJA = sf2.F2_LOJA AND sd2.D_E_L_E_T_ <> '*'
-               AND sd2.D2_CF IN (${cfopList})
+               AND sd2.D2_CF IN (${cfopList})${fi.fatJoins}
              WHERE sf2.D_E_L_E_T_ <> '*' AND sf2.F2_FILIAL = @filial
-               AND sf2.F2_EMISSAO BETWEEN @ini AND @fim`, { filial, ini: iniMes, fim: fimMes });
+               AND sf2.F2_EMISSAO BETWEEN @ini AND @fim${fi.fatWhere}`, spFat);
           const seRows = await Protheus.connectAndQuery(`
             SELECT
               SUM(se1.E1_SALDO) em_aberto,
               SUM(CASE WHEN CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, GETDATE()) THEN se1.E1_SALDO ELSE 0 END) inadimplente,
               SUM(CASE WHEN CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, GETDATE()) THEN 1 ELSE 0 END) qt_inadimplente
-              FROM SE1010 se1 WITH (NOLOCK)
+              FROM SE1010 se1 WITH (NOLOCK)${fi.inadJoins}
              WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = @filial
                AND se1.E1_SALDO > 0 AND ISDATE(se1.E1_VENCREA) = 1
                AND se1.E1_EMISSAO BETWEEN @ini AND @fim
-               AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')`, { filial, ini: iniMes, fim: fimMes });
+               AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')${fi.inadWhere}`, { filial, ini: iniMes, fim: fimMes, ...fi.params });
           const faturamento = toN(fatRows[0]?.faturado);
           const emAberto = toN(seRows[0]?.em_aberto);
           const inad = toN(seRows[0]?.inadimplente);

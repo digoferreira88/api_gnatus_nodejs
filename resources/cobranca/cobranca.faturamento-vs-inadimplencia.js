@@ -23,6 +23,8 @@ const CFOPS_VENDA = [
   '7101','7102','7105','7106','7127','7129','7251','7301','7358','7651','7654','7667'
 ];
 
+const FatInadFiltros = require('../../services/cobrancaFatInadFiltros');
+
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
 
 module.exports = (app) => ({
@@ -85,6 +87,12 @@ module.exports = (app) => ({
       }
     }
 
+    // Filtros da tela (cliente/UF/BU/forma/carteira/equipe) -> fragmentos SQL
+    // aplicados nas SERIES principais (faturamento + inadimplencia que alimentam
+    // o grafico e os totais). Mesmo helper do card de safra, pra nunca divergir.
+    const fi = await FatInadFiltros.montar({ Pg }, req.query);
+    Object.assign(sqlParams, fi.params);
+
     try {
       // JOINs com SC5 (pedido) so quando ha filtro de equipe, pra evitar custo
       // desnecessario quando o usuario nao filtrou.
@@ -114,11 +122,11 @@ module.exports = (app) => ({
            AND sd2.D2_LOJA    = sf2.F2_LOJA
            AND sd2.D_E_L_E_T_ <> '*'
            AND sd2.D2_CF IN (${cfopList})
-          ${joinSc5Fat}
+          ${fi.fatJoins}
          WHERE sf2.D_E_L_E_T_ <> '*'
            AND sf2.F2_FILIAL = '01'
            AND sf2.F2_EMISSAO BETWEEN @ini AND @fim
-           ${condBuFat}
+           ${fi.fatWhere}
          GROUP BY SUBSTRING(sf2.F2_EMISSAO, 1, 6)
          ORDER BY ymes`,
         sqlParams
@@ -131,14 +139,14 @@ module.exports = (app) => ({
                SUM(se1.E1_SALDO) saldoVencido,
                COUNT(*) qtdTitulos
           FROM SE1010 se1 WITH (NOLOCK)
-          ${joinSc5Inad}
+          ${fi.inadJoins}
          WHERE se1.D_E_L_E_T_ <> '*'
            AND se1.E1_FILIAL = '01'
            AND se1.E1_SALDO > 0
            AND CONVERT(date, se1.E1_VENCREA, 112) <= CONVERT(date, GETDATE())
            AND se1.E1_EMISSAO BETWEEN @ini AND @fim
            AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
-           ${condBuInad}
+           ${fi.inadWhere}
          GROUP BY SUBSTRING(se1.E1_EMISSAO, 1, 6)
          ORDER BY ymes`,
         sqlParams
