@@ -1,5 +1,48 @@
 const bcrypt = require('bcryptjs');
 const Auditoria = require('../../services/auditoria');
+const { sendEmail } = require('../../services/emailService');
+
+// URL pública da intranet (link de acesso no e-mail de boas-vindas).
+const INTRANET_URL = process.env.INTRANET_URL || process.env.FRONTEND_URL || 'https://intranew.gnatus.com.br';
+
+const escapeHtml = (s) => String(s || '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// E-mail de boas-vindas com login + senha provisória + link de acesso.
+function montarEmailBoasVindas({ nome, email, senha, link }) {
+  const text =
+`Olá, ${nome}!
+
+Seu acesso à Intranet Gnatus foi criado.
+
+Login (e-mail): ${email}
+Senha provisória: ${senha}
+Acesse em: ${link}
+
+Por segurança, troque sua senha no primeiro acesso pelo menu "Alterar Senha".
+
+Equipe de TI — Gnatus`;
+
+  const html =
+`<!doctype html><html><body style="margin:0;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#1a2740;">
+  <div style="max-width:560px;margin:0 auto;padding:24px;">
+    <div style="background:#1e5fb5;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0;">
+      <h1 style="margin:0;font-size:20px;">Bem-vindo(a) à Intranet Gnatus</h1>
+    </div>
+    <div style="background:#fff;padding:22px;border-radius:0 0 12px 12px;">
+      <p>Olá, <strong>${escapeHtml(nome)}</strong>! Seu acesso à intranet foi criado. Use as credenciais abaixo para entrar:</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:15px;">
+        <tr><td style="padding:8px 0;color:#6b7a90;">Login</td><td style="padding:8px 0;text-align:right;font-weight:700;">${escapeHtml(email)}</td></tr>
+        <tr><td style="padding:8px 0;color:#6b7a90;border-top:1px solid #eef2f8;">Senha provisória</td><td style="padding:8px 0;text-align:right;font-weight:700;border-top:1px solid #eef2f8;font-family:Consolas,monospace;">${escapeHtml(senha)}</td></tr>
+      </table>
+      <a href="${escapeHtml(link)}" style="display:inline-block;background:#1e7d4f;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:8px;">Acessar a intranet</a>
+      <p style="margin-top:18px;font-size:14px;color:#6b7a90;">Por segurança, <strong>troque sua senha no primeiro acesso</strong> pelo menu "Alterar Senha".</p>
+      <p style="font-size:13px;color:#8093ac;margin-top:18px;">Se você não esperava este e-mail, avise a TI.</p>
+    </div>
+  </div>
+</body></html>`;
+  return { text, html };
+}
 
 module.exports = (app) => ({
   verb: 'post',
@@ -8,7 +51,7 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;
-    const { nome, email, senha, matricula, ativo, codigoProtheus, ramal, permissoes } = req.body || {};
+    const { nome, email, senha, matricula, ativo, codigoProtheus, ramal, permissoes, enviarEmail } = req.body || {};
 
     if (!nome || !email || !senha || !matricula) {
       return res.status(400).json({ message: 'Nome, email, senha e matrícula são obrigatórios.' });
@@ -75,13 +118,30 @@ module.exports = (app) => ({
         );
       }
 
+      // E-mail de boas-vindas (login + senha provisória + link). BEST-EFFORT:
+      // nunca derruba a criação do usuário — se o e-mail falhar, o usuário
+      // continua criado e só avisamos. Só envia se o operador pediu E o usuário
+      // está ativo (inativo não loga, não faz sentido mandar credencial).
+      let emailEnviado = false;
+      let emailErro = null;
+      if (enviarEmail === true && ativoFlag) {
+        try {
+          const { text, html } = montarEmailBoasVindas({ nome, email, senha: String(senha), link: INTRANET_URL });
+          await sendEmail({ to: email, subject: 'Seu acesso à Intranet Gnatus', text, html });
+          emailEnviado = true;
+        } catch (e) {
+          emailErro = e.message;
+          console.warn('users.create: falha ao enviar e-mail de boas-vindas —', e.message);
+        }
+      }
+
       Auditoria.registrar(app, {
         modulo: 'Tecnologia', submodulo: 'GestaoUsuarios', acao: 'CREATE', severidade: 'CRITICO',
         req, entidade: 'usuario_intranet', entidadeId: novoId,
-        descricao: `Criou usuário "${nome}" (${email})${permsValidas.length ? ` com ${permsValidas.length} permissão(ões)` : ''}`,
-        meta: { nome, email, matricula, codigo_protheus: codProth, permissoes: permsValidas, ativo: ativoFlag }
+        descricao: `Criou usuário "${nome}" (${email})${permsValidas.length ? ` com ${permsValidas.length} permissão(ões)` : ''}${emailEnviado ? ' · e-mail de acesso enviado' : ''}`,
+        meta: { nome, email, matricula, codigo_protheus: codProth, permissoes: permsValidas, ativo: ativoFlag, email_enviado: emailEnviado }
       });
-      return res.status(201).json({ ok: true, id: novoId, permissoesAplicadas: permsValidas.length });
+      return res.status(201).json({ ok: true, id: novoId, permissoesAplicadas: permsValidas.length, emailEnviado, emailErro });
     } catch (err) {
       console.error('Erro ao criar usuário:', err);
       return res.status(500).json({ message: 'Erro ao criar usuário.' });
