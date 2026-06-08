@@ -266,6 +266,9 @@ module.exports = (app) => ({
       });
       // re-aplica alinhamento/estilo do cabecalho (sobrepoe o da coluna)
       hr.eachCell((cell) => { cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+      // titulo e subtitulo SEMPRE a esquerda (apos os ajustes de coluna)
+      ws.getCell(1, 1).alignment = { vertical: 'middle', horizontal: 'left' };
+      ws.getCell(2, 1).alignment = { vertical: 'middle', horizontal: 'left' };
 
       ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: nCols } };
 
