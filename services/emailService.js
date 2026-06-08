@@ -9,7 +9,12 @@
 const m365 = require('./m365');
 
 const isDev = process.env.NODE_ENV !== 'production';
-const SENDER = process.env.EMAIL_SENDER || 'cobranca@gnatus.com.br';
+// Remetente PADRAO de toda a intranet (e-mails internos: boas-vindas, reset,
+// alertas, cofre). Hoje = ti@gnatus.com.br (via .env EMAIL_SENDER).
+const SENDER = process.env.EMAIL_SENDER || 'ti@gnatus.com.br';
+// Remetente da COBRANCA (e-mails ao cliente: boletos). Fixo em cobranca@ pra
+// o cliente receber/responder na caixa certa, independente do remetente global.
+const SENDER_COBRANCA = process.env.EMAIL_SENDER_COBRANCA || 'cobranca@gnatus.com.br';
 
 async function sendVerificationEmail(to, codigo) {
     if (isDev) {
@@ -27,14 +32,15 @@ async function sendVerificationEmail(to, codigo) {
 // Envio generico — usado pelos modulos que mandam e-mail livre (alertas de
 // contrato, boleto-disparar, etc). O m365.sendMail trata strings com ',' ou
 // ';' como multiplos destinatarios.
-async function sendEmail({ to, subject, text, html, cc, bcc, attachments }) {
+async function sendEmail({ to, subject, text, html, cc, bcc, attachments, from }) {
     if (!to) throw new Error('Destinatario obrigatorio.');
+    const remetente = from || SENDER;
     if (isDev) {
         const anexos = Array.isArray(attachments) ? attachments.length : 0;
-        console.log(`[emailService] DEV — email pra ${to}: "${subject}"${anexos ? ` (${anexos} anexo(s))` : ''}`);
+        console.log(`[emailService] DEV — email de ${remetente} pra ${to}: "${subject}"${anexos ? ` (${anexos} anexo(s))` : ''}`);
         return { dev: true };
     }
-    return await m365.sendMail({ from: SENDER, to, cc, bcc, subject, text, html, attachments });
+    return await m365.sendMail({ from: remetente, to, cc, bcc, subject, text, html, attachments });
 }
 
-module.exports = { sendVerificationEmail, sendEmail };
+module.exports = { sendVerificationEmail, sendEmail, SENDER, SENDER_COBRANCA };

@@ -367,6 +367,7 @@ module.exports = (app) => ({
                 banco: nomeBancoCurto(r.banco_cod, r.banco_nome), linha
               });
               await Email.sendEmail({
+                from: Email.SENDER_COBRANCA,   // boleto ao cliente sai de cobranca@ (nao do remetente global ti@)
                 to: contato.email, subject, text, html,
                 attachments: pdfAttachment ? [pdfAttachment] : undefined
               });
