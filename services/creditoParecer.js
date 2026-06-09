@@ -24,6 +24,12 @@ function parecerTemplate(d) {
     if (i.tendencia.piora) partes.push(`Atenção: tendência de DETERIORAÇÃO — atraso subiu ${dias(i.tendencia.deltaAtrasoDias)} nos últimos 6 meses.`);
     if (i.utilizacaoPct != null && i.utilizacaoPct > 90) partes.push(`Utilização de limite elevada (${pct(i.utilizacaoPct)}).`);
   }
+  if (d.bureau) {
+    const b = d.bureau;
+    if (b.protestos && b.protestos.ativo) partes.push(`Bureau (${b.fonte || 'externo'}): PROTESTO ATIVO${b.protestos.qtd ? ` (${b.protestos.qtd})` : ''}.`);
+    if (b.restricoes && Number(b.restricoes.qtd) > 0) partes.push(`Bureau: ${b.restricoes.qtd} restrição(ões) financeira(s).`);
+    if (b.score != null) partes.push(`Score externo do bureau: ${Math.round(b.score)}.`);
+  }
   if (d.cliente.bloqueado) partes.push('Cliente BLOQUEADO no cadastro.');
   partes.push(`Recomendação: ${st === 'APROVAR' ? 'APROVAR' : st === 'REPROVAR' ? 'REPROVAR' : 'REVISÃO MANUAL'}.`);
   return partes.join(' ');
@@ -36,7 +42,7 @@ async function gerar(d) {
   const resumo = {
     cliente: d.cliente.nome, uf: d.cliente.uf, limite: d.cliente.limite, bloqueado: d.cliente.bloqueado,
     score_interno: d.scoreInterno, classificacao: d.classificacao.label, status_sugerido: d.status,
-    indicadores: d.indicadores
+    indicadores: d.indicadores, bureau_externo: d.bureau || null
   };
   const prompt =
 `Você é um analista de crédito sênior de uma indústria. Com base EXCLUSIVAMENTE nos indicadores abaixo (NÃO invente nenhum número; use apenas os fornecidos), escreva um parecer de crédito objetivo em português, com 3 a 5 frases, destacando: situação de pagamento, principais riscos, tendência e uma recomendação clara. Seja direto e profissional, sem listar os números crus em formato de tabela.
