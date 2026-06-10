@@ -45,8 +45,11 @@ const BLOCOS = [
   { id: 'RECEITA_LIQUIDA',   label: 'RECEITA LÍQUIDA',                       derivado: ['RECEITAS', 'DEDUCOES'] },
   { id: 'CUSTO',             label: 'CUSTO TOTAL',                           prefix: ['32'],                                             totalizador: true },
   { id: 'LUCRO_BRUTO',       label: 'LUCRO BRUTO (Margem de Contribuição)',  derivado: ['RECEITA_LIQUIDA', 'CUSTO'] },
+  // '515' captura a folha de PRODUCAO (5.1.50.001). '51550002' = Materiais Indiretos
+  // e CUSTO (absorvido no CMV pela contadora) — fica de fora das despesas p/ nao
+  // duplicar com o CMV (mesma logica do exclude de materia-prima no /dre).
   { id: 'DESP_OP',           label: 'DESPESAS OPERACIONAIS',                 prefix: ['411', '412', '413', '515'],
-                              excludePrefix: ['4110005', '4110006', '4140', '4150'],                                                     totalizador: true },
+                              excludePrefix: ['4110005', '4110006', '4140', '4150', '51550002'],                                         totalizador: true },
   { id: 'EBITDA',            label: 'RESULTADO OPERACIONAL (EBITDA)',        derivado: ['LUCRO_BRUTO', 'DESP_OP'] },
   { id: 'RES_FINANCEIRO',    label: 'RECEITAS/DESPESAS FINANCEIRAS',         prefix: ['4140', '4150'],                                    totalizador: true },
   { id: 'DEPRECIACAO',       label: 'DEPRECIAÇÕES / AMORTIZAÇÕES',           prefix: ['4110005', '4110006'],                              totalizador: true },
@@ -100,13 +103,13 @@ async function carregarSaldos(Protheus, inicio, fim) {
       FROM (
         SELECT RTRIM(CT2_DEBITO) conta, CT2_VALOR valor
           FROM CT2010 WITH (NOLOCK)
-         WHERE D_E_L_E_T_ <> '*' AND CT2_FILIAL = '01'
+         WHERE D_E_L_E_T_ <> '*'   -- consolida TODAS as filiais (01+02...), igual ao DRE da contadora
            AND CT2_DATA BETWEEN @inicio AND @fim
            AND LEFT(RTRIM(CT2_DEBITO), 1) IN ('3','4','5')
         UNION ALL
         SELECT RTRIM(CT2_CREDIT) conta, -CT2_VALOR valor
           FROM CT2010 WITH (NOLOCK)
-         WHERE D_E_L_E_T_ <> '*' AND CT2_FILIAL = '01'
+         WHERE D_E_L_E_T_ <> '*'   -- consolida TODAS as filiais (01+02...), igual ao DRE da contadora
            AND CT2_DATA BETWEEN @inicio AND @fim
            AND LEFT(RTRIM(CT2_CREDIT), 1) IN ('3','4','5')
       ) t
