@@ -182,6 +182,8 @@ module.exports = (app) => ({
           qt_anexos: anexos.length,
           anexos_gravados: r.anexos_gravados,
           duracao_ms: r.duracao_ms,
+          tentativas: r.tentativas,
+          motivo: r.motivo,
           inconsistencias: r.body?.INCONSISTENCIAS?.slice(0, 5)
         }
       });
@@ -195,7 +197,9 @@ module.exports = (app) => ({
         inconsistencias: r.body?.INCONSISTENCIAS || [],
         anexos_gravados: r.anexos_gravados || 0,
         log_id: logId,
-        duracao_ms: r.duracao_ms
+        duracao_ms: r.duracao_ms,
+        tentativas: r.tentativas,
+        motivo: r.motivo
       });
     } catch (err) {
       console.error('sc-criar:', err);
