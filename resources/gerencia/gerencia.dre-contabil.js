@@ -49,7 +49,7 @@ const BLOCOS = [
   // e CUSTO (absorvido no CMV pela contadora) — fica de fora das despesas p/ nao
   // duplicar com o CMV (mesma logica do exclude de materia-prima no /dre).
   { id: 'DESP_OP',           label: 'DESPESAS OPERACIONAIS',                 prefix: ['411', '412', '413', '515'],
-                              excludePrefix: ['4110005', '4110006', '4140', '4150', '51550002'],                                         totalizador: true },
+                              excludePrefix: ['4110005', '4110006', '4140', '4150', '5150002'],                                          totalizador: true },
   { id: 'EBITDA',            label: 'RESULTADO OPERACIONAL (EBITDA)',        derivado: ['LUCRO_BRUTO', 'DESP_OP'] },
   { id: 'RES_FINANCEIRO',    label: 'RECEITAS/DESPESAS FINANCEIRAS',         prefix: ['4140', '4150'],                                    totalizador: true },
   { id: 'DEPRECIACAO',       label: 'DEPRECIAÇÕES / AMORTIZAÇÕES',           prefix: ['4110005', '4110006'],                              totalizador: true },
