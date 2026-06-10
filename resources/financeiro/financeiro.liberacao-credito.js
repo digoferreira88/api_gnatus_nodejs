@@ -17,6 +17,14 @@ const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 
+// Forma de pagamento do titulo (E1_FORMAPG) — mesma tabela do modulo de Cobranca.
+const FORMAS_PGTO = {
+  '1': 'Cheque', '2': 'Dinheiro', '3': 'Cartão', '4': 'Boleto Bancário', '5': 'Não informado',
+  '6': 'Financiamento', '7': 'Cartão BNDS', '8': 'Bonificação', '9': 'Consignado',
+  'B': 'Antecipação Parcelada', 'A': 'Futuro Garantido', '': 'Não informado'
+};
+const descreverFormaPgto = (cod) => FORMAS_PGTO[cod] || `Forma ${cod}`;
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/liberacao/credito/:cod/:loja',
@@ -62,6 +70,7 @@ module.exports = (app) => ({
                RTRIM(E1_NUM)     numero,
                RTRIM(E1_PARCELA) parcela,
                RTRIM(E1_TIPO)    tipo,
+               RTRIM(E1_FORMAPG) formaPgto,
                RTRIM(E1_EMISSAO) emissao,
                RTRIM(E1_VENCTO)  vencimento,
                RTRIM(E1_VENCREA) vencimentoReal,
@@ -80,6 +89,7 @@ module.exports = (app) => ({
         prefixo: trim(t.prefixo), numero: trim(t.numero), parcela: trim(t.parcela), tipo: trim(t.tipo),
         emissao: trim(t.emissao), vencimento: trim(t.vencimento), vencimentoReal: trim(t.vencimentoReal),
         valor: N(t.valor), saldo: N(t.saldo), natureza: trim(t.natureza),
+        formaPgto: trim(t.formaPgto), formaPgtoNome: descreverFormaPgto(trim(t.formaPgto)),
         diasAtraso: N(t.diasAtraso)
       }));
 
