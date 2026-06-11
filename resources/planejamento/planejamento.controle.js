@@ -170,7 +170,7 @@ module.exports = (app) => ({
       // ---------- Por responsável ----------
       const respAgg = new Map();
       cards.forEach(c => {
-        const key = c.responsavelId || 0;
+        const key = c.responsavelId ? `id:${c.responsavelId}` : `nome:${c.responsavelNome}`;
         if (!respAgg.has(key)) respAgg.set(key, { responsavelId: c.responsavelId, responsavelNome: c.responsavelNome, qtd: 0, valorMonitorado: 0, qtdFaturado: 0, valorFaturado: 0 });
         const a = respAgg.get(key);
         a.qtd++;
