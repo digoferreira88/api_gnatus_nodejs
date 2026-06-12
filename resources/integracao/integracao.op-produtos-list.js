@@ -1,5 +1,5 @@
 // GET /integracao/op-produtos — lista os produtos monitorados pela automacao
-// OP -> Pipedrive (gestao pela intranet). Permissao 1033.
+// OP -> Pipefy (gestao pela intranet). Permissao 1033.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1033]);
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -14,7 +14,7 @@ module.exports = (app) => ({
     try {
       const rows = await Pg.connectAndQuery(
         `SELECT id, codigo, descricao, ativo, criado_nome, criado_em
-           FROM tab_op_pipedrive_produtos ORDER BY codigo`, {});
+           FROM tab_op_pipefy_produtos ORDER BY codigo`, {});
       return res.json({
         produtos: rows.map(r => ({
           id: r.id, codigo: trim(r.codigo), descricao: trim(r.descricao),

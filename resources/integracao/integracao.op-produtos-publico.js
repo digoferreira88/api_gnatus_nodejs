@@ -1,5 +1,5 @@
 // GET /integracao/op-produtos-lista — endpoint de MAQUINA para a automacao
-// OP -> Pipedrive (roda numa maquina local) buscar a lista de produtos
+// OP -> Pipefy (roda numa maquina local) buscar a lista de produtos
 // monitorados, em vez de mante-la hardcoded no script.
 //
 // SEM JWT (anonymous): autentica por token estatico do .env
@@ -29,7 +29,7 @@ module.exports = (app) => ({
 
     try {
       const rows = await Pg.connectAndQuery(
-        `SELECT codigo FROM tab_op_pipedrive_produtos WHERE ativo = true ORDER BY codigo`, {});
+        `SELECT codigo FROM tab_op_pipefy_produtos WHERE ativo = true ORDER BY codigo`, {});
       const codigos = rows.map(r => trim(r.codigo));
       const format = trim(req.query.format).toLowerCase();
 

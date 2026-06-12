@@ -1,5 +1,5 @@
 // POST /integracao/op-produtos { codigo }
-// Adiciona um produto a lista monitorada pela automacao OP -> Pipedrive.
+// Adiciona um produto a lista monitorada pela automacao OP -> Pipefy.
 // Valida o codigo no SB1 (precisa existir) e guarda a descricao. Perm 1033.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1033]);
@@ -28,7 +28,7 @@ module.exports = (app) => ({
       const descricao = trim(sb1[0].descricao);
 
       const ins = await Pg.connectAndQuery(
-        `INSERT INTO tab_op_pipedrive_produtos (codigo, descricao, criado_por, criado_nome)
+        `INSERT INTO tab_op_pipefy_produtos (codigo, descricao, criado_por, criado_nome)
          VALUES (@cod, @desc, @uid, @unome)
          ON CONFLICT (codigo) DO UPDATE SET ativo = true, descricao = EXCLUDED.descricao
          RETURNING id`,
@@ -37,7 +37,7 @@ module.exports = (app) => ({
       Auditoria.registrar(app, {
         modulo: 'Tecnologia', submodulo: 'IntegracaoOpPipedrive', acao: 'ADD_PRODUTO',
         severidade: 'ALERTA', req, entidade: 'produto', entidadeId: codigo,
-        descricao: `Adicionou produto ${codigo} (${descricao}) à automação OP → Pipedrive`,
+        descricao: `Adicionou produto ${codigo} (${descricao}) à automação OP → Pipefy`,
         meta: { codigo, descricao }
       });
       return res.json({ ok: true, id: ins[0].id, codigo, descricao });

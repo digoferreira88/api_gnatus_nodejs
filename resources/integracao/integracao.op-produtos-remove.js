@@ -1,5 +1,5 @@
 // DELETE /integracao/op-produtos/:codigo — remove um produto da lista da
-// automacao OP -> Pipedrive. Perm 1033.
+// automacao OP -> Pipefy. Perm 1033.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1033]);
 const Auditoria = require('../../services/auditoria');
@@ -16,13 +16,13 @@ module.exports = (app) => ({
     if (!codigo) return res.status(400).json({ message: 'Código obrigatório.' });
     try {
       const del = await Pg.connectAndQuery(
-        `DELETE FROM tab_op_pipedrive_produtos WHERE codigo = @cod RETURNING descricao`, { cod: codigo });
+        `DELETE FROM tab_op_pipefy_produtos WHERE codigo = @cod RETURNING descricao`, { cod: codigo });
       if (!del.length) return res.status(404).json({ message: 'Produto não está na lista.' });
 
       Auditoria.registrar(app, {
         modulo: 'Tecnologia', submodulo: 'IntegracaoOpPipedrive', acao: 'REMOVE_PRODUTO',
         severidade: 'ALERTA', req, entidade: 'produto', entidadeId: codigo,
-        descricao: `Removeu produto ${codigo} da automação OP → Pipedrive`,
+        descricao: `Removeu produto ${codigo} da automação OP → Pipefy`,
         meta: { codigo }
       });
       return res.json({ ok: true, codigo });

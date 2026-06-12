@@ -238,6 +238,10 @@ const CRON_CONTRATOS = '30 8 * * *';  // 08:30 todo dia
 // Madrugada pra nao concorrer com cobranca/contratos.
 const CRON_ESTOQUE_SNAPSHOT = '0 3 * * *';  // 03:00 todo dia
 
+// OP -> Pipefy: poll da view MURO.dbo.PIPEFYOP e criacao de cards.
+// So roda se PIPEFY_TOKEN estiver no .env (servico fica dormente sem ele).
+const CRON_PIPEFY_OP = '*/15 * * * *';      // a cada 15 minutos
+
 function start(app) {
   if (jobs.cobranca) jobs.cobranca.cancel();
   jobs.cobranca = schedule.scheduleJob(CRON_DIARIO, async () => {
@@ -277,6 +281,19 @@ function start(app) {
     }
   });
   console.log(`[scheduler] estoque-snapshot agendado: cron "${CRON_ESTOQUE_SNAPSHOT}"`);
+
+  // OP -> Pipefy (poll PIPEFYOP -> cards). Dormente sem PIPEFY_TOKEN.
+  if (jobs.pipefyOp) jobs.pipefyOp.cancel();
+  jobs.pipefyOp = schedule.scheduleJob(CRON_PIPEFY_OP, async () => {
+    try {
+      const PipefyOp = require('./pipefyOp');
+      if (!PipefyOp.disponivel()) return;   // sem token, nao faz nada (nem loga)
+      await PipefyOp.sincronizar(app.services, 'CRON');
+    } catch (err) {
+      console.error('[scheduler] erro no pipefy-op:', err.message);
+    }
+  });
+  console.log(`[scheduler] pipefy-op agendado: cron "${CRON_PIPEFY_OP}"`);
 }
 
 function stop() {
