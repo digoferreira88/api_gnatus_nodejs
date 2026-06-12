@@ -54,17 +54,26 @@ module.exports = (app) => ({
       // 2) Títulos em aberto (inclui a vencer, para visão completa)
       const tits = await Protheus.connectAndQuery(
         `SELECT
-           RTRIM(E1_PREFIXO) prefixo, RTRIM(E1_NUM) numero, RTRIM(E1_PARCELA) parcela,
-           RTRIM(E1_TIPO) tipo, E1_EMISSAO emissao, E1_VENCTO vencimento, E1_VENCREA vencimentoReal,
-           E1_VALOR valor, E1_SALDO saldo, RTRIM(E1_NATUREZ) natureza, RTRIM(E1_HIST) historico,
-           DATEDIFF(day, CONVERT(date, E1_VENCREA, 112), GETDATE()) diasAtraso
-         FROM SE1010 WITH (NOLOCK)
-         WHERE D_E_L_E_T_ <> '*'
-           AND E1_CLIENTE = @cod AND E1_LOJA = @loja
+           RTRIM(se1.E1_PREFIXO) prefixo, RTRIM(se1.E1_NUM) numero, RTRIM(se1.E1_PARCELA) parcela,
+           RTRIM(se1.E1_TIPO) tipo, se1.E1_EMISSAO emissao, se1.E1_VENCTO vencimento, se1.E1_VENCREA vencimentoReal,
+           se1.E1_VALOR valor, se1.E1_SALDO saldo, RTRIM(se1.E1_NATUREZ) natureza, RTRIM(se1.E1_HIST) historico,
+           RTRIM(se1.E1_PORTADO) portador,
+           (SELECT TOP 1 RTRIM(A6_NREDUZ) FROM SA6010 WITH (NOLOCK)
+              WHERE RTRIM(A6_COD) = RTRIM(se1.E1_PORTADO) AND D_E_L_E_T_ <> '*') portadorNome,
+           RTRIM(sc5.C5_ZTIPO) buCod, RTRIM(bu.X5_DESCRI) buNome,
+           DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) diasAtraso
+         FROM SE1010 se1 WITH (NOLOCK)
+         LEFT JOIN SC5010 sc5 WITH (NOLOCK)
+           ON sc5.C5_FILIAL = se1.E1_FILIAL AND sc5.C5_NUM = se1.E1_PEDIDO AND sc5.D_E_L_E_T_ <> '*'
+         LEFT JOIN SX5010 bu WITH (NOLOCK)
+           ON bu.X5_FILIAL = '  ' AND bu.X5_TABELA = 'Z1'
+          AND RTRIM(bu.X5_CHAVE) = RTRIM(sc5.C5_ZTIPO) AND bu.D_E_L_E_T_ <> '*'
+         WHERE se1.D_E_L_E_T_ <> '*'
+           AND se1.E1_CLIENTE = @cod AND se1.E1_LOJA = @loja
            -- Soh E1_SALDO > 0 (sem checar E1_BAIXA, que pode estar preenchida em baixas parciais)
-           AND E1_SALDO > 0
-           AND RTRIM(E1_TIPO) NOT IN ('RA', 'NCC')
-         ORDER BY E1_VENCREA ASC`,
+           AND se1.E1_SALDO > 0
+           AND RTRIM(se1.E1_TIPO) NOT IN ('RA', 'NCC')
+         ORDER BY se1.E1_VENCREA ASC`,
         { cod, loja }
       );
 
@@ -75,6 +84,10 @@ module.exports = (app) => ({
           tipo: trim(t.tipo), emissao: trim(t.emissao), vencimento: trim(t.vencimento),
           vencimentoReal: trim(t.vencimentoReal), valor: toNumber(t.valor), saldo: toNumber(t.saldo),
           natureza: trim(t.natureza), historico: trim(t.historico), diasAtraso: d,
+          portador: trim(t.portador),
+          portadorNome: trim(t.portadorNome) || trim(t.portador) || '—',
+          buCod: trim(t.buCod),
+          buNome: trim(t.buNome) || trim(t.buCod) || '—',
           faixa: faixaAtraso(d)
         };
       });
