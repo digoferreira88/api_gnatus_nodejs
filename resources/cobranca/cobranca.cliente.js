@@ -14,6 +14,14 @@ const faixaAtraso = (dias) => {
   return             { codigo: 'A_90_MAIS',  label: '90+ dias',    cor: '#4a0e0e' };
 };
 
+// Códigos FEBRABAN comuns — fallback quando a SA6 não tem nome reduzido.
+const BANCOS = {
+  '001': 'Banco do Brasil', '033': 'Santander', '104': 'Caixa Econômica', '237': 'Bradesco',
+  '341': 'Itaú', '745': 'Citibank', '422': 'Safra', '077': 'Inter', '070': 'BRB',
+  '021': 'Banestes', '037': 'Banpará', '004': 'Banco do Nordeste', '756': 'Sicoob',
+  '748': 'Sicredi', '399': 'HSBC', '212': 'Banco Original', '655': 'Votorantim', '041': 'Banrisul'
+};
+
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
 
 module.exports = (app) => ({
@@ -85,7 +93,7 @@ module.exports = (app) => ({
           vencimentoReal: trim(t.vencimentoReal), valor: toNumber(t.valor), saldo: toNumber(t.saldo),
           natureza: trim(t.natureza), historico: trim(t.historico), diasAtraso: d,
           portador: trim(t.portador),
-          portadorNome: trim(t.portadorNome) || trim(t.portador) || '—',
+          portadorNome: trim(t.portadorNome) || BANCOS[trim(t.portador)] || trim(t.portador) || '—',
           buCod: trim(t.buCod),
           buNome: trim(t.buNome) || trim(t.buCod) || '—',
           faixa: faixaAtraso(d)
