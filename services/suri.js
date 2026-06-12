@@ -124,8 +124,25 @@ async function enviarTemplate({ phone, tipo, parameters }) {
   }
 }
 
+// Envio por templateId BRUTO (integracao Pipefy webhooks: os templates variam
+// por pipe/fase e vivem no mapeamento de services/pipefyWebhook.js).
+async function enviarTemplateId({ phone, templateId, parameters }) {
+  const payload = {
+    user: { phone, channelId: CHANNEL, channelType: 1 },
+    message: { templateId, BodyParameters: sanitize(parameters), ButtonsParameters: [] }
+  };
+  try {
+    const { data } = await http.post('/messages/send', payload);
+    return { ok: data?.success === true, raw: data };
+  } catch (err) {
+    const resp = err.response?.data;
+    return { ok: false, erro: resp?.error || err.message, raw: resp || { message: err.message } };
+  }
+}
+
 module.exports = {
   enviarTemplate,
+  enviarTemplateId,
   normalizePhone,
   renderTemplate,
   TEMPLATES,
