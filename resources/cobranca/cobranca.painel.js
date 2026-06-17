@@ -215,6 +215,7 @@ module.exports = (app) => ({
             clienteCod: t.clienteCod,
             clienteLoja: t.clienteLoja,
             clienteNome: t.clienteNome,
+            clienteCgc: t.clienteCgc,
             clienteMunicipio: t.clienteMunicipio,
             clienteEstado: t.clienteEstado,
             clienteEmail: t.clienteEmail,
