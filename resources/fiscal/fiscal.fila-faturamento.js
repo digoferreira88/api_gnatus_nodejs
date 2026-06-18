@@ -21,7 +21,7 @@ module.exports = (app) => ({
   middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
-    const { Protheus } = app.services;
+    const { Protheus, Pg } = app.services;
     const tipo = trim(req.query.tipo), formaPgto = trim(req.query.formaPgto), busca = trim(req.query.busca).toUpperCase();
     const params = { est: ESTATUS_FATURAMENTO };
     const conds = [];
@@ -61,8 +61,28 @@ module.exports = (app) => ({
         formaPgtoCod: trim(r.formaPgtoCod), formaPgtoNome: formaLabel(r.formaPgtoCod),
         clienteCod: trim(r.clienteCod), clienteLoja: trim(r.clienteLoja), clienteNome: trim(r.clienteNome),
         clienteCgc: trim(r.clienteCgc), uf: trim(r.uf), vendCod: trim(r.vendCod), vendNome: trim(r.vendNome),
-        expresso: trim(r.expresso) === 'S', totalPedido: N(r.totalPedido)
+        expresso: trim(r.expresso) === 'S', totalPedido: N(r.totalPedido),
+        acoes: '', observacoes: '', anotadoPor: ''
       }));
+
+      // Anexa ações/observações da Fila de Faturamento (Postgres) — bancos
+      // separados (Protheus=MSSQL), então busca em lote e mescla em JS.
+      if (pedidos.length) {
+        try {
+          const nums = [...new Set(pedidos.map(p => p.pedido).filter(Boolean))];
+          const params2 = {}; nums.forEach((n, i) => { params2['p' + i] = n; });
+          const inNums = nums.map((_, i) => `@p${i}`).join(',');
+          const anot = await Pg.connectAndQuery(
+            `SELECT pedido, acoes, observacoes, atualizado_por_nome
+               FROM tab_fiscal_fatura_anotacao WHERE filial='01' AND pedido IN (${inNums})`, params2);
+          const map = new Map(anot.map(a => [trim(a.pedido), a]));
+          pedidos.forEach(p => {
+            const a = map.get(p.pedido);
+            if (a) { p.acoes = trim(a.acoes); p.observacoes = trim(a.observacoes); p.anotadoPor = trim(a.atualizado_por_nome); }
+          });
+        } catch (e) { console.warn('fila-faturamento anotações:', e.message); }
+      }
+
       const tiposMap = new Map(), formasMap = new Map();
       pedidos.forEach(p => { if (p.tipoCod) tiposMap.set(p.tipoCod, p.tipoNome); if (p.formaPgtoCod) formasMap.set(p.formaPgtoCod, (formasMap.get(p.formaPgtoCod) || 0) + 1); });
       return res.json({
