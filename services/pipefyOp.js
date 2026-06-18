@@ -54,30 +54,45 @@ async function listarTabelas() {
   }));
 }
 
-// Campos da tabela de produtos (p/ mapear codigo/descricao por label)
-async function camposTabela(tableId) {
-  const d = await gql(`query($id: ID!) { table(id: $id) { table_fields { id label type } } }`, { id: tableId });
-  return d.table?.table_fields || [];
-}
-
-// Garante o registro do produto na tabela do Pipefy; devolve o record id.
-async function garantirProdutoPipefy(Pg, produto) {
-  if (trim(produto.id_pipefy)) return trim(produto.id_pipefy);
+// Busca (SOMENTE LEITURA) o registro do produto na tabela do Pipefy pelo código.
+// NUNCA cria registro: só os produtos cadastrados manualmente (com as instruções)
+// são válidos. Devolve o record id, ou null se não houver cadastro.
+async function buscarProdutoPipefy(codigo) {
   const tableId = TABELA_PRODUTOS();
   if (!tableId) throw new Error('PIPEFY_TABELA_PRODUTOS não configurado (use o botão "Tabelas Pipefy" pra descobrir o id).');
+  const cod = trim(codigo);
+  if (!cod) return null;
 
-  const campos = await camposTabela(tableId);
-  const fCod = campos.find(c => /c.?digo/i.test(c.label)) || campos[0];
-  const fDesc = campos.find(c => /descri/i.test(c.label));
-  const attrs = [{ field_id: fCod.id, field_value: produto.codigo }];
-  if (fDesc) attrs.push({ field_id: fDesc.id, field_value: produto.descricao || produto.codigo });
+  const achados = [];
+  let after = null;
+  do {
+    const d = await gql(`query($id: ID!, $a: String) {
+      table_records(table_id: $id, first: 50, after: $a) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { id record_fields { name value } } } } }`, { id: tableId, a: after });
+    for (const e of (d.table_records?.edges || [])) {
+      const f = e.node.record_fields.find(x => /c.?digo/i.test(x.name));
+      if (f && trim(f.value) === cod) {
+        achados.push({ id: trim(e.node.id), preenchidos: e.node.record_fields.filter(x => trim(x.value)).length });
+      }
+    }
+    after = d.table_records?.pageInfo?.hasNextPage ? d.table_records.pageInfo.endCursor : null;
+  } while (after);
 
-  const d = await gql(`mutation($input: CreateTableRecordInput!) {
-    createTableRecord(input: $input) { table_record { id } } }`,
-    { input: { table_id: tableId, fields_attributes: attrs } });
-  const recId = trim(d.createTableRecord?.table_record?.id);
-  if (!recId) throw new Error('Pipefy não devolveu id do registro do produto.');
-  await Pg.connectAndQuery(`UPDATE tab_op_pipefy_produtos SET id_pipefy=@id WHERE codigo=@cod`, { id: recId, cod: produto.codigo });
+  if (!achados.length) return null;
+  // se houver duplicados, fica com o registro mais completo (mais campos preenchidos)
+  achados.sort((a, b) => b.preenchidos - a.preenchidos);
+  return achados[0].id;
+}
+
+// Resolve o record id do produto na tabela do Pipefy (lookup, nunca insert).
+async function garantirProdutoPipefy(Pg, produto) {
+  if (trim(produto.id_pipefy)) return trim(produto.id_pipefy);
+  const recId = await buscarProdutoPipefy(produto.codigo);
+  if (!recId) {
+    throw new Error(`Produto ${trim(produto.codigo)} não cadastrado na tabela "PRODUTO ACABADO" do Pipefy — OP ignorada (sem insert).`);
+  }
+  await Pg.connectAndQuery(`UPDATE tab_op_pipefy_produtos SET id_pipefy=@id WHERE codigo=@cod`, { id: recId, cod: trim(produto.codigo) });
   return recId;
 }
 
