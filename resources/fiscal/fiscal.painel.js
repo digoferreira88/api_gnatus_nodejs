@@ -46,14 +46,17 @@ module.exports = (app) => ({
     const somaImpostos = IMPOSTOS.map(([c]) => `SUM(${c}) ${c}`).join(', ');
 
     try {
-      const [resumo, porEspecie, porCFOP, porTES, porDia, impRows, detalhe] = await Promise.all([
+      const [resumo, porEspecie, porCFOP, porTES, porDia, impRows, detalhe, issRows] = await Promise.all([
         Protheus.connectAndQuery(`SELECT FT_TIPOMOV tipo, COUNT(DISTINCT ${DOCKEY}) docs, COUNT(*) itens, SUM(FT_VALCONT) valor ${FROM} GROUP BY FT_TIPOMOV`, params),
         Protheus.connectAndQuery(`SELECT FT_TIPOMOV tipo, RTRIM(FT_ESPECIE) especie, COUNT(DISTINCT ${DOCKEY}) docs, COUNT(*) itens, SUM(FT_VALCONT) valor ${FROM} GROUP BY FT_TIPOMOV, RTRIM(FT_ESPECIE) ORDER BY SUM(FT_VALCONT) DESC`, params),
         Protheus.connectAndQuery(`SELECT FT_TIPOMOV tipo, RTRIM(FT_CFOP) cfop, COUNT(*) itens, SUM(FT_VALCONT) valor ${FROM} GROUP BY FT_TIPOMOV, RTRIM(FT_CFOP) ORDER BY SUM(FT_VALCONT) DESC`, params),
         Protheus.connectAndQuery(`SELECT FT_TIPOMOV tipo, RTRIM(FT_TES) tes, COUNT(*) itens, SUM(FT_VALCONT) valor ${FROM} GROUP BY FT_TIPOMOV, RTRIM(FT_TES) ORDER BY SUM(FT_VALCONT) DESC`, params),
         Protheus.connectAndQuery(`SELECT ${DATA} dia, FT_TIPOMOV tipo, SUM(FT_VALCONT) valor ${FROM} GROUP BY ${DATA}, FT_TIPOMOV ORDER BY ${DATA}`, params),
         Protheus.connectAndQuery(`SELECT FT_TIPOMOV tipo, ${somaImpostos} ${FROM} GROUP BY FT_TIPOMOV`, params),
-        Protheus.connectAndQuery(`SELECT TOP 10000 FT_TIPOMOV tipo, RTRIM(FT_ESPECIE) especie, RTRIM(FT_SERIE) serie, RTRIM(FT_NFISCAL) doc, ${DATA} data, RTRIM(FT_CFOP) cfop, RTRIM(FT_TES) tes, RTRIM(FT_CLIDEST) cliente, RTRIM(FT_ESTADO) uf, FT_VALCONT valor, FT_BASEICM baseIcm, FT_VALICM icms, FT_VALTST icmsSt, FT_VALIPI ipi, FT_DIFAL difal, FT_VALFECP fcp, FT_ICMSRET icmsRet, FT_VALPIS pis, FT_VALCOF cofins ${FROM} ORDER BY ${DATA} DESC, FT_NFISCAL`, params)
+        Protheus.connectAndQuery(`SELECT TOP 10000 FT_TIPOMOV tipo, RTRIM(FT_ESPECIE) especie, RTRIM(FT_SERIE) serie, RTRIM(FT_NFISCAL) doc, ${DATA} data, RTRIM(FT_CFOP) cfop, RTRIM(FT_TES) tes, RTRIM(FT_CLIDEST) cliente, RTRIM(FT_ESTADO) uf, FT_VALCONT valor, FT_BASEICM baseIcm, FT_VALICM icms, FT_VALTST icmsSt, FT_VALIPI ipi, FT_DIFAL difal, FT_VALFECP fcp, FT_ICMSRET icmsRet, FT_VALPIS pis, FT_VALCOF cofins ${FROM} ORDER BY ${DATA} DESC, FT_NFISCAL`, params),
+        // ISS não é valorado na SFT — vem das ENTRADAS de serviço (SF1010.F1_ISS),
+        // pela data de digitação (entrada). Retido pelo Gnatus (tomador) a recolher.
+        Protheus.connectAndQuery(`SELECT SUM(F1_ISS) iss FROM SF1010 WITH (NOLOCK) WHERE D_E_L_E_T_<>'*' AND F1_FILIAL='01' AND F1_DTDIGIT BETWEEN @ini AND @fim`, { ini, fim })
       ]);
 
       const cell = (r) => ({ docs: N(r && r.docs), itens: N(r && r.itens), valor: +N(r && r.valor).toFixed(2) });
@@ -65,11 +68,20 @@ module.exports = (app) => ({
       // impostos: entrada vs saída + saldo (saída - entrada)
       const impE = impRows.find(r => trim(r.tipo) === 'E') || {};
       const impS = impRows.find(r => trim(r.tipo) === 'S') || {};
-      const impostos = IMPOSTOS.map(([col, nome, categoria]) => {
+      const impostosSft = IMPOSTOS.map(([col, nome, categoria]) => {
         const entrada = +N(impE[col]).toFixed(2), saida = +N(impS[col]).toFixed(2);
         // apuração: saldo = débito(saída) - crédito(entrada). retenção: retido = total a recolher.
         return { nome, categoria, entrada, saida, saldo: +(saida - entrada).toFixed(2), retido: +(entrada + saida).toFixed(2) };
       });
+      // ISS: das entradas de serviço (SF1010); zera se o filtro for só saídas.
+      const issTotal = trim(req.query.tipoMov).toUpperCase() === 'S' ? 0 : +N(issRows[0] && issRows[0].iss).toFixed(2);
+      const issItem = { nome: 'ISS', categoria: 'retencao', entrada: issTotal, saida: 0, saldo: 0, retido: issTotal };
+      // ISS aparece primeiro entre as retenções
+      const impostos = [
+        ...impostosSft.filter(i => i.categoria !== 'retencao'),
+        issItem,
+        ...impostosSft.filter(i => i.categoria === 'retencao')
+      ];
 
       // filtros disponíveis no período (universo sem o filtro específico aplicado — aqui simplificado: do resultado)
       const uniq = (rows, key) => [...new Set(rows.map(r => trim(r[key])).filter(Boolean))].sort();
