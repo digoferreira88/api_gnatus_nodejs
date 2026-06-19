@@ -9,11 +9,17 @@ const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 const toProtheusDate = (iso) => { const s = String(iso || '').replace(/-/g, '').slice(0, 8); return /^\d{8}$/.test(s) ? s : null; };
 
-// impostos: chave da coluna SFT + rótulo
+// impostos: coluna SFT + rótulo + categoria.
+//  - 'apuracao': crédito (entrada) x débito (saída), saldo = débito - crédito.
+//  - 'retencao': valor RETIDO na entrada (Gnatus tomador) p/ recolher depois —
+//    NÃO é crédito. CSLL/PIS/COFINS retidos ficam em FT_VRET*; IRRF/INSS em FT_VAL*.
+//    (ISS não é valorado na SFT010 — fica no módulo de serviços/NFS-e.)
 const IMPOSTOS = [
-  ['FT_VALICM', 'ICMS'], ['FT_VALTST', 'ICMS-ST'], ['FT_VALIPI', 'IPI'], ['FT_DIFAL', 'DIFAL'],
-  ['FT_VALFECP', 'FCP'], ['FT_ICMSRET', 'ICMS Retido'], ['FT_VALPIS', 'PIS'], ['FT_VALCOF', 'COFINS'],
-  ['FT_VALCSL', 'CSLL'], ['FT_VALIRR', 'IRRF'], ['FT_VALINS', 'INSS']
+  ['FT_VALICM', 'ICMS', 'apuracao'], ['FT_VALTST', 'ICMS-ST', 'apuracao'], ['FT_VALIPI', 'IPI', 'apuracao'],
+  ['FT_DIFAL', 'DIFAL', 'apuracao'], ['FT_VALFECP', 'FCP', 'apuracao'], ['FT_ICMSRET', 'ICMS Retido (ST)', 'apuracao'],
+  ['FT_VALPIS', 'PIS', 'apuracao'], ['FT_VALCOF', 'COFINS', 'apuracao'],
+  ['FT_VALIRR', 'IRRF', 'retencao'], ['FT_VALINS', 'INSS', 'retencao'], ['FT_VRETCSL', 'CSLL', 'retencao'],
+  ['FT_VRETPIS', 'PIS Retido', 'retencao'], ['FT_VRETCOF', 'COFINS Retido', 'retencao']
 ];
 
 module.exports = (app) => ({
@@ -59,9 +65,10 @@ module.exports = (app) => ({
       // impostos: entrada vs saída + saldo (saída - entrada)
       const impE = impRows.find(r => trim(r.tipo) === 'E') || {};
       const impS = impRows.find(r => trim(r.tipo) === 'S') || {};
-      const impostos = IMPOSTOS.map(([col, nome]) => {
+      const impostos = IMPOSTOS.map(([col, nome, categoria]) => {
         const entrada = +N(impE[col]).toFixed(2), saida = +N(impS[col]).toFixed(2);
-        return { nome, entrada, saida, saldo: +(saida - entrada).toFixed(2) };
+        // apuração: saldo = débito(saída) - crédito(entrada). retenção: retido = total a recolher.
+        return { nome, categoria, entrada, saida, saldo: +(saida - entrada).toFixed(2), retido: +(entrada + saida).toFixed(2) };
       });
 
       // filtros disponíveis no período (universo sem o filtro específico aplicado — aqui simplificado: do resultado)
