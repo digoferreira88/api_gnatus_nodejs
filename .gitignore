@@ -11,3 +11,6 @@ debug_*.js
 uploads/
 pipe_cards.json
 scripts/_out/
+# Chaves privadas (TOTVS Identity .pk8, etc) — NUNCA versionar
+secrets/
+*.pk8
