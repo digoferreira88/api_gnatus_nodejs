@@ -242,6 +242,9 @@ const CRON_ESTOQUE_SNAPSHOT = '0 3 * * *';  // 03:00 todo dia
 // So roda se PIPEFY_TOKEN estiver no .env (servico fica dormente sem ele).
 const CRON_PIPEFY_OP = '*/15 * * * *';      // a cada 15 minutos
 
+// Transmite: alerta por e-mail quando o token de sessao esta perto de expirar.
+const CRON_TRANSMITE_TOKEN = '0 */3 * * *'; // a cada 3 horas
+
 function start(app) {
   if (jobs.cobranca) jobs.cobranca.cancel();
   jobs.cobranca = schedule.scheduleJob(CRON_DIARIO, async () => {
@@ -294,6 +297,41 @@ function start(app) {
     }
   });
   console.log(`[scheduler] pipefy-op agendado: cron "${CRON_PIPEFY_OP}"`);
+
+  // Transmite - alerta de expiracao do token (e-mail) quando faltam <=12h
+  if (jobs.transmiteToken) jobs.transmiteToken.cancel();
+  jobs.transmiteToken = schedule.scheduleJob(CRON_TRANSMITE_TOKEN, async () => {
+    try {
+      const Transmite = require('./transmite');
+      const emailService = require('./emailService');
+      const { Pg } = app.services;
+      const st = await Transmite.statusToken();
+      if (!st.temToken || st.horasRestantes == null) return;
+      if (st.horasRestantes > 12) return;                 // ainda longe de expirar
+      const r = await Pg.connectAndQuery(`SELECT alertado_em FROM tab_transmite_config WHERE id=1`, {});
+      const last = (r[0] && r[0].alertado_em) ? new Date(r[0].alertado_em).getTime() : 0;
+      if (Date.now() - last < 8 * 3600000) return;        // ja alertou nas ultimas 8h
+      const para = process.env.TRANSMITE_ALERT_TO || process.env.EMAIL_SENDER || 'ti@gnatus.com.br';
+      const url = 'https://intranew.gnatus.com.br/fiscal/token-transmite';
+      const venc = st.expiraEm ? new Date(st.expiraEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '?';
+      const assunto = st.expirado
+        ? '⚠️ Token Transmite EXPIRADO — Painel Fiscal sem NF-e recebidas'
+        : `⚠️ Token Transmite expira em ~${st.horasRestantes}h — renove`;
+      const html = `<div style="font-family:Segoe UI,Arial,sans-serif;color:#1a2740">`
+        + `<h2 style="color:#c0392b">${st.expirado ? 'Token do Transmite EXPIRADO' : 'Token do Transmite perto de expirar'}</h2>`
+        + `<p>${st.expirado ? 'A aba "Pendências (Transmite)" do Painel Fiscal está sem dados até a renovação.' : `Expira em <b>${venc}</b> (~${st.horasRestantes}h).`}</p>`
+        + `<p><b>Como renovar (10s):</b> abra <a href="${url}">Fiscal → Token Transmite</a> na intranet → cole o token novo do painel do Transmite → Salvar.</p>`
+        + `<p style="color:#8093ac;font-size:12px">Alerta automático da intranet.</p></div>`;
+      await emailService.sendEmail({ to: para, subject: assunto, text: `${assunto}\nExpira: ${venc}\nRenove em: ${url}`, html });
+      await Pg.connectAndQuery(
+        `INSERT INTO tab_transmite_config (id, alertado_em, atualizado_em) VALUES (1, NOW(), NOW())
+         ON CONFLICT (id) DO UPDATE SET alertado_em=NOW()`, {});
+      console.log('[scheduler] alerta token Transmite enviado p/', para);
+    } catch (err) {
+      console.error('[scheduler] erro no alerta transmite-token:', err.message);
+    }
+  });
+  console.log(`[scheduler] transmite-token alerta agendado: cron "${CRON_TRANSMITE_TOKEN}"`);
 }
 
 function stop() {

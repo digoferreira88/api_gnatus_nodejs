@@ -27,8 +27,8 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Protheus } = app.services;
-    if (!Transmite.disponivel()) {
-      return res.status(503).json({ message: 'Integração TOTVS Transmite não configurada (TRANSMITE_TOKEN ausente).' });
+    if (!(await Transmite.disponivel())) {
+      return res.status(503).json({ message: 'Integração TOTVS Transmite não configurada — cadastre o token na tela "Token Transmite".' });
     }
 
     // período padrão: mês corrente
