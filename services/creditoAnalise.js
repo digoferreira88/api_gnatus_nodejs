@@ -61,7 +61,43 @@ async function montar({ Pg, Protheus }, cod, loja, opts = {}) {
     `SELECT score_final, classificacao, capturado_em FROM tab_credito_score_hist
       WHERE cliente_cod=@cod AND cliente_loja=@loja ORDER BY capturado_em DESC LIMIT 24`, { cod, loja }).catch(() => []);
 
+  // últimas compras + forma de pagamento (pedidos SC5 do cliente)
+  const FORMAS_PGTO = {
+    '1': 'Cheque', '2': 'Dinheiro', '3': 'Cartão', '4': 'Boleto', '5': 'Não informado',
+    '6': 'Financiamento', '7': 'Cartão BNDES', '8': 'Bonificação', '9': 'Consignado',
+    'A': 'Futuro Garantido', 'B': 'Antecipação Parcelada', '': '—'
+  };
+  let ultimasCompras = [];
+  try {
+    const rows = await Protheus.connectAndQuery(`
+      SELECT TOP 10 RTRIM(sc5.C5_NUM) pedido, sc5.C5_EMISSAO emissao, RTRIM(sc5.C5_FORMAPG) forma,
+             RTRIM(sc5.C5_CONDPAG) cond, CAST(ISNULL(tp6.total,0) AS NUMERIC(14,2)) total
+        FROM SC5010 sc5 WITH (NOLOCK)
+        LEFT JOIN total_pedido_sc6 tp6 WITH (NOLOCK) ON tp6.c6_num = sc5.C5_NUM
+       WHERE sc5.C5_FILIAL='01' AND sc5.D_E_L_E_T_<>'*'
+         AND RTRIM(sc5.C5_CLIENTE)=@cod AND RTRIM(sc5.C5_LOJACLI)=@loja
+       ORDER BY sc5.C5_EMISSAO DESC, sc5.C5_NUM DESC`, { cod, loja });
+    ultimasCompras = rows.map(r => {
+      const f = String(r.forma == null ? '' : r.forma).trim();
+      return {
+        pedido: String(r.pedido || '').trim(), emissao: String(r.emissao || '').trim(),
+        formaCod: f, forma: FORMAS_PGTO[f] || `Forma ${f}`,
+        condPag: String(r.cond || '').trim(), total: Number(r.total || 0)
+      };
+    });
+  } catch (e) { /* best-effort */ }
+
+  // anotações do time (por cliente)
+  let anotacao = { texto: '', por: null, em: null };
+  try {
+    const a = await Pg.connectAndQuery(
+      `SELECT anotacoes, atualizado_por_nome, atualizado_em FROM tab_credito_anotacao WHERE cliente_cod=@cod AND cliente_loja=@loja`, { cod, loja });
+    if (a[0]) anotacao = { texto: String(a[0].anotacoes || ''), por: a[0].atualizado_por_nome || null, em: a[0].atualizado_em || null };
+  } catch (e) { /* tabela pode não existir ainda */ }
+
   return {
+    ultimasCompras,
+    anotacao,
     cliente: base.cliente,
     contexto: opts.contexto || null,
     score: { interno: base.scoreInterno, externo: bureau ? (bureau.score ?? null) : null, final: scoreFinal, pesoExterno, classificacao },
