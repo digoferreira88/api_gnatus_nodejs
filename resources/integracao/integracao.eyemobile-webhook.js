@@ -13,10 +13,12 @@ const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 const fmtBRL = (n) => N(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDataHora = (s) => {
+  const d = new Date(String(s || ''));
+  if (!isNaN(d)) return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
   return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : trim(s);
 };
-// formas de pagamento EyeMobile (type) — fallback p/ rótulo amigável
+// fallback p/ rótulo amigável quando o payload não traz o nome do meio de pgto
 const PAGTO = { 1: 'Dinheiro', 2: 'Crédito', 3: 'Débito', 4: 'Voucher', 5: 'PIX', 6: 'Outros' };
 
 module.exports = (app) => ({
@@ -59,12 +61,13 @@ module.exports = (app) => ({
       if (!para) { console.warn('[eyemobile-wh] EYEMOBILE_NOTIFY_TO não configurado.'); return; }
 
       // monta o e-mail
-      const ponto = trim(trx.point && (trx.point.name || trx.point.label));
+      const ep = trx.event_point || {};
+      const ponto = trim((ep.point && (ep.point.name || ep.point.label)) || (trx.point && (trx.point.name || trx.point.label)));
       const evento = trim(trx.event && (trx.event.name || trx.event.label));
-      const operador = trim(trx.user && (trx.user.name || trx.user.username));
-      const cliente = trim(trx.customer && (trx.customer.name || trx.customer.full_name)) || trim(trx.customer_doc);
+      const operador = trim((trx.user && (trx.user.name || trx.user.username || trx.user.full_name)) || '');
+      const cliente = trim((trx.customer && (trx.customer.name || trx.customer.full_name)) || trx.customer_name || trx.customer_doc);
       const pays = Array.isArray(trx.transaction_pays) ? trx.transaction_pays : [];
-      const formas = pays.map(p => PAGTO[Number(p.type)] || trim(p.name) || `tipo ${trim(p.type)}`).filter(Boolean);
+      const formas = pays.map(p => trim(p.pay_type_name) || trim(p.pay_type && p.pay_type.name) || PAGTO[Number(p.type)] || (p.type != null ? `tipo ${trim(p.type)}` : '')).filter(Boolean);
       const nItens = Array.isArray(trx.transaction_items) ? trx.transaction_items.length : null;
       const docNum = [trim(trx.number), trim(trx.serie)].filter(Boolean).join('/');
 
