@@ -39,7 +39,7 @@ module.exports = (app) => ({
       const prods = await Protheus.connectAndQuery(`
         SELECT TOP 50 RTRIM(B1_COD) cod, RTRIM(B1_DESC) desc1, RTRIM(B1_UM) um
           FROM SB1010 WITH (NOLOCK)
-         WHERE B1_FILIAL='01' AND D_E_L_E_T_<>'*'
+         WHERE D_E_L_E_T_<>'*'
            AND (RTRIM(B1_COD) LIKE @q+'%' OR UPPER(B1_DESC) LIKE '%'+@qU+'%')
          ORDER BY B1_COD`, { q, qU: q.toUpperCase() });
       if (!prods.length) return res.json({ produtos: [], qtdProdutos: 0, cfops: [...new Set(cfops)], aviso: 'Nenhum produto encontrado.', geradoEm: new Date().toISOString() });
