@@ -15,7 +15,8 @@ module.exports = (app) => ({
     const itens = (req.body && req.body.itens) || [];
     if (!Array.isArray(itens) || !itens.length) return res.status(400).json({ message: 'Envie os itens da planilha (aba Geral): [{codigo, valor, descricao}].' });
     try {
-      return res.json(await Eye.calcularAlteracoes(itens));
+      const [alteracoes, cadastros] = await Promise.all([Eye.calcularAlteracoes(itens), Eye.calcularCadastros(itens)]);
+      return res.json({ ...alteracoes, cadastros });
     } catch (err) {
       console.error('eyemobile/precos-preview:', err.message);
       return res.status(502).json({ message: 'Erro ao consultar a EyeMobile: ' + err.message });

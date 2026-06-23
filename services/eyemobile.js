@@ -140,4 +140,103 @@ async function aplicarAlteracoes(itens) {
   return { resultado, geradoEm: new Date().toISOString() };
 }
 
-module.exports = { disponivel, listarProdutosMenu, atualizarPreco, calcularAlteracoes, aplicarAlteracoes, MENUS_ALVO, BASE };
+// ===== Cadastro de produtos faltantes =====
+
+// planilha agrupada por código (coleta as ABAs em que cada produto aparece)
+function _parsePlanilhaMulti(itens) {
+  const m = new Map();
+  (itens || []).forEach(it => {
+    const c = String(it.codigo == null ? '' : it.codigo).trim();
+    const v = Number(it.valor);
+    if (!c || isNaN(v) || v <= 0) return;
+    if (!m.has(c)) m.set(c, { valor: v, descricao: String(it.descricao || '').trim(), abas: new Set() });
+    const aba = String(it.aba || '').trim();
+    if (aba) m.get(c).abas.add(aba);
+  });
+  return m;
+}
+
+// SKUs existentes no catálogo (GET /products)
+async function _catalogoSkus() {
+  const set = new Set(); let off = 0;
+  for (let i = 0; i < 60; i++) {
+    const j = await _req('GET', `/products?limit=100&offset=${off}`);
+    const d = (j && j.data) || [];
+    d.forEach(p => { const s = String(p.sku || '').trim(); if (s) set.add(s); });
+    if (!j || !j.has_more) break;
+    off += 100;
+  }
+  return set;
+}
+
+// Map(ABA-nome-MAIÚSCULO -> product_group_id) de um cardápio.
+async function gruposDoMenu(menuId) {
+  const mg = await _req('GET', `/menus/${menuId}/product_groups?limit=100&offset=0`);
+  const ids = (((mg && mg.data) || []).map(g => String(g.id)));
+  const nomeById = new Map(); let off = 0;
+  for (let i = 0; i < 20; i++) {
+    const j = await _req('GET', `/product_groups?limit=100&offset=${off}`);
+    const d = (j && j.data) || [];
+    d.forEach(g => nomeById.set(String(g.id), String(g.name || '').trim().toUpperCase()));
+    if (!j || !j.has_more) break;
+    off += 100;
+  }
+  const map = new Map();
+  ids.forEach(id => { const nm = nomeById.get(id); if (nm && !map.has(nm)) map.set(nm, id); });
+  return map;
+}
+
+// PREVIEW dos cadastros: o que dá pra criar (novo+limpo) e o que precisa revisão.
+async function calcularCadastros(itens) {
+  const planilha = _parsePlanilhaMulti(itens);
+  const [catalogo, menuPrinc, g49456, g54643] = await Promise.all([
+    _catalogoSkus(), listarProdutosMenu('49456'), gruposDoMenu('49456'), gruposDoMenu('54643')
+  ]);
+  const noMenu = new Set(menuPrinc.map(p => p.sku));
+  const gruposPorMenu = { '49456': g49456, '54643': g54643 };
+  const criar = [], revisar = [];
+  for (const [codigo, info] of planilha) {
+    if (noMenu.has(codigo)) continue;                       // já está no cardápio principal
+    const abas = [...info.abas];
+    if (/[\s+/]/.test(codigo)) { revisar.push({ codigo, nome: info.descricao, motivo: 'Código composto/combo — cadastrar manual' }); continue; }
+    if (catalogo.has(codigo)) { revisar.push({ codigo, nome: info.descricao, motivo: 'SKU já existe no catálogo — adicionar ao cardápio manualmente' }); continue; }
+    const destinos = [];
+    for (const mn of MENUS_ALVO) {
+      const gmap = gruposPorMenu[mn.menuId];
+      for (const aba of abas) {
+        const gid = gmap.get(aba.toUpperCase());
+        if (gid) destinos.push({ menuId: mn.menuId, menuNome: mn.nome, aba, groupId: gid, preco: round2(info.valor * mn.fator) });
+      }
+    }
+    if (!destinos.length) { revisar.push({ codigo, nome: info.descricao, motivo: `Grupo (ABA: ${abas.join('/') || '—'}) não encontrado nos cardápios` }); continue; }
+    criar.push({ codigo, nome: info.descricao, valor: info.valor, abas, destinos });
+  }
+  return { criar, revisar, qtdCriar: criar.length, qtdRevisar: revisar.length };
+}
+
+// APLICAR: cria o produto-catálogo (1x) e adiciona aos cardápios/grupos. Recalcula
+// no servidor (não confia no cliente). Só cria os "novos+limpos".
+async function aplicarCadastros(itens) {
+  const prev = await calcularCadastros(itens);
+  const resultado = [];
+  for (const c of prev.criar) {
+    try {
+      const novo = await _req('POST', '/products', { name: c.nome.slice(0, 120) || c.codigo, sku: c.codigo, status: 1 });
+      const produtoId = String((novo && (novo.id || (novo.data && novo.data.id) || novo.product_id)) || '').trim();
+      if (!produtoId) throw new Error('catálogo não retornou id do produto');
+      let adic = 0; const erros = [];
+      for (const d of c.destinos) {
+        try {
+          await _req('POST', `/menus/${d.menuId}/products`, { product_id: produtoId, price: d.preco, measure: 1, available_for_sale: true, set_price_on_catalog: false, product_group_id: d.groupId });
+          adic++;
+        } catch (e) { if (erros.length < 6) erros.push(`${d.menuId}/${d.aba}: ${e.message}`); }
+      }
+      resultado.push({ codigo: c.codigo, nome: c.nome, produtoId, adicionados: adic, destinos: c.destinos.length, erros });
+    } catch (e) {
+      resultado.push({ codigo: c.codigo, nome: c.nome, erro: e.message });
+    }
+  }
+  return { resultado, ignorados: prev.revisar, geradoEm: new Date().toISOString() };
+}
+
+module.exports = { disponivel, listarProdutosMenu, atualizarPreco, calcularAlteracoes, aplicarAlteracoes, calcularCadastros, aplicarCadastros, gruposDoMenu, MENUS_ALVO, BASE };
