@@ -135,7 +135,7 @@ async function atualizarCard(cardId, opRow, idProdutoPipefy) {
 
 // ---------- Sincronizacao principal ----------
 async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
-  const resumo = { origem, opsVistas: 0, cardsCriados: 0, cardsAtualizados: 0, erros: 0, detalhes: [] };
+  const resumo = { origem, opsVistas: 0, cardsCriados: 0, cardsAtualizados: 0, naoMudou: 0, erros: 0, detalhes: [] };
   const logar = async () => {
     try {
       await Pg.connectAndQuery(
@@ -171,6 +171,13 @@ async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
     };
 
     try {
+      // estado ANTERIOR (antes de sobrescrever) — p/ detectar mudança real e NÃO
+      // reescrever o card a cada ciclo (cada updateCardField vira evento no
+      // histórico do Pipefy, atribuído ao dono do token).
+      const ant = (await Pg.connectAndQuery(
+        `SELECT id_pipefy, RTRIM(produto) produto, TO_CHAR(inicio,'YYYY-MM-DD') inicio, TO_CHAR(fim,'YYYY-MM-DD') fim
+           FROM tab_op_pipefy_ops WHERE op=@op AND numserie=@ns`, { op: opRow.op, ns: opRow.numserie }))[0] || null;
+
       // 3) Upsert do estado
       const estado = (await Pg.connectAndQuery(
         `INSERT INTO tab_op_pipefy_ops (op, numserie, produto, descricao, inicio, fim)
@@ -185,15 +192,21 @@ async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
       const idProdutoPipefy = await garantirProdutoPipefy(Pg, { ...prod, codigo: opRow.produto, descricao: opRow.descricao });
       if (prod && !trim(prod.id_pipefy)) prod.id_pipefy = idProdutoPipefy;
 
+      // mudou algum campo que vai pro card? (produto/início/término)
+      const mudou = !ant || trim(ant.produto) !== opRow.produto
+        || trim(ant.inicio) !== trim(opRow.inicio) || trim(ant.fim) !== trim(opRow.fim);
+
       // 5) Card
       if (!trim(estado.id_pipefy)) {
         const cardId = await criarCard(opRow, idProdutoPipefy);
         await Pg.connectAndQuery(`UPDATE tab_op_pipefy_ops SET id_pipefy=@c, erro=NULL, atualizado_em=NOW() WHERE id=@id`, { c: cardId, id: estado.id });
         resumo.cardsCriados++;
-      } else {
+      } else if (mudou) {
         await atualizarCard(trim(estado.id_pipefy), opRow, idProdutoPipefy);
         await Pg.connectAndQuery(`UPDATE tab_op_pipefy_ops SET erro=NULL, atualizado_em=NOW() WHERE id=@id`, { id: estado.id });
         resumo.cardsAtualizados++;
+      } else {
+        resumo.naoMudou++;   // nada mudou — não toca no card (evita ruído no histórico)
       }
     } catch (e) {
       resumo.erros++;
@@ -207,7 +220,7 @@ async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
   }
 
   await logar();
-  console.log(`[pipefy-op] ${origem}: vistas=${resumo.opsVistas} criados=${resumo.cardsCriados} atualizados=${resumo.cardsAtualizados} erros=${resumo.erros}`);
+  console.log(`[pipefy-op] ${origem}: vistas=${resumo.opsVistas} criados=${resumo.cardsCriados} atualizados=${resumo.cardsAtualizados} naoMudou=${resumo.naoMudou} erros=${resumo.erros}`);
   return resumo;
 }
 
