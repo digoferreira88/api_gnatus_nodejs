@@ -1,7 +1,7 @@
 // GET /integracao/op-sync-status — status da integracao OP -> Pipefy:
-// configuracao, ultimas execucoes e ultimas OPs sincronizadas. Perm 1033.
+// configuracao, ultimas execucoes e ultimas OPs sincronizadas. Perm 3004 (Planejamento).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1033]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([3004]);
 const PipefyOp = require('../../services/pipefyOp');
 const trim = (v) => String(v == null ? '' : v).trim();
 

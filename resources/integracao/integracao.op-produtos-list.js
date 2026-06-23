@@ -1,7 +1,7 @@
 // GET /integracao/op-produtos — lista os produtos monitorados pela automacao
-// OP -> Pipefy (gestao pela intranet). Permissao 1033.
+// OP -> Pipefy (modulo Planejamento). Permissao 3004.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1033]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([3004]);
 const trim = (v) => String(v == null ? '' : v).trim();
 
 module.exports = (app) => ({

@@ -1,7 +1,7 @@
 // POST /integracao/op-sync — roda a sincronizacao OP -> Pipefy agora (manual).
-// Perm 1033.
+// Perm 3004 (modulo Planejamento).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1033]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([3004]);
 const PipefyOp = require('../../services/pipefyOp');
 const Auditoria = require('../../services/auditoria');
 

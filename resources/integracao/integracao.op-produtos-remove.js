@@ -1,7 +1,7 @@
 // DELETE /integracao/op-produtos/:codigo — remove um produto da lista da
-// automacao OP -> Pipefy. Perm 1033.
+// automacao OP -> Pipefy. Perm 3004.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1033]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([3004]);
 const Auditoria = require('../../services/auditoria');
 const trim = (v) => String(v == null ? '' : v).trim();
 

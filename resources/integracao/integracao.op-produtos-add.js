@@ -1,8 +1,8 @@
 // POST /integracao/op-produtos { codigo }
 // Adiciona um produto a lista monitorada pela automacao OP -> Pipefy.
-// Valida o codigo no SB1 (precisa existir) e guarda a descricao. Perm 1033.
+// Valida o codigo no SB1 (precisa existir) e guarda a descricao. Perm 3004.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1033]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([3004]);
 const Auditoria = require('../../services/auditoria');
 const trim = (v) => String(v == null ? '' : v).trim();
 
