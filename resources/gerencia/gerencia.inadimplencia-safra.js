@@ -7,8 +7,8 @@
 //   - aberto    = SUM(E1_SALDO) em aberto (vencido + a vencer)
 //   e as versões "sem acordos" (excluindo clientes EM NEGOCIAÇÃO — quem está
 //   com status NEGOCIANDO ou ACORDO_EM_ANDAMENTO no módulo de Cobrança).
-// Clientes com status PERDA são removidos por completo da análise (não entram
-// nem no faturado da safra nem na inadimplência).
+// Clientes com status PERDA, JURÍDICO, DEVOLUÇÃO ou RETENÇÃO são removidos por
+// completo da análise (não entram nem no faturado da safra nem na inadimplência).
 // Mantém o dashboard de Cobrança intacto — é uma visão paralela em Gerência.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10001, 0]);
@@ -57,13 +57,15 @@ module.exports = (app) => ({
         : `1=0`;
       const condNegoc = keysToSql(negocKeys);
 
-      // 1b) clientes com status PERDA — removidos por completo da análise
-      //     (não entram no faturado da safra nem na inadimplência).
-      const perdaRows = await Pg.connectAndQuery(
+      // 1b) clientes removidos POR COMPLETO da análise (não entram no faturado
+      //     da safra nem na inadimplência) — status que não são inadimplência
+      //     comercial ativa: PERDA, JURÍDICO, DEVOLUÇÃO e RETENÇÃO.
+      const STATUS_FORA = ['PERDA', 'JURIDICO', 'DEVOLUCAO', 'RETENCAO'];
+      const foraRows = await Pg.connectAndQuery(
         `SELECT cliente_cod, cliente_loja FROM tab_cobranca_status_cliente
-           WHERE UPPER(TRIM(status)) = 'PERDA'`, {});
-      const perdaKeys = perdaRows.map(r => `${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`);
-      const filtroPerda = `AND NOT (${keysToSql(perdaKeys)})`;
+           WHERE UPPER(TRIM(status)) IN (${STATUS_FORA.map(s => `'${s}'`).join(', ')})`, {});
+      const foraKeys = foraRows.map(r => `${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`);
+      const filtroFora = `AND NOT (${keysToSql(foraKeys)})`;
 
       const filtroForma = forma ? `AND se1.E1_FORMAPG = @forma` : '';
       const sql = `
@@ -78,7 +80,7 @@ module.exports = (app) => ({
             ON c5.C5_FILIAL = se1.E1_FILIAL AND RTRIM(c5.C5_NUM) = RTRIM(se1.E1_PEDIDO) AND c5.D_E_L_E_T_ <> '*'
          WHERE se1.D_E_L_E_T_ <> '*' AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
            AND LEFT(se1.E1_EMISSAO,4) BETWEEN @anoMin AND @anoMax
-           ${filtroPerda}
+           ${filtroFora}
            ${filtroForma}
          GROUP BY LEFT(se1.E1_EMISSAO,4), RTRIM(c5.C5_ZTIPO)`;
       const rows = await Protheus.connectAndQuery(sql, { anoMin: String(anoMin), anoMax: String(anoMax), forma });
@@ -125,7 +127,7 @@ module.exports = (app) => ({
         anos,
         forma: forma || 'todas',
         negociacaoConfigurada: negocKeys.length,   // 0 = "sem acordos" sai igual ao "total"
-        perdaExcluidos: perdaKeys.length,          // clientes status PERDA fora da análise
+        excluidosAnalise: foraKeys.length,         // clientes PERDA/JURIDICO/DEVOLUCAO/RETENCAO fora da análise
         canais: canaisOut,
         total: totalOut
       });
