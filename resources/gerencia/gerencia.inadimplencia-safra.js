@@ -5,7 +5,8 @@
 //   - faturado  = SUM(E1_VALOR) dos títulos emitidos no ano (denominador)
 //   - vencido   = SUM(E1_SALDO) em aberto e vencido hoje
 //   - aberto    = SUM(E1_SALDO) em aberto (vencido + a vencer)
-//   e as versões "sem acordos" (excluindo clientes em carteira=NEGOCIACAO).
+//   e as versões "sem acordos" (excluindo clientes EM NEGOCIAÇÃO — quem está
+//   com status NEGOCIANDO ou ACORDO_EM_ANDAMENTO no módulo de Cobrança).
 // Mantém o dashboard de Cobrança intacto — é uma visão paralela em Gerência.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10001, 0]);
@@ -38,9 +39,15 @@ module.exports = (app) => ({
       const anos = [];
       for (let a = anoMin; a <= anoMax; a++) anos.push(String(a));
 
-      // 1) clientes em NEGOCIACAO (conjunto a excluir no "sem acordos")
+      // 1) clientes EM NEGOCIAÇÃO (conjunto a excluir no "sem acordos"):
+      //    quem está com status NEGOCIANDO ou ACORDO_EM_ANDAMENTO na Cobrança,
+      //    mais qualquer cliente marcado manualmente na carteira NEGOCIACAO.
       const negocRows = await Pg.connectAndQuery(
-        `SELECT cliente_cod, cliente_loja FROM tab_cobranca_atribuicao WHERE UPPER(TRIM(carteira)) = 'NEGOCIACAO'`, {});
+        `SELECT cliente_cod, cliente_loja FROM tab_cobranca_status_cliente
+           WHERE UPPER(TRIM(status)) IN ('NEGOCIANDO', 'ACORDO_EM_ANDAMENTO')
+         UNION
+         SELECT cliente_cod, cliente_loja FROM tab_cobranca_atribuicao
+           WHERE UPPER(TRIM(carteira)) = 'NEGOCIACAO'`, {});
       const negocKeys = negocRows.map(r => `${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`);
       // condição SQL p/ a parcela em negociação (false se ninguém classificado)
       const condNegoc = negocKeys.length
