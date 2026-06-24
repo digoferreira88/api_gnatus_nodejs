@@ -11,7 +11,7 @@
 // completo da análise (não entram nem no faturado da safra nem na inadimplência).
 // Mantém o dashboard de Cobrança intacto — é uma visão paralela em Gerência.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10001, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10002, 0]);
 const trim = (v) => String(v == null ? '' : v).trim();
 const num = (v) => Number(v || 0);
 
