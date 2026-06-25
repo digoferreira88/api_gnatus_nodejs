@@ -3,7 +3,7 @@
 // e BLEND do score externo com o interno + travas duras (protesto/restrição).
 // Adapter pluggável: services/bureau/<fonte>.js.
 
-const ADAPTERS = { quod: require('./bureau/quod') };
+const ADAPTERS = { quod: require('./bureau/quod'), faro: require('./bureau/faro') };
 const round1 = (v) => Math.round((Number(v) || 0) * 10) / 10;
 
 const CFG_DEFAULT = { fonteAtiva: 'quod', pesoExterno: 0.4, cacheTtlDias: 30, tetoProtestoAtivo: 400, tetoRestricaoGrave: 500 };
