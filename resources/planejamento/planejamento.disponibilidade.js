@@ -143,8 +143,16 @@ module.exports = (app) => ({
       ORDER BY d4_data
     `;
 
+    // Descrição do produto (SB1, cadastro compartilhado — sem filtro de filial).
+    // Independe de ter saldo: descrição vazia = código inexistente no cadastro.
+    const sqlDesc = `
+      SELECT TOP 1 RTRIM(B1_DESC) AS descricao
+      FROM dbo.SB1010 WITH (NOLOCK)
+      WHERE RTRIM(B1_COD) = @codigo AND D_E_L_E_T_ <> '*'
+    `;
+
     try {
-      const [stock, sc1, sc6, sc6Res, sc0, sc7, sc2, sd4] = await Promise.all([
+      const [stock, sc1, sc6, sc6Res, sc0, sc7, sc2, sd4, prod] = await Promise.all([
         Protheus.connectAndQuery(sqlStock, params),
         Protheus.connectAndQuery(sqlSC1, params),
         Protheus.connectAndQuery(sqlSC6Base('<>'), params),
@@ -152,8 +160,11 @@ module.exports = (app) => ({
         Protheus.connectAndQuery(sqlSC0, params),
         Protheus.connectAndQuery(sqlSC7, params),
         Protheus.connectAndQuery(sqlSC2, params),
-        Protheus.connectAndQuery(sqlSD4, params)
+        Protheus.connectAndQuery(sqlSD4, params),
+        Protheus.connectAndQuery(sqlDesc, params)
       ]);
+
+      const descricao = trim(prod[0] && prod[0].descricao);
 
       // ---------- Breakdown + armazéns ----------
       let disponibilidadeAtual = 0;
@@ -300,6 +311,7 @@ module.exports = (app) => ({
 
       return res.json({
         produto: codigoParam,
+        descricao,
         armazem: armazemParam,
         data: targetDate,
         disponibilidadeAtual,
