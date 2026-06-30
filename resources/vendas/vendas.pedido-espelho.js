@@ -4,6 +4,7 @@
 //   um resumo do andamento. Somente leitura. Perm 2006.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([2007, 0]);
+const Estatus = require('../../services/vendasEstatus');
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 
@@ -20,13 +21,6 @@ const CAMPOS_OBS = [
   { campo: 'obsplan', label: 'Obs. Planejamento' },
   { campo: 'menpad', label: 'Mensagem Padrão' }
 ];
-
-function statusPedido(nota, blq, liberok) {
-  if (trim(nota)) return { codigo: 'FATURADO', label: 'Faturado' };
-  if (trim(blq) === '1') return { codigo: 'BLOQUEADO', label: 'Bloqueado' };
-  if (trim(liberok) === 'S') return { codigo: 'LIBERADO', label: 'Liberado' };
-  return { codigo: 'EM_ABERTO', label: 'Em aberto' };
-}
 
 module.exports = (app) => ({
   verb: 'get',
@@ -76,8 +70,12 @@ module.exports = (app) => ({
                sc6.C6_QTDVEN qtdVen, sc6.C6_QTDENT qtdEnt, (sc6.C6_QTDVEN - sc6.C6_QTDENT) saldo,
                sc6.C6_PRCVEN prcVen, sc6.C6_VALOR valor, RTRIM(sc6.C6_LOCAL) local,
                RTRIM(sc6.C6_TES) tes, RTRIM(sc6.C6_CF) cfop, RTRIM(sc6.C6_BLQ) blq,
-               sc6.C6_ENTREG entrega, RTRIM(sc6.C6_NOTA) nota, RTRIM(sc6.C6_SERIE) serieNf
+               sc6.C6_ENTREG entrega, RTRIM(sc6.C6_NOTA) nota, RTRIM(sc6.C6_SERIE) serieNf,
+               pe.cod estCod
           FROM SC6010 sc6 WITH (NOLOCK)
+          LEFT JOIN (SELECT c6_filial, c6_num, c6_item, c6_produto, MIN(estatus_cod) cod
+                       FROM pedidos_estatus WHERE c6_num=@p GROUP BY c6_filial, c6_num, c6_item, c6_produto) pe
+            ON pe.c6_filial=sc6.C6_FILIAL AND pe.c6_num=sc6.C6_NUM AND pe.c6_item=sc6.C6_ITEM AND pe.c6_produto=sc6.C6_PRODUTO
          WHERE sc6.C6_FILIAL='01' AND sc6.C6_NUM=@p AND sc6.D_E_L_E_T_<>'*'
          ORDER BY sc6.C6_ITEM`, { p: pedido });
 
@@ -87,8 +85,13 @@ module.exports = (app) => ({
         local: trim(r.local), tes: trim(r.tes), cfop: trim(r.cfop),
         entrega: trim(r.entrega), nota: trim(r.nota), serieNf: trim(r.serieNf),
         faturado: trim(r.nota) !== '',
-        bloqueado: trim(r.blq) !== '' && trim(r.blq) !== ' '
+        bloqueado: trim(r.blq) !== '' && trim(r.blq) !== ' ',
+        situacao: Estatus.info(r.estCod)
       }));
+
+      // Status do PEDIDO = estágio do gargalo (menor estatus_cod entre os itens).
+      const codsItens = itens.map(i => i.situacao.cod).filter(v => v != null);
+      const statusPed = Estatus.info(codsItens.length ? Math.min(...codsItens) : null);
 
       const andamento = {
         totalItens: itens.length,
@@ -100,7 +103,7 @@ module.exports = (app) => ({
 
       return res.json({
         pedido,
-        status: statusPedido(c.nota, c.blq, c.liberok),
+        status: statusPed,
         cabecalho: {
           emissao: trim(c.emissao), tipoCod: trim(c.tipoCod), tipoNome: trim(c.tipoNome) || trim(c.tipoCod),
           clienteCod: trim(c.clienteCod), clienteLoja: trim(c.clienteLoja), clienteNome: trim(c.clienteNome),
