@@ -1,9 +1,9 @@
 // GET /vendas/pedidos — lista pedidos de venda (SC5) com filtros para o
 // "Espelho de Pedidos". Cabeçalho + total + status resumido. Somente leitura.
 // Filtros: inicio/fim (C5_EMISSAO, obrigatórios), numero, cliente (cod ou nome),
-// vendedor (cod ou nome). Perm 2006.
+// vendedor (cod ou nome). Perm 2007.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([2006, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([2007, 0]);
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 const toProtheusDate = (iso) => {

@@ -3,7 +3,7 @@
 //   observações, itens (qtd vendida/entregue/saldo, preço, total, faturado) e
 //   um resumo do andamento. Somente leitura. Perm 2006.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([2006, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([2007, 0]);
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 
