@@ -5,11 +5,11 @@
 //   - faturado  = SUM(E1_VALOR) dos títulos emitidos no ano (denominador)
 //   - vencido   = SUM(E1_SALDO) em aberto e vencido hoje
 //   - aberto    = SUM(E1_SALDO) em aberto (vencido + a vencer)
-//   e as versões "sem acordos" (excluindo clientes EM NEGOCIAÇÃO — quem está
-//   com status NEGOCIANDO ou ACORDO_EM_ANDAMENTO no módulo de Cobrança).
-// Clientes com status DEVOLUÇÃO, RETENÇÃO ou AJUSTE INTERNO são removidos por
-// completo da análise (não entram nem no faturado da safra nem na inadimplência).
-// JURÍDICO e PERDA contam como inadimplência normal — 01/07/2026.
+//   e as versões "sem acordos" (descontando clientes com status NEGOCIANDO,
+//   ACORDO_EM_ANDAMENTO ou RETENÇÃO no módulo de Cobrança).
+// Clientes com status DEVOLUÇÃO ou AJUSTE INTERNO são removidos por completo da
+// análise. JURÍDICO e PERDA contam como inadimplência. RETENÇÃO permanece no
+// Total mas é descontada de "Sem acordos" (como NEGOCIANDO/ACORDO EM ANDAMENTO) — 01/07/2026.
 // Mantém o dashboard de Cobrança intacto — é uma visão paralela em Gerência.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10002, 0]);
@@ -42,12 +42,12 @@ module.exports = (app) => ({
       const anos = [];
       for (let a = anoMin; a <= anoMax; a++) anos.push(String(a));
 
-      // 1) clientes EM NEGOCIAÇÃO (conjunto a excluir no "sem acordos"):
-      //    quem está com status NEGOCIANDO ou ACORDO_EM_ANDAMENTO na Cobrança,
+      // 1) clientes DESCONTADOS do "sem acordos" (mas presentes no Total):
+      //    status NEGOCIANDO, ACORDO_EM_ANDAMENTO ou RETENÇÃO na Cobrança,
       //    mais qualquer cliente marcado manualmente na carteira NEGOCIACAO.
       const negocRows = await Pg.connectAndQuery(
         `SELECT cliente_cod, cliente_loja FROM tab_cobranca_status_cliente
-           WHERE UPPER(TRIM(status)) IN ('NEGOCIANDO', 'ACORDO_EM_ANDAMENTO')
+           WHERE UPPER(TRIM(status)) IN ('NEGOCIANDO', 'ACORDO_EM_ANDAMENTO', 'RETENCAO')
          UNION
          SELECT cliente_cod, cliente_loja FROM tab_cobranca_atribuicao
            WHERE UPPER(TRIM(carteira)) = 'NEGOCIACAO'`, {});
@@ -59,9 +59,10 @@ module.exports = (app) => ({
       const condNegoc = keysToSql(negocKeys);
 
       // 1b) clientes removidos POR COMPLETO da análise (não entram no faturado
-      //     da safra nem na inadimplência): DEVOLUÇÃO, RETENÇÃO e AJUSTE INTERNO.
-      //     (JURÍDICO e PERDA são reconsiderados — contam como inadimplência.)
-      const STATUS_FORA = ['DEVOLUCAO', 'RETENCAO', 'AJUSTE_INTERNO'];
+      //     da safra nem na inadimplência): DEVOLUÇÃO e AJUSTE INTERNO.
+      //     (JURÍDICO e PERDA contam normal; RETENÇÃO fica no Total mas é
+      //     descontada do "Sem acordos" — tratada junto da negociação, acima.)
+      const STATUS_FORA = ['DEVOLUCAO', 'AJUSTE_INTERNO'];
       const foraRows = await Pg.connectAndQuery(
         `SELECT cliente_cod, cliente_loja FROM tab_cobranca_status_cliente
            WHERE UPPER(TRIM(status)) IN (${STATUS_FORA.map(s => `'${s}'`).join(', ')})`, {});
