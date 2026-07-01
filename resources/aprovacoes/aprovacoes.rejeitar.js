@@ -4,6 +4,7 @@
 const trim = (v) => String(v || '').trim();
 const tiposValidos = new Set(['SC', 'PC']);
 const Auditoria = require('../../services/auditoria');
+const { ehConexao, MSG_INDISPONIVEL } = require('../../services/protheusErro');
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([13001]);
 
@@ -64,7 +65,9 @@ module.exports = (app) => ({
 
     if (!isAdmin) {
       const tipoFiltro = tipoIntranet === 'PC' ? 'IP' : 'SC';
-      const elegivel = await Protheus.connectAndQuery(`
+      let elegivel;
+      try {
+        elegivel = await Protheus.connectAndQuery(`
         SELECT TOP 1 1 elegivel
           FROM SCR010 scr WITH (NOLOCK)
           LEFT JOIN SAL010 sal WITH (NOLOCK)
@@ -77,8 +80,12 @@ module.exports = (app) => ({
            AND scr.CR_STATUS = '02'
            AND RTRIM(ISNULL(scr.CR_LIBAPRO, '')) = ''
            AND (scr.CR_USER = @cod OR sal.AL_USER = @cod)`,
-        { cod: codProth, num: numero, tipo: tipoFiltro }
-      );
+          { cod: codProth, num: numero, tipo: tipoFiltro }
+        );
+      } catch (err) {
+        if (ehConexao(err)) { await logar(false, err.message); return res.status(503).json({ ok: false, message: MSG_INDISPONIVEL, conexao: true }); }
+        throw err;
+      }
       if (!elegivel.length) {
         const msg = `Sem alcada pra rejeitar ${tipoIntranet} ${numero} (nao consta na sua fila).`;
         await logar(false, msg);
@@ -99,7 +106,10 @@ module.exports = (app) => ({
         { cod: codProth }
       );
       login = trim(r[0]?.login);
-    } catch (e) { console.error('Erro ao buscar USR_CODIGO:', e.message); }
+    } catch (e) {
+      console.error('Erro ao buscar USR_CODIGO:', e.message);
+      if (ehConexao(e)) { await logar(false, e.message); return res.status(503).json({ ok: false, message: MSG_INDISPONIVEL, conexao: true }); }
+    }
     if (!login) {
       const msg = `Usuário código ${codProth} não localizado em SYS_USR (USR_CODIGO vazio).`;
       await logar(false, msg);
@@ -143,13 +153,14 @@ module.exports = (app) => ({
       return res.json({ ok: true, status: r.status, response: (() => { try { return JSON.parse(txt); } catch { return txt; } })() });
     } catch (err) {
       await logar(false, err.message);
+      const conexao = ehConexao(err);
       Auditoria.registrar(app, {
         modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'REJECT_ERROR', severidade: 'CRITICO',
         req, entidade: tipoIntranet === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
         descricao: `Erro ao chamar Protheus em rejeicao de ${tipoIntranet} ${numero}: ${err.message}`,
-        meta: { tipo: tipoIntranet, numero, erro: err.message }
+        meta: { tipo: tipoIntranet, numero, erro: err.message, conexao }
       });
-      return res.status(500).json({ ok: false, message: 'Erro ao chamar Protheus: ' + err.message });
+      return res.status(conexao ? 503 : 500).json({ ok: false, message: conexao ? MSG_INDISPONIVEL : ('Erro ao chamar Protheus: ' + err.message), conexao });
     }
   }
 });
