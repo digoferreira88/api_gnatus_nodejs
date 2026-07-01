@@ -7,8 +7,9 @@
 //   - aberto    = SUM(E1_SALDO) em aberto (vencido + a vencer)
 //   e as versões "sem acordos" (excluindo clientes EM NEGOCIAÇÃO — quem está
 //   com status NEGOCIANDO ou ACORDO_EM_ANDAMENTO no módulo de Cobrança).
-// Clientes com status PERDA, JURÍDICO, DEVOLUÇÃO ou RETENÇÃO são removidos por
-// completo da análise (não entram nem no faturado da safra nem na inadimplência).
+// Clientes com status DEVOLUÇÃO ou RETENÇÃO são removidos por completo da análise
+// (não entram nem no faturado da safra nem na inadimplência). JURÍDICO e PERDA
+// voltaram a ser considerados (contam como inadimplência normal) — 01/07/2026.
 // Mantém o dashboard de Cobrança intacto — é uma visão paralela em Gerência.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10002, 0]);
@@ -58,9 +59,9 @@ module.exports = (app) => ({
       const condNegoc = keysToSql(negocKeys);
 
       // 1b) clientes removidos POR COMPLETO da análise (não entram no faturado
-      //     da safra nem na inadimplência) — status que não são inadimplência
-      //     comercial ativa: PERDA, JURÍDICO, DEVOLUÇÃO e RETENÇÃO.
-      const STATUS_FORA = ['PERDA', 'JURIDICO', 'DEVOLUCAO', 'RETENCAO'];
+      //     da safra nem na inadimplência): DEVOLUÇÃO e RETENÇÃO. (JURÍDICO e
+      //     PERDA voltaram a ser reconsiderados — contam como inadimplência.)
+      const STATUS_FORA = ['DEVOLUCAO', 'RETENCAO'];
       const foraRows = await Pg.connectAndQuery(
         `SELECT cliente_cod, cliente_loja FROM tab_cobranca_status_cliente
            WHERE UPPER(TRIM(status)) IN (${STATUS_FORA.map(s => `'${s}'`).join(', ')})`, {});
