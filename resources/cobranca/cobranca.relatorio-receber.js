@@ -6,7 +6,8 @@
 // juros por dias de atraso (3% a.m. se conta 'FUNDOS', senão 2% a.m.) — mesma
 // fórmula do PHP. Backend devolve JSON; o XLSX é montado no frontend.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003, 9004]);
+// Cobrança (9001-9004) + Financeiro/Contas a Receber (8002) — o export vive nos dois módulos.
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003, 9004, 8002, 0]);
 const trim = (v) => String(v == null ? '' : v).trim();
 const toNumber = (v) => Number(v || 0);
 
