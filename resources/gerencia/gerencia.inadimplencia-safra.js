@@ -1,7 +1,8 @@
 // GET /gerencia/inadimplencia-safra
-// Visão DIRETORIA da inadimplência: % sobre a SAFRA (ano de emissão do título),
-// nos títulos com a forma de pagamento escolhida (default boleto). Para cada
-// canal (C5_ZTIPO) x ano de emissão calcula:
+// Visão DIRETORIA da inadimplência: % sobre a SAFRA = ano de emissão do PEDIDO
+// de venda (C5_EMISSAO; fallback = emissão do título quando não há pedido), nos
+// títulos com a forma de pagamento escolhida (default boleto). Para cada
+// canal (C5_ZTIPO) x ano da safra calcula:
 //   - faturado  = SUM(E1_VALOR) dos títulos emitidos no ano (denominador)
 //   - vencido   = SUM(E1_SALDO) em aberto e vencido hoje
 //   - aberto    = SUM(E1_SALDO) em aberto (vencido + a vencer)
@@ -70,8 +71,11 @@ module.exports = (app) => ({
       const filtroFora = `AND NOT (${keysToSql(foraKeys)})`;
 
       const filtroForma = forma ? `AND se1.E1_FORMAPG = @forma` : '';
+      // Safra = ANO DO PEDIDO DE VENDA (C5_EMISSAO). Fallback p/ a emissão do
+      // título quando não há pedido vinculado (títulos avulsos/financeiros).
+      const anoSafra = `LEFT(CASE WHEN c5.C5_EMISSAO IS NOT NULL AND LEN(RTRIM(c5.C5_EMISSAO)) = 8 THEN c5.C5_EMISSAO ELSE se1.E1_EMISSAO END, 4)`;
       const sql = `
-        SELECT LEFT(se1.E1_EMISSAO,4) ano, RTRIM(c5.C5_ZTIPO) bu,
+        SELECT ${anoSafra} ano, RTRIM(c5.C5_ZTIPO) bu,
                SUM(se1.E1_VALOR) faturado,
                SUM(CASE WHEN se1.E1_SALDO > 0 AND se1.E1_VENCREA <= GETDATE() THEN se1.E1_SALDO ELSE 0 END) vencido,
                SUM(CASE WHEN se1.E1_SALDO > 0 THEN se1.E1_SALDO ELSE 0 END) aberto,
@@ -81,10 +85,10 @@ module.exports = (app) => ({
           LEFT JOIN SC5010 c5 WITH (NOLOCK)
             ON c5.C5_FILIAL = se1.E1_FILIAL AND RTRIM(c5.C5_NUM) = RTRIM(se1.E1_PEDIDO) AND c5.D_E_L_E_T_ <> '*'
          WHERE se1.D_E_L_E_T_ <> '*' AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
-           AND LEFT(se1.E1_EMISSAO,4) BETWEEN @anoMin AND @anoMax
+           AND ${anoSafra} BETWEEN @anoMin AND @anoMax
            ${filtroFora}
            ${filtroForma}
-         GROUP BY LEFT(se1.E1_EMISSAO,4), RTRIM(c5.C5_ZTIPO)`;
+         GROUP BY ${anoSafra}, RTRIM(c5.C5_ZTIPO)`;
       const rows = await Protheus.connectAndQuery(sql, { anoMin: String(anoMin), anoMax: String(anoMax), forma });
 
       // 2) agrega por canal x ano (aplica mapa de canais + exclusões)
