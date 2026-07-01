@@ -1,6 +1,6 @@
 // Atualiza o status de cobrança de um cliente (upsert)
 const STATUS_VALIDOS = [
-  'REGULAR', 'NEGOCIANDO', 'PROMESSA',
+  'REGULAR', 'RECOMPRA', 'NEGOCIANDO', 'PROMESSA',
   'ACORDO_EM_ANDAMENTO', 'ACORDO_QUEBRADO',
   'RETENCAO', 'DISTRATO', 'DEVOLUCAO',
   'AJUSTE_INTERNO', 'SEM_RETORNO',
