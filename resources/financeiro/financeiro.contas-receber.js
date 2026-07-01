@@ -6,6 +6,7 @@ const toProtheusDate = (iso) => {
 
 const trim = (v) => String(v || '').trim();
 const toNumber = (v) => Number(v || 0);
+const { ehConexao, MSG_INDISPONIVEL } = require('../../services/protheusErro');
 
 const calcStatus = (r, hojeProt) => {
   const saldo = toNumber(r.E1_SALDO);
@@ -132,7 +133,8 @@ module.exports = (app) => ({
         dados
       });
     } catch (error) {
-      console.error('Erro em financeiro/contas-receber:', error);
+      console.error('Erro em financeiro/contas-receber:', error.message);
+      if (ehConexao(error)) return res.status(503).json({ message: MSG_INDISPONIVEL });
       return res.status(500).json({ message: 'Erro ao listar contas a receber.' });
     }
   }

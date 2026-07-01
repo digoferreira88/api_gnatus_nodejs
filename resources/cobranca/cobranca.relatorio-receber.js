@@ -8,6 +8,7 @@
 
 // Cobrança (9001-9004) + Financeiro/Contas a Receber (8002) — o export vive nos dois módulos.
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003, 9004, 8002, 0]);
+const { ehConexao, MSG_INDISPONIVEL } = require('../../services/protheusErro');
 const trim = (v) => String(v == null ? '' : v).trim();
 const toNumber = (v) => Number(v || 0);
 
@@ -116,7 +117,8 @@ module.exports = (app) => ({
         dados
       });
     } catch (error) {
-      console.error('Erro em cobranca/relatorio-receber:', error);
+      console.error('Erro em cobranca/relatorio-receber:', error.message);
+      if (ehConexao(error)) return res.status(503).json({ message: MSG_INDISPONIVEL });
       return res.status(500).json({ message: 'Erro ao gerar relatório de contas a receber: ' + error.message });
     }
   }
