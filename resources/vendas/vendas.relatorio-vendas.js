@@ -2,7 +2,7 @@
 // "relatorio de vendas". Diferenca-chave do Relatorio de Faturamento:
 //   - Base: SC6010 (ITENS DE PEDIDO), nao SD2 (itens de NF)
 //   - Filtro: C5_EMISSAO (emissao do PEDIDO), nao D2_EMISSAO (emissao da NF)
-//   - CFOPs: lista do PHP (inclui 5924, NAO inclui 6109)
+//   - CFOPs: lista do PHP, SEM 5924 (removido — não é venda) e sem 6109
 //   - Exclui itens bloqueados (C6_BLQ=' ') e tipo 'RED' (redigitacao)
 //   - Traz: genero, idade, dias entre emissao/entrega, total do pedido (TP6),
 //           faturado (TP2), recebido/saldo (pedidos_recebimentos), estatus
@@ -14,11 +14,11 @@
 // Mesma UX do faturamento-relatorio (perm 2002).
 
 // CFOPs de venda do relatorio PHP (mb_split de paramValue('cfop_fat')).
-// Difere do faturamento: + 5924 (outras saidas) e SEM 6109.
+// 5924 REMOVIDO (02/07/2026 — não é venda). SEM 6109 (igual ao PHP legado).
 const CFOPS = [
   '5105', '5106', '5116', '5117', '5119', '5405', '5933',
   '6105', '6106', '6107', '6108', '6110', '6116', '6117',
-  '6119', '6122', '6123', '6404', '6933', '5924'
+  '6119', '6122', '6123', '6404', '6933'
 ];
 
 const REGIOES = {
