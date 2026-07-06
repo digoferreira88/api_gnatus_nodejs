@@ -1133,6 +1133,7 @@ E1_VALOR > 0
 - **Endpoint**: [GET /credito/analise/:cod/:loja](resources/credito/credito.analise.js) — services `creditoScore.js` · `creditoAnalise.js` · `creditoRegras.js` · `creditoParecer.js` · `creditoBureau.js`
 - Combina **score interno** (pontualidade / inadimplência / atraso médio / relacionamento — base SE1) + **score externo normalizado do bureau** (Quod/Faro, cache 30 dias — §4.17) + **regras configuráveis** → veredito **APROVAR/REVISAR/REPROVAR** + parecer descritivo + histórico de score
 - **Permissões**: 15100 consultar · 15101 aprovar/workflow · 15102 configurar regras/pesos · 15103 gerir limite · **15104 disparar consulta externa (Quod — tem custo)**
+- **Consultas externas anexadas** (card abaixo das Anotações do time): o time anexa o comprovante de consultas manuais (ex.: PDF do Serasa). Arquivo vai pro **SharePoint `/sites/Pipefy` → `Credito Consultas/{ano}/{cod}-{loja}/`** (via `graphFiles.js`, máx. 4MB), metadata em `tab_credito_anexo` ([migration 70](database/postgres/70-credito-anexo.sql)). Endpoints `credito.anexo-{upload,list,download,delete}.js` (perm 15100; **delete só autor ou admin**). Download resolve URL temporária via Graph (mesmo padrão dos anexos de Produção)
 
 ---
 
@@ -1613,10 +1614,11 @@ Resumo dos principais:
 | 67 | `67-planejamento-integracao-op.sql` | Move OP→Pipefy p/ Planejamento com perm **3004**; 1033 passa a ser só "Webhooks Pipefy→WhatsApp" |
 | 68 | `68-gerencia-inadimplencia-perm.sql` | Perm **10002** — Inadimplência por Safra (separada do DRE 10001) |
 | 69 | `69-vendas-espelho-pedidos.sql` | Perm **2007** — Espelho de Pedidos de Venda |
+| 70 | `70-credito-anexo.sql` | `tab_credito_anexo` — consultas externas anexadas na Análise de Crédito (arquivo no SharePoint, metadata no PG) |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
 
-⚠️ Novas migrations devem incrementar a numeração (próxima é **#70**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+⚠️ Novas migrations devem incrementar a numeração (próxima é **#71**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
 
 ```bash
 sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
