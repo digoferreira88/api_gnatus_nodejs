@@ -85,6 +85,20 @@ const FASES_CLIENTES_GCARE = {
   '342527971': { templateId: '2059375837972044', builder: buildConcluidoParams }        // CONCLUIDO
 };
 
+// ---- pré-filtro (economia de API) ----
+// Só estas ações têm branch. Qualquer outra (field_update, done, comment...) é
+// descartada ANTES de consultar o card, evitando 1 chamada dadosCard por evento.
+const ACOES_TRATADAS = new Set(['card.create', 'card.move', 'card.late']);
+// Pipes "fase-gated": só notificam em FASES mapeadas (responsável/cliente). SAC e
+// Teste notificam em QUALQUER create/move → NÃO entram aqui (nunca são pulados).
+// Hash do pipe_id no payload do webhook. Override por env PIPEFY_WH_PIPES_FASE_GATED.
+// Default = pipes já observados: iB1LS8UH=G-Care, r8wZle0r=Trocas,
+// ECJpQJ_y=Devolução, 28uoVqD5=Não Conformidade.
+const PIPES_FASE_GATED = new Set(
+  String(process.env.PIPEFY_WH_PIPES_FASE_GATED || 'iB1LS8UH,r8wZle0r,ECJpQJ_y,28uoVqD5')
+    .split(',').map((s) => s.trim()).filter(Boolean)
+);
+
 const trim = (v) => String(v == null ? '' : v).trim();
 
 // ---------- GraphQL ----------
@@ -214,6 +228,18 @@ async function processarEvento({ Pg }, payload) {
   const acoes = [];
 
   if (!cardId) return { acoes: ['payload sem card id — ignorado'] };
+
+  // Pré-filtro SEM chamar a API (conservador: na dúvida, processa):
+  //  - ação sem branch → ignora;
+  //  - move num pipe fase-gated para fase que não dispara nada → ignora.
+  // SAC/Teste (notificam em todo move) e pipes desconhecidos seguem processando.
+  if (!ACOES_TRATADAS.has(action)) return { acoes: [`ação "${action || '?'}" não tratada — ignorado (sem API)`] };
+  const pipeHash = trim(d.card?.pipe_id);
+  if (action === 'card.move' && faseId && PIPES_FASE_GATED.has(pipeHash)
+      && !MAPA_FASE_RESPONSAVEL[faseId] && !FASES_CLIENTES_GCARE[faseId]) {
+    return { acoes: [`fase ${faseId} sem gatilho no pipe ${pipeHash} — ignorado (sem API)`] };
+  }
+
   const card = await dadosCard(cardId);
   const pipeId = trim(card?.pipe?.id);
   if (!faseId) faseId = trim(card?.current_phase?.id);

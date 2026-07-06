@@ -126,11 +126,12 @@ async function criarCard(opRow, idProdutoPipefy) {
 }
 
 async function atualizarCard(cardId, opRow, idProdutoPipefy) {
-  for (const f of montarCampos(opRow, idProdutoPipefy)) {
-    await gql(`mutation($input: UpdateCardFieldInput!) {
-      updateCardField(input: $input) { success } }`,
-      { input: { card_id: cardId, field_id: f.field_id, new_value: f.field_value } });
-  }
+  // 1 CHAMADA (batch) em vez de 1 por campo. Antes era um updateCardField por
+  // campo (5 chamadas/atualização) — principal causa do estouro de cota da API.
+  const values = montarCampos(opRow, idProdutoPipefy).map(f => ({ fieldId: f.field_id, value: f.field_value }));
+  await gql(`mutation($input: UpdateFieldsValuesInput!) {
+    updateFieldsValues(input: $input) { success } }`,
+    { input: { nodeId: cardId, values } });
 }
 
 // ---------- Sincronizacao principal ----------
@@ -161,7 +162,21 @@ async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
        FROM MURO.dbo.PIPEFYOP WHERE RTRIM(PRODUTO) IN (${inProdutos})`, {});
   const corte = new Date(); corte.setDate(corte.getDate() - DIAS_JANELA); corte.setHours(0, 0, 0, 0);
 
+  // Dedupe por (op, numserie): a view PIPEFYOP pode devolver +1 linha por chave
+  // (numserie vazio colapsa em '1'). Sem isso, linhas com produtos diferentes se
+  // sobrescreviam no upsert e o `mudou` disparava a CADA ciclo -> milhares de
+  // updates. Mantém a 1ª ocorrência (chave = op + numserie efetiva).
+  const vistos = new Set();
+  const rowsUnicas = [];
+  let colididas = 0;
   for (const r of rows) {
+    const key = `${trim(r.op)}|${trim(r.numserie) || '1'}`;
+    if (vistos.has(key)) { colididas++; continue; }
+    vistos.add(key); rowsUnicas.push(r);
+  }
+  if (colididas) resumo.detalhes.push(`${colididas} linha(s) duplicada(s) por (op,numserie) ignorada(s)`);
+
+  for (const r of rowsUnicas) {
     const inicio = parseDataBR(r.inicio);
     if (!inicio || inicio <= corte) continue;
     resumo.opsVistas++;
@@ -211,9 +226,13 @@ async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
     } catch (e) {
       resumo.erros++;
       resumo.detalhes.push(`OP ${opRow.op}/${opRow.numserie}: ${e.message}`);
+      // Card apagado no Pipefy: limpa o id_pipefy p/ RECRIAR no próximo ciclo, em
+      // vez de re-tentar (e falhar) pra sempre. Só p/ "not found" — NÃO p/ timeout
+      // ("operation was aborted"), onde o card ainda existe.
+      const sumiu = /not found/i.test(e.message);
       try {
         await Pg.connectAndQuery(
-          `UPDATE tab_op_pipefy_ops SET erro=@e, atualizado_em=NOW() WHERE op=@op AND numserie=@ns`,
+          `UPDATE tab_op_pipefy_ops SET erro=@e${sumiu ? ', id_pipefy=NULL' : ''}, atualizado_em=NOW() WHERE op=@op AND numserie=@ns`,
           { e: String(e.message).slice(0, 400), op: opRow.op, ns: opRow.numserie });
       } catch (e2) { /* best-effort */ }
     }

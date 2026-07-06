@@ -240,7 +240,9 @@ const CRON_ESTOQUE_SNAPSHOT = '0 3 * * *';  // 03:00 todo dia
 
 // OP -> Pipefy: poll da view MURO.dbo.PIPEFYOP e criacao de cards.
 // So roda se PIPEFY_TOKEN estiver no .env (servico fica dormente sem ele).
-const CRON_PIPEFY_OP = '*/15 * * * *';      // a cada 15 minutos
+// Cadencia ENXUTA (economia de API do Pipefy): a cada 1h, 07h-20h em dias uteis
+// (~14 runs/dia vs 96 antes). Antes era '*/15 * * * *' e amplificava qualquer churn.
+const CRON_PIPEFY_OP = '0 7-20 * * 1-5';    // 07:00..20:00, de hora em hora, seg-sex
 
 // Transmite: alerta por e-mail quando o token de sessao esta perto de expirar.
 const CRON_TRANSMITE_TOKEN = '0 */3 * * *'; // a cada 3 horas
