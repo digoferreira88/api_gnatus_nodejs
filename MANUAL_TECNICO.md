@@ -42,7 +42,7 @@ A Intranet GNATUS substitui processos manuais (planilhas, sistemas legados, form
 ### Integrações em andamento
 - **Análise de Crédito / Bureau (§3.16, §4.17):** `tab_credito_config.fonte_ativa` escolhe o bureau. Adapters prontos: **Quod** e **Faro**. ⚠️ **Faro em PRODUÇÃO está pendente** — falta publicar o workflow real (serasa/bigdatacorp) + um exemplo de `output_data` p/ o normalizador (`services/bureau/faro.js`). Doc: `docs/pendencia-faro-workflow-producao.md`.
 - **Painel Fiscal / Transmite (§3.17, §4.16):** monitor de NF-e recebidas; token de **sessão** expira (~48h), gerenciável pela tela "Token Transmite". ⚠️ **A TOTVS recusou acesso à API Transmite** (uso exclusivo do Protheus) → decisão de partir p/ **integração SEFAZ direta (DF-e)**, hoje **PAUSADA** aguardando **certificado A1 (.pfx + senha) + CNPJ da matriz + UF**. Pendência menor: obter a chave da NF fora da SF1010.
-- **OP → Pipefy (§3.12, §4.14):** **ATIVO** — roda no scheduler da intranet a cada 15min (pipe `304059336`). ⚠️ A máquina local que rodava essa automação deve ficar **DESLIGADA** (duplicaria cards).
+- **OP → Pipefy (§3.12, §4.14):** **ATIVO** — roda no scheduler da intranet **de hora em hora, em horário comercial** (`0 7-20 * * 1-5`; era 15min e estourou a cota de API do plano em jun/2026 — corrigido, ver §4.14). Pipe `304059336`. ⚠️ A máquina local que rodava essa automação deve ficar **DESLIGADA** (duplicaria cards).
 - **EyeMobile (§4.15):** **ATIVO** — webhook → e-mail (caixa TI / `vendas.maquininhas@`) a cada venda.
 
 ### Infra paralela na VPS (fora da intranet — containers Docker, geridos como `root@`)
@@ -1060,7 +1060,7 @@ E1_VALOR > 0
 
 #### Integração OP → Pipefy · `/planejamento/integracao-op-pipefy` · perm 3004
 - **Página**: [IntegracaoOpPipefy.tsx](../frontend_intranet_react/src/pages/Planejamento/IntegracaoOpPipefy.tsx)
-- Gestão dos produtos monitorados + log da automação **OP → Pipefy** (detalhe técnico em §4.14). Migrada de Tecnologia (perm 1033) p/ Planejamento com **perm exclusiva 3004** ([migration 67](database/postgres/67-planejamento-integracao-op.sql)). ⚠️ roda por cron NA intranet (15min) — a máquina local antiga deve ficar DESLIGADA (senão duplica cards)
+- Gestão dos produtos monitorados + log da automação **OP → Pipefy** (detalhe técnico em §4.14). Migrada de Tecnologia (perm 1033) p/ Planejamento com **perm exclusiva 3004** ([migration 67](database/postgres/67-planejamento-integracao-op.sql)). ⚠️ roda por cron NA intranet (1h, horário comercial) — a máquina local antiga deve ficar DESLIGADA (senão duplica cards)
 
 ---
 
@@ -1278,7 +1278,8 @@ E1_VALOR > 0
 ### 4.14 Pipefy — OP → Pipefy (Operações) + Webhooks → WhatsApp
 - **Services**: [services/pipefyOp.js](services/pipefyOp.js) (sincronização OP) + [services/pipefyWebhook.js](services/pipefyWebhook.js) (webhooks)
 - **`.env`**: `PIPEFY_TOKEN` (obrigatório — sem ele o job fica dormente), `PIPEFY_PIPE_ID` (default `304059336`), `PIPEFY_ORG_ID` (default `301239355`), `PIPEFY_TABELA_PRODUTOS`
-- **OP → Pipefy** (§3.12, perm 3004): cron **a cada 15min** lê `MURO.dbo.PIPEFYOP` (SQL Server), filtra produtos em `tab_op_pipefy_produtos`, cria/atualiza cards via GraphQL. Estado por OP+série em `tab_op_pipefy_ops`, log em `tab_op_pipefy_log`. ⚠️ a automação legada na máquina local deve ficar DESLIGADA (senão duplica cards)
+- **OP → Pipefy** (§3.12, perm 3004): cron **de hora em hora (07h-20h, seg-sex)** lê `MURO.dbo.PIPEFYOP` (SQL Server), filtra produtos em `tab_op_pipefy_produtos`, cria/atualiza cards via GraphQL. Estado por OP+série em `tab_op_pipefy_ops`, log em `tab_op_pipefy_log`. ⚠️ a automação legada na máquina local deve ficar DESLIGADA (senão duplica cards)
+- ⚠️ **Controle de cota de API (corrigido jul/2026 — estourou o plano em jun)**: (1) `atualizarCard` usa **`updateFieldsValues` (1 chamada)** e não 5× `updateCardField`; (2) **dedupe por (op,numserie)** antes do upsert evita churn (linhas duplicadas da view se sobrescreviam → milhares de updates); (3) **limpa `id_pipefy` em "Card not found"** (recria em vez de re-tentar); (4) cadência reduzida (15min→1h comercial). O webhook (`pipefyWebhook.js`) tem **pré-filtro sem chamar a API**: descarta ação sem branch e move p/ fase sem gatilho em pipe "fase-gated" (`PIPEFY_WH_PIPES_FASE_GATED`) — SAC/Teste/pipes desconhecidos seguem processando
 - **Webhooks Pipefy → WhatsApp** (perm 1033): recebe webhooks e dispara WhatsApp (SAC `304770705`, Admissão Digital `304804154`, G-CARE `307050389`, etc.), substituindo o `webhook_gnatus.php` da vm-pipefy (quebrado desde 24/04). Fila com dedupe em `tab_pipefy_wh_fila`, eventos em `tab_pipefy_wh_evento`
 - **Pipedrive** ([migration 58](database/postgres/58-integracao-op-pipedrive.sql)) foi a 1ª tentativa, **abandonada** em favor do Pipefy (migration 59+)
 
@@ -1310,7 +1311,7 @@ E1_VALOR > 0
 | `0 9 * * *` | 09:00 todo dia | `cobranca-whatsapp` | Dispara WhatsApp pra clientes em D-1, D0 e **D+1..D+3** (janela 1 a 3 dias de atraso). Verifica flag `automacao_ativa` em `tab_cobranca_whatsapp_config` |
 | `30 8 * * *` | 08:30 todo dia | `contratos` | Cron de alertas D-90/D-60/D-30 do vencimento de contratos (e-mail pro responsável). Idempotente via UNIQUE em `tab_contrato_alerta` |
 | `0 3 * * *` | 03:00 todo dia | `estoque-snapshot` | Refaz o snapshot do mês corrente em `tab_estoque_snapshot_mensal` + atualiza `tab_estoque_produto_meta` (lead time / unidade). Bootstrap inicial (12 meses) precisa ser manual: `node scripts/rodar-snapshot-estoque.js 12` |
-| `*/15 * * * *` | a cada 15 min | `op-pipefy` | Sincroniza OPs do Protheus (`MURO.dbo.PIPEFYOP`) → cards no Pipefy ([services/pipefyOp.js](services/pipefyOp.js), §4.14). Só roda se `PIPEFY_TOKEN` no `.env`; log em `tab_op_pipefy_log`. ⚠️ máquina local que rodava isso deve ficar DESLIGADA |
+| `0 7-20 * * 1-5` | de hora em hora, 07h-20h seg-sex | `op-pipefy` | Sincroniza OPs do Protheus (`MURO.dbo.PIPEFYOP`) → cards no Pipefy ([services/pipefyOp.js](services/pipefyOp.js), §4.14). Só roda se `PIPEFY_TOKEN` no `.env`; log em `tab_op_pipefy_log`. Cadência enxuta p/ não estourar a cota de API (era 15min). ⚠️ máquina local que rodava isso deve ficar DESLIGADA |
 | `0 */3 * * *` | a cada 3 h | `transmite-token` | Verifica expiração do token de sessão do TOTVS Transmite (§4.16) e alerta por e-mail (`TRANSMITE_ALERT_TO`, default `ti@gnatus.com.br`) quando faltam poucas horas. Estado em `tab_transmite_config.alertado_em` |
 
 Inicializado no `index.js` via `app.services.Scheduler.start(app)`.
