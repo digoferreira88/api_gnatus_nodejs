@@ -10,12 +10,45 @@ const CODES = new Set([
 
 function ehConexao(err) {
   if (!err) return false;
+  if (err.name === 'AbortError') return true;   // timeout do AbortController
   const code = String(err.code || (err.cause && err.cause.code) || '');
   if (CODES.has(code)) return true;
   const msg = String(err.message || '') + ' ' + String((err.cause && err.cause.message) || '');
-  return /fetch failed|network|socket hang up|timeout|ECONN|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connection is closed|failed to connect/i.test(msg);
+  return /fetch failed|network|socket hang up|timeout|aborted|ECONN|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connection is closed|failed to connect/i.test(msg);
 }
 
 const MSG_INDISPONIVEL = 'Protheus temporariamente inacessível (instabilidade de link). Tente novamente em instantes.';
 
-module.exports = { ehConexao, MSG_INDISPONIVEL };
+// Chama uma URL do Protheus REST com TIMEOUT e RETRY automático em falhas
+// TRANSITÓRIAS (rede/timeout, HTTP 500, HTTP 503). NUNCA faz retry em respostas
+// determinísticas (400/403/404/409) — repetir não muda o resultado.
+// Retorna { ok, status, txt } da última tentativa; lança o erro se a conexão
+// falhar em todas as tentativas.
+// ⚠️ Em ações (aprovar/borderô): é SEGURO contra dupla execução PORQUE o caller
+// trata "já liberado" (409) como sucesso — se a 1ª chamada efetivou mas a resposta
+// se perdeu, a retry recebe 409 e o objetivo já está cumprido.
+async function fetchProtheusComRetry(url, opts = {}, { tentativas = 2, timeoutMs = 30000 } = {}) {
+  let ultimaResp = null;
+  for (let i = 1; i <= tentativas; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, { ...opts, signal: ctrl.signal });
+      clearTimeout(timer);
+      ultimaResp = { ok: r.ok, status: r.status, txt: await r.text() };
+      if (!r.ok && (r.status === 500 || r.status === 503) && i < tentativas) continue; // transitório -> retry
+      return ultimaResp;
+    } catch (e) {
+      clearTimeout(timer);
+      if (i < tentativas) continue;   // rede/timeout -> tenta de novo
+      throw e;
+    }
+  }
+  return ultimaResp;   // esgotou as tentativas em 500/503 -> devolve a última resposta
+}
+
+// Protheus respondeu que o documento JÁ está aprovado/liberado (objetivo já
+// atingido). Resposta do AprovaCompras: "... ja esta liberado/liberada." (409).
+const jaLiberadoNoProtheus = (status, txt) => status === 409 && /ja esta liber/i.test(String(txt || ''));
+
+module.exports = { ehConexao, MSG_INDISPONIVEL, fetchProtheusComRetry, jaLiberadoNoProtheus };

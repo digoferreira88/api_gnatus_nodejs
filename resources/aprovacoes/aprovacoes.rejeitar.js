@@ -4,7 +4,7 @@
 const trim = (v) => String(v || '').trim();
 const tiposValidos = new Set(['SC', 'PC']);
 const Auditoria = require('../../services/auditoria');
-const { ehConexao, MSG_INDISPONIVEL } = require('../../services/protheusErro');
+const { ehConexao, MSG_INDISPONIVEL, fetchProtheusComRetry } = require('../../services/protheusErro');
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([13001]);
 
@@ -127,22 +127,21 @@ module.exports = (app) => ({
 
     try {
       const auth = 'Basic ' + Buffer.from(`${apiUser}:${apiPass}`).toString('base64');
-      const r = await fetch(url, {
+      // timeout 30s + retry automático em falha transitória (rede/500/503)
+      const { ok, status, txt } = await fetchProtheusComRetry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': auth },
         body: JSON.stringify(body)
       });
-      const txt = await r.text();
-      const ok = r.ok;
-      await logar(ok, `[${r.status}] ${txt.slice(0, 1000)}`);
+      await logar(ok, `[${status}] ${txt.slice(0, 1000)}`);
       if (!ok) {
         Auditoria.registrar(app, {
           modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'REJECT_FAIL', severidade: 'ALERTA',
           req, entidade: tipoIntranet === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
-          descricao: `Falha ao rejeitar ${tipoIntranet} ${numero} (Protheus ${r.status})`,
-          meta: { tipo: tipoIntranet, numero, justificativa, http: r.status }
+          descricao: `Falha ao rejeitar ${tipoIntranet} ${numero} (Protheus ${status})`,
+          meta: { tipo: tipoIntranet, numero, justificativa, http: status }
         });
-        return res.status(502).json({ ok: false, message: 'Protheus retornou erro.', status: r.status, body: txt.slice(0, 500) });
+        return res.status(502).json({ ok: false, message: 'Protheus retornou erro.', status, body: txt.slice(0, 500) });
       }
       Auditoria.registrar(app, {
         modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'REJECT', severidade: 'CRITICO',
@@ -150,7 +149,7 @@ module.exports = (app) => ({
         descricao: `Rejeitou ${tipoIntranet} ${numero} — "${(justificativa || '').slice(0, 100)}"`,
         meta: { tipo: tipoIntranet, numero, justificativa }
       });
-      return res.json({ ok: true, status: r.status, response: (() => { try { return JSON.parse(txt); } catch { return txt; } })() });
+      return res.json({ ok: true, status, response: (() => { try { return JSON.parse(txt); } catch { return txt; } })() });
     } catch (err) {
       await logar(false, err.message);
       const conexao = ehConexao(err);
