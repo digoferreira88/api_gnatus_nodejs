@@ -16,12 +16,43 @@ A Intranet GNATUS substitui processos manuais (planilhas, sistemas legados, form
 
 > Os repos viviam em `github.com/gnatusintranet` até 2026-05; foram migrados pra conta pessoal `digoferreira88`. Os redirects do GitHub continuam funcionando, mas o `git remote -v` correto aponta pra `digoferreira88/...` em ambos os clones (PC e VPS).
 
-**Produção**: `https://intranew.gnatus.com.br` (VPS Hostinger Boston, IP `177.7.37.251`).
+**Produção**: `https://intranew.gnatus.com.br` (VPS **Hostinger Brasil, IP `76.13.231.3`**, hostname `gnatus`). ⚠️ A VPS foi **migrada de Boston p/ o Brasil em 15/06/2026** (reprovisionada e restaurada do backup Veeam); o IP antigo `177.7.37.251` foi **DESTRUÍDO** — trocar em qualquer doc/regra que ainda o cite. Ver **§1.1 (Estado atual & handoff)**.
 
 **Bancos**:
 - **PostgreSQL 16** (`intranet`) — todos os dados próprios da intranet (usuários, perms, cofre, cobrança, equipamentos, atribuições)
 - **MSSQL Protheus** (read-only) — leitura do ERP via VPN/NAT (SE1, SA1, SC5, SF2, SD1, SX5, SB1/SB2, SG1, etc.)
 - **MySQL** — apenas autenticação de tipos legados (`motorista`, `eco_camarote`)
+
+---
+
+## 1.1 Estado atual & Andamento do projeto (handoff)
+
+> **Leia isto primeiro se você é um novo agente/dev assumindo o projeto.** Resume o que está no ar, o que está em andamento e onde cada coisa parou (Jul/2026). Detalhes de cada item nas seções indicadas.
+
+### Infra / VPS de produção
+- **VPS Hostinger Brasil `76.13.231.3`** (hostname `gnatus`), migrada de Boston em 15/06/2026 (restaurada do Veeam). PostgreSQL 16 local. Acesso por chave OpenSSH `~/.ssh/hostinger_intranet` — funciona para **`root@` e `intranet@`** (host key `SHA256:7mPuVKkmsm1CKWES17AOSjdgrv9tGiD4UJVdcgUffHI`). Use `ssh -i`/`scp -i` do OpenSSH (não plink/PuTTY).
+- **A aplicação roda sob o usuário `intranet`**; deploy = `git pull` (§5). ⚠️ **O usuário `intranet` está SEM SENHA** (senha bloqueada em `/etc/shadow`): `sudo` por senha **não autentica** e o grupo `docker` está vazio. Para tarefas de **Docker/root** (GLPI, n8n, Simulador), conecte como **`root@` com a mesma chave** (`PermitRootLogin yes`) e rode `docker` direto. Para rodar como app (node/pm2/migrations), `sudo -u intranet bash -lc '...'`.
+- **Pendente:** cutover final de DNS + **rotação de credenciais** (várias trafegaram por chat/legado) — ver "Segurança" abaixo.
+
+### ⚠️ Protheus — contingência de link (crítico p/ operação)
+- A VPS lê o Protheus **on-premise pela internet** (NAT do FortiGate). `PROTHEUS_SERVER=ddns.gnatus.com.br` → **round-robin DNS** p/ `179.108.181.12` **+** `200.15.18.119` (ambos publicam 1433/SQL).
+- ⚠️ **`PROTHEUS_API_URL` está FIXADO em `http://179.108.181.12:8081/rest`** (IP, não hostname) porque **o 200 NÃO publica a 8081 (API REST)** → chamadas REST (borderô, aprovações, criar SC) pelo hostname caíam ~50% (`fetch failed`). Quando o link do 179 cai, dá p/ repontar `PROTHEUS_SERVER=200.15.18.119` (restaura só leitura SQL; REST fica indisponível até o 179 voltar). Backups: `.env.bak-protheus-*` / `.env.bak-bordero-*`.
+- **Pendências:** (1) rede publicar **8081 no VIP do 200** e então voltar `PROTHEUS_API_URL` p/ hostname; (2) **failover multi-IP** no `services/protheus.js` (tentar N IPs em vez de repontar à mão). Plano maior = **espelho SQL local na VPS** p/ resiliência (blueprint em `docs/blueprint-espelho-protheus.md`). Ver §4.3/§4.13/§8.
+
+### Integrações em andamento
+- **Análise de Crédito / Bureau (§3.16, §4.17):** `tab_credito_config.fonte_ativa` escolhe o bureau. Adapters prontos: **Quod** e **Faro**. ⚠️ **Faro em PRODUÇÃO está pendente** — falta publicar o workflow real (serasa/bigdatacorp) + um exemplo de `output_data` p/ o normalizador (`services/bureau/faro.js`). Doc: `docs/pendencia-faro-workflow-producao.md`.
+- **Painel Fiscal / Transmite (§3.17, §4.16):** monitor de NF-e recebidas; token de **sessão** expira (~48h), gerenciável pela tela "Token Transmite". ⚠️ **A TOTVS recusou acesso à API Transmite** (uso exclusivo do Protheus) → decisão de partir p/ **integração SEFAZ direta (DF-e)**, hoje **PAUSADA** aguardando **certificado A1 (.pfx + senha) + CNPJ da matriz + UF**. Pendência menor: obter a chave da NF fora da SF1010.
+- **OP → Pipefy (§3.12, §4.14):** **ATIVO** — roda no scheduler da intranet a cada 15min (pipe `304059336`). ⚠️ A máquina local que rodava essa automação deve ficar **DESLIGADA** (duplicaria cards).
+- **EyeMobile (§4.15):** **ATIVO** — webhook → e-mail (caixa TI / `vendas.maquininhas@`) a cada venda.
+
+### Infra paralela na VPS (fora da intranet — containers Docker, geridos como `root@`)
+- **GLPI** migrado p/ Docker (`/opt/glpi`, GLPI 10.0.18 + MariaDB), **https://glpi.gnatus.com.br**. Dados restaurados da LAN; a origem `192.168.1.251` pode ser desativada. Nginx do host faz proxy (127.0.0.1:8088) + Let's Encrypt.
+- **Simulador de Margens Gnatus Franqueado** (projeto **standalone**, não é a intranet): SPA estática em Docker (`/opt/simulador-margens`, nginx:alpine, 127.0.0.1:8090), publicado em **https://simulador.gnatus.com.br**. Código em `Documentos/simulador-margens-gnatus/`; doc completa em `docs/simulador-margens-gnatus.md`.
+- **n8n** (127.0.0.1:5678, https://n8n.gnatus.com.br). Todos os vhosts do host em `/etc/nginx/sites-available/` com cert Let's Encrypt (auto-renew).
+
+### 🔒 Segurança — rotação de credenciais (TODO)
+- **Intranet é READ-ONLY no Protheus** (manter). A conexão usa `sa` (sysadmin) num **1433 exposto por DDNS** → trocar por login READ-ONLY dedicado, restringir o 1433 (allowlist/VPN) e **rotacionar a senha do `sa`**.
+- Rotacionar também o que trafegou por chat/legado: senha do servidor LAN `192.168.1.251`, PSK IPsec, chaves EyeMobile (`X-EYEMOBILE-ACCESS/SECRET-KEY`), tokens Transmite, secret sandbox Faro, senha do DB do GLPI.
 
 ---
 
@@ -217,6 +248,16 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - **Endpoint**: [GET /vendas/saidas-diversas](resources/vendas/vendas.saidas-diversas.js)
 - Cruza TES de "acompanhar" (538/546/540/559) e "diversos" (539/543/585/566/595/606/607) — lista vem de `tab_vendas_tes_categoria` (migration 21)
 - 3 seções: **acompanhamento** (TES acompanhar, valor mês + acumulado de TODO histórico) · **diversosMes** (TES diversos no período) · **diversosAcumulado** (mesmas TES sem filtro de início, ≤ fim)
+
+#### Espelho de Pedidos de Venda · `/vendas/espelho-pedidos` · perm 2007
+- **Página**: [EspelhoPedidos.tsx](../frontend_intranet_react/src/pages/Vendas/EspelhoPedidos.tsx)
+- **Endpoints**: [GET /vendas/pedidos](resources/vendas/vendas.pedidos.js) (busca/lista) + [GET /vendas/pedido-espelho/:pedido](resources/vendas/vendas.pedido-espelho.js) (detalhe)
+- Visão "espelho" (**somente leitura**) de um pedido SC5: cabeçalho (cliente, vendedor, condição pgto, frete, transportadora), observações, itens (qtd/preço/valor/faturado) e a **situação/estatus** de cada item — mesma lógica do módulo de Planejamento, via [services/vendasEstatus.js](services/vendasEstatus.js) (view `pedidos_estatus`, códigos 10/20/30/40/50/60/99 por item SC6)
+- **Permissão exclusiva 2007** ([migration 69](database/postgres/69-vendas-espelho-pedidos.sql)) — atribuível a usuários específicos (comercial/planejamento)
+
+#### Relatório de Vendas · `/vendas/relatorio-vendas` · perm 2003/2004
+- **Endpoint**: [GET /vendas/relatorio-vendas](resources/vendas/vendas.relatorio-vendas.js)
+- Relatório de **pedidos por emissão** (não por NF), base SC5/SC6, com dias emissão→entrega, total do pedido, faturado e recebido, estatus. CFOPs de venda numa constante `CFOPS` no topo do arquivo — ⚠️ **CFOP `5924` foi REMOVIDO** (não é venda; ver §8)
 
 ---
 
@@ -485,7 +526,9 @@ E1_VALOR > 0
 - `tab_cobranca_whatsapp_*` — config + envios + log do disparo de WhatsApp ([migration 25](database/postgres/25-cobranca-whatsapp.sql))
 
 **Status válidos** ([cobranca.status.js](resources/cobranca/cobranca.status.js)):
-`REGULAR` · `NEGOCIANDO` · `PROMESSA` · `ACORDO_EM_ANDAMENTO` · `ACORDO_QUEBRADO` · `RETENCAO` · `DISTRATO` · `DEVOLUCAO` · `PROTESTO` · `JURIDICO` · `TERCEIRIZADA` · `NEGATIVADO` · `PERDA`
+`REGULAR` · `RECOMPRA` · `NEGOCIANDO` · `PROMESSA` · `ACORDO_EM_ANDAMENTO` · `ACORDO_QUEBRADO` · `RETENCAO` · `DISTRATO` · `DEVOLUCAO` · `AJUSTE_INTERNO` · `SEM_RETORNO` · `PROTESTO` · `JURIDICO` · `TERCEIRIZADA` · `NEGATIVADO` · `PERDA`
+- ⚠️ **`NEGOCIANDO` é exibido como "Em cobrança"** na UI (2026-07) — é só **label de exibição**; o **valor gravado no banco continua `NEGOCIANDO`** (a cor dourada, a classe CSS `.NEGOCIANDO` e a lógica de Inadimplência por Safra dependem do valor). Label nos mapas `STATUS_LABEL` de `ClienteCobranca.tsx`/`WhatsAppEnvio.tsx` + helper `statusTexto` em `PainelCobranca.tsx`.
+- `RECOMPRA` (cliente que voltou a comprar) e os operacionais `AJUSTE_INTERNO` / `SEM_RETORNO` (não-cobráveis / sem resposta) foram adicionados em 2026-06. Update via `PUT /cobranca/status/:cod/:loja` (perm `[9001, 9002]`).
 
 **Regras importantes**:
 - Sempre exclui `E1_TIPO IN ('RA','NCC')` (adiantamentos e créditos do cliente — não são títulos cobráveis)
@@ -689,6 +732,18 @@ E1_VALOR > 0
 ##### Fase 3 (planejado)
 - Tela `/gerencia/natureza-classificacao` (perm 10001) pra financeiro revisar/editar a classificação inline (mesmo padrão da tela de orçamento de CC)
 - Botão "Sincronizar com SE2" pra detectar naturezas novas no Protheus que ainda não estão classificadas (caem hoje como default)
+
+#### Inadimplência por Safra · `/gerencia/inadimplencia-safra` · perm 10002
+- **Página**: [InadimplenciaSafra.tsx](../frontend_intranet_react/src/pages/Gerencia/InadimplenciaSafra.tsx)
+- **Endpoint**: [GET /gerencia/inadimplencia-safra](resources/gerencia/gerencia.inadimplencia-safra.js)
+- **Visão da diretoria**: inadimplência por **% de safra = ano de EMISSÃO DO PEDIDO DE VENDA** (`SC5.C5_EMISSAO`), **não** a data do título. Um título em aberto "move de ano" conforme o pedido que o originou (fallback p/ `E1_EMISSAO` quando o pedido não tem emissão de 8 dígitos)
+- Colunas faturado / vencido / em aberto — **com e sem acordos**. A coluna "**Sem acordos**" **desconta** os status `NEGOCIANDO` (exibido "Em cobrança"), `ACORDO_EM_ANDAMENTO` e `RETENCAO` (carteira "em negociação"), mas eles **permanecem no total**. **Exclui** da análise `DEVOLUCAO` e `AJUSTE_INTERNO`
+- **Permissão exclusiva 10002** ([migration 68](database/postgres/68-gerencia-inadimplencia-perm.sql)) — separada do DRE (10001) p/ atribuir a usuários específicos
+
+#### CC Orçamento (orçamento por Centro de Custo) · `/gerencia/orcamento-cc` · perm 10001
+- **Página**: [OrcamentoCCConfig.tsx](../frontend_intranet_react/src/pages/Gerencia/OrcamentoCCConfig.tsx)
+- **Endpoints**: `GET /gerencia/cc-orcamento` · `POST /gerencia/cc-orcamento-salvar` · `DELETE /gerencia/cc-orcamento-remover/:id`
+- Cadastro de orçamento **anual por centro de custo** (`tab_centro_custo_orcamento`, [migration 51](database/postgres/51-cc-orcamento.sql)). Distribuição linear p/ mensal; o DRE usa p/ calcular % executado YTD e saldo. Reutiliza a perm 10001 (DRE)
 
 ---
 
@@ -991,6 +1046,21 @@ E1_VALOR > 0
 - **Página**: [Disponibilidade.tsx](../frontend_intranet_react/src/pages/Disponibilidade/Disponibilidade.tsx)
 - Análise de disponibilidade de itens MR/MP no estoque vs demanda
 - Roda em SB2 + SC6 (itens de pedido) + SC7 (pedidos de compra)
+- **Melhoria (2026-06)**: traz a **descrição do produto** (SB1) além do código — quando não há disponibilidade, ajuda a saber se o código foi digitado errado
+
+#### Faturabilidade · `/planejamento/faturabilidade` · perm 3002
+- **Página**: [PlanejamentoFaturamento.tsx](../frontend_intranet_react/src/pages/Planejamento/PlanejamentoFaturamento.tsx)
+- **Endpoint**: [GET /planejamento/faturabilidade](resources/planejamento/planejamento.faturabilidade.js)
+- Cruza **carteira de pedidos abertos (SC6) × estoque disponível (SB2, `B2_QATU` − empenhos)** e aloca o estoque físico entre pedidos por **prioridade de data de entrega** (mais antiga primeiro). Responde "quanto da carteira dá pra faturar JÁ?". Perm 3002 ([migration 56](database/postgres/56-planejamento-faturabilidade.sql))
+
+#### Controle de Faturamento (Gestão à Vista) · `/planejamento/controle` · perm 3003
+- **Página**: [ControleFaturamento.tsx](../frontend_intranet_react/src/pages/Planejamento/ControleFaturamento.tsx)
+- **Endpoint**: [GET /planejamento/controle](resources/planejamento/planejamento.controle.js) (+ salvar/remover/meta/usuários/evolução)
+- Quadro **kanban** de pedidos em controle, agrupados por status, com dados vivos do Protheus. **Auto-fatura** (sai do quadro) quando o pedido atinge **estatus 99** no ERP. Meta diária (config × faturado real) + resumo por responsável. Tabelas `tab_plan_*` ([migration 57](database/postgres/57-planejamento-controle.sql)). Perm 3003
+
+#### Integração OP → Pipefy · `/planejamento/integracao-op-pipefy` · perm 3004
+- **Página**: [IntegracaoOpPipefy.tsx](../frontend_intranet_react/src/pages/Planejamento/IntegracaoOpPipefy.tsx)
+- Gestão dos produtos monitorados + log da automação **OP → Pipefy** (detalhe técnico em §4.14). Migrada de Tecnologia (perm 1033) p/ Planejamento com **perm exclusiva 3004** ([migration 67](database/postgres/67-planejamento-integracao-op.sql)). ⚠️ roda por cron NA intranet (15min) — a máquina local antiga deve ficar DESLIGADA (senão duplica cards)
 
 ---
 
@@ -1052,6 +1122,42 @@ E1_VALOR > 0
 
 ---
 
+### 3.16 Crédito (Análise de Crédito 360°)
+
+> Módulo de análise de risco de crédito do cliente. Faixa de permissões **151xx**. Migrations [54](database/postgres/54-credito-analise.sql) + [55](database/postgres/55-credito-bureau.sql) + [65](database/postgres/65-credito-anotacao.sql).
+
+**Tabelas** (Postgres): `tab_credito_config` (pesos/regras/fonte do bureau), `tab_credito_regras` (faixas APROVAR/REVISAR/REPROVAR), `tab_credito_analise`, `tab_credito_score_hist`, `tab_credito_consulta_externa` (cache + log do bureau), `tab_credito_anotacao` (notas do time por cliente).
+
+#### Análise de Crédito · `/credito/analise/:cod/:loja` · perm 15100
+- **Página**: [AnaliseCredito.tsx](../frontend_intranet_react/src/pages/Credito/AnaliseCredito.tsx)
+- **Endpoint**: [GET /credito/analise/:cod/:loja](resources/credito/credito.analise.js) — services `creditoScore.js` · `creditoAnalise.js` · `creditoRegras.js` · `creditoParecer.js` · `creditoBureau.js`
+- Combina **score interno** (pontualidade / inadimplência / atraso médio / relacionamento — base SE1) + **score externo normalizado do bureau** (Quod/Faro, cache 30 dias — §4.17) + **regras configuráveis** → veredito **APROVAR/REVISAR/REPROVAR** + parecer descritivo + histórico de score
+- **Permissões**: 15100 consultar · 15101 aprovar/workflow · 15102 configurar regras/pesos · 15103 gerir limite · **15104 disparar consulta externa (Quod — tem custo)**
+
+---
+
+### 3.17 Fiscal (Painel Gerencial Fiscal)
+
+> Faixa **16xxx**. Migrations [61](database/postgres/61-fiscal.sql) + [62](database/postgres/62-fiscal-fatura-anotacao.sql) + [64](database/postgres/64-transmite-config.sql).
+
+#### Painel Fiscal · `/fiscal/painel` · perm 16001
+- **Página**: [PainelFiscal.tsx](../frontend_intranet_react/src/pages/Fiscal/PainelFiscal.tsx)
+- **Endpoints**: [GET /fiscal/painel](resources/fiscal/fiscal.painel.js) + `fiscal.fila-faturamento.js` + `fiscal.pendencias.js` + `fiscal.fatura-anotacao.js` + `fiscal.transmite-token-*.js`
+- Visão de documentos fiscais (NF/SPED/CTe/NFS-e) + painel tributário (ICMS/IPI/DIFAL/PIS/COFINS/IRRF/INSS/CSLL), consolidando **SFT010** (livro fiscal) por CFOP/TES/espécie. Inclui a **Fila de Faturamento** (com anotações compartilhadas por pedido, `tab_fiscal_fatura_anotacao`) e a tela **Token Transmite** (§4.16)
+- ⚠️ A **visão de NF-e recebidas** depende da integração **Transmite** (§4.16), hoje em revisão — ver §1.1 e §9
+
+---
+
+### 3.18 EyeMobile — Atualização de Preços
+
+> Faixa **161xx**. Migrations [63](database/postgres/63-eyemobile.sql) + [66](database/postgres/66-eyemobile-precos.sql). Integração técnica em §4.15.
+
+#### Atualizar Preços EyeMobile · `/eyemobile/precos` · perm 16100
+- **Página**: [AtualizarPrecos.tsx](../frontend_intranet_react/src/pages/EyeMobile/AtualizarPrecos.tsx)
+- Importador que lê a planilha de preços do comercial e atualiza os cardápios EyeMobile via API: menu **49456** (Principal, fator 1.0) e **54643** (Regional, +3%). ⚠️ **escrita em produção** — preview antes de confirmar. Perm 16100 ([migration 66](database/postgres/66-eyemobile-precos.sql))
+
+---
+
 ## 4. Integrações
 
 ### 4.1 Microsoft 365 / Entra ID
@@ -1073,6 +1179,7 @@ E1_VALOR > 0
 ### 4.3 SAP Protheus
 - Host (interno): `192.168.1.140:1433` — acessível da VPS via NAT do FortiGate (`179.108.181.12:1433`)
 - Backend `.env`: `PROTHEUS_SERVER=ddns.gnatus.com.br` (continua usando NAT, VPN tunnel não foi adotada por complexidade)
+- ⚠️ **Contingência de link (ver §1.1)**: `ddns.gnatus.com.br` é **round-robin** p/ `179.108.181.12` + `200.15.18.119` (ambos com 1433). Só o **179 publica a 8081 (REST)** → por isso `PROTHEUS_API_URL` está **fixado no IP 179** (§4.13). Se o 179 cair, repontar `PROTHEUS_SERVER=200.15.18.119` restaura a leitura SQL (REST fica fora). Backups `.env.bak-protheus-*`
 - DB: `protheus`. Filial padrão: `'01'`
 - Tabelas mais usadas em [protheus_schema.md](../../.claude/.../memory/protheus_schema.md)
 - ⚠️ Sempre `WITH (NOLOCK)` (read-only) e `RTRIM(...)` em strings (Protheus armazena padded)
@@ -1157,7 +1264,7 @@ E1_VALOR > 0
   - [services/protheusSolicCompra.js](services/protheusSolicCompra.js) — `POST /SolicCompra/incluir` (Solicitar SC)
 - **Endpoint padrão**: `POST {PROTHEUS_API_URL}/<recurso>/<acao>` — Basic Auth (`PROTHEUS_API_USER`/`PROTHEUS_API_PASS`, default `admin:Gn@tu5`)
 - `.env`:
-  - `PROTHEUS_API_URL=http://protheus.gnatus.com.br:8081/rest`
+  - `PROTHEUS_API_URL=http://protheus.gnatus.com.br:8081/rest` — ⚠️ **em produção está FIXADO no IP `http://179.108.181.12:8081/rest`** (não no hostname) porque o outro link do round-robin (`200.15.18.119`) NÃO publica a 8081, o que fazia as chamadas REST caírem ~50% (`fetch failed`). Voltar p/ hostname só depois que a rede publicar a 8081 no VIP do 200 (ver §1.1/§9)
   - `PROTHEUS_API_USER=admin`
   - `PROTHEUS_API_PASS=Gn@tu5`
   - `PROTHEUS_API_PATH_BORDERO=/Cobranca/gerar-bordero` (override opcional)
@@ -1168,15 +1275,43 @@ E1_VALOR > 0
 
 ---
 
+### 4.14 Pipefy — OP → Pipefy (Operações) + Webhooks → WhatsApp
+- **Services**: [services/pipefyOp.js](services/pipefyOp.js) (sincronização OP) + [services/pipefyWebhook.js](services/pipefyWebhook.js) (webhooks)
+- **`.env`**: `PIPEFY_TOKEN` (obrigatório — sem ele o job fica dormente), `PIPEFY_PIPE_ID` (default `304059336`), `PIPEFY_ORG_ID` (default `301239355`), `PIPEFY_TABELA_PRODUTOS`
+- **OP → Pipefy** (§3.12, perm 3004): cron **a cada 15min** lê `MURO.dbo.PIPEFYOP` (SQL Server), filtra produtos em `tab_op_pipefy_produtos`, cria/atualiza cards via GraphQL. Estado por OP+série em `tab_op_pipefy_ops`, log em `tab_op_pipefy_log`. ⚠️ a automação legada na máquina local deve ficar DESLIGADA (senão duplica cards)
+- **Webhooks Pipefy → WhatsApp** (perm 1033): recebe webhooks e dispara WhatsApp (SAC `304770705`, Admissão Digital `304804154`, G-CARE `307050389`, etc.), substituindo o `webhook_gnatus.php` da vm-pipefy (quebrado desde 24/04). Fila com dedupe em `tab_pipefy_wh_fila`, eventos em `tab_pipefy_wh_evento`
+- **Pipedrive** ([migration 58](database/postgres/58-integracao-op-pipedrive.sql)) foi a 1ª tentativa, **abandonada** em favor do Pipefy (migration 59+)
+
+### 4.15 EyeMobile (PDV das maquininhas)
+- **Service**: [services/eyemobile.js](services/eyemobile.js)
+- **`.env`**: `EYEMOBILE_BASE_URL` (default `https://api.eyemobile.com.br/v1`), `EYEMOBILE_ACCESS_KEY`, `EYEMOBILE_SECRET_KEY` (auth `X-EYEMOBILE-ACCESS-KEY` / `X-EYEMOBILE-SECRET-KEY`)
+- **ATIVO** — 2 usos: (1) **webhook por venda** → e-mail p/ TI / `vendas.maquininhas@` (dedupe em `tab_eyemobile_wh`, [migration 63](database/postgres/63-eyemobile.sql)); (2) **Atualizar Preços** (§3.18, perm 16100) → importa a planilha do comercial e atualiza os cardápios `49456`/`54643` (⚠️ **escrita em produção** — preview/confirma)
+
+### 4.16 Transmite (TOTVS) — NF-e recebidas p/ o Fiscal
+- **Service**: [services/transmite.js](services/transmite.js)
+- **`.env`**: `TRANSMITE_BASE_URL`, `TRANSMITE_TOKEN` (**token de SESSÃO** do Fluig — gerenciável pela tela "Token Transmite" do Painel Fiscal, `tab_transmite_config`, [migration 64](database/postgres/64-transmite-config.sql); NÃO precisa SSH). Cron **a cada 3h** alerta por e-mail quando o token está perto de expirar (~48h de vida)
+- Lista NF-e recebidas por período (OData, filtro `DhEmi`) p/ a visão de NF-e recebidas do Painel Fiscal
+- ⚠️ **A TOTVS recusou acesso à API Transmite** (uso exclusivo do Protheus) → o caminho definitivo é **SEFAZ direto (DF-e)**, hoje **PAUSADO** (ver §1.1 e §9)
+
+### 4.17 Bureau de Crédito (Quod + Faro)
+- **Orquestrador**: [services/creditoBureau.js](services/creditoBureau.js) · **Adapters**: [services/bureau/quod.js](services/bureau/quod.js), [services/bureau/faro.js](services/bureau/faro.js)
+- **Config em `tab_credito_config`**: `fonte_ativa` (`quod` | `faro`), `peso_externo` (default 0.4 = 40% externo / 60% interno), `cache_ttl_dias` (30), tetos por protesto/restrição
+- Cache + log de toda consulta em `tab_credito_consulta_externa` (auditoria/custo/LGPD). Blend de score: `interno × (1−peso) + externo × peso`. Usado pela **Análise de Crédito** (§3.16)
+- ⚠️ **Faro em produção pendente**: `services/bureau/faro.js` pronto, mas falta publicar o workflow real (serasa/bigdatacorp) + exemplo de `output_data` p/ o normalizador. Doc `docs/pendencia-faro-workflow-producao.md`. **Quod** é a fonte estável
+
+---
+
 ## 4½. Crons (scheduler)
 
-[services/scheduler.js](services/scheduler.js) usa `node-schedule` e roda 3 jobs:
+[services/scheduler.js](services/scheduler.js) usa `node-schedule` e roda 5 jobs:
 
 | Cron | Horário | Job | Descrição |
 |---|---|---|---|
 | `0 9 * * *` | 09:00 todo dia | `cobranca-whatsapp` | Dispara WhatsApp pra clientes em D-1, D0 e **D+1..D+3** (janela 1 a 3 dias de atraso). Verifica flag `automacao_ativa` em `tab_cobranca_whatsapp_config` |
 | `30 8 * * *` | 08:30 todo dia | `contratos` | Cron de alertas D-90/D-60/D-30 do vencimento de contratos (e-mail pro responsável). Idempotente via UNIQUE em `tab_contrato_alerta` |
 | `0 3 * * *` | 03:00 todo dia | `estoque-snapshot` | Refaz o snapshot do mês corrente em `tab_estoque_snapshot_mensal` + atualiza `tab_estoque_produto_meta` (lead time / unidade). Bootstrap inicial (12 meses) precisa ser manual: `node scripts/rodar-snapshot-estoque.js 12` |
+| `*/15 * * * *` | a cada 15 min | `op-pipefy` | Sincroniza OPs do Protheus (`MURO.dbo.PIPEFYOP`) → cards no Pipefy ([services/pipefyOp.js](services/pipefyOp.js), §4.14). Só roda se `PIPEFY_TOKEN` no `.env`; log em `tab_op_pipefy_log`. ⚠️ máquina local que rodava isso deve ficar DESLIGADA |
+| `0 */3 * * *` | a cada 3 h | `transmite-token` | Verifica expiração do token de sessão do TOTVS Transmite (§4.16) e alerta por e-mail (`TRANSMITE_ALERT_TO`, default `ti@gnatus.com.br`) quando faltam poucas horas. Estado em `tab_transmite_config.alertado_em` |
 
 Inicializado no `index.js` via `app.services.Scheduler.start(app)`.
 
@@ -1305,7 +1440,7 @@ node scripts/test-cobranca-gerar-bordero.js
 - **Nomes de tabelas PG**: snake_case prefixo `tab_`. Ex: `tab_cobranca_atribuicao`.
 - **Endpoints**: pasta = recurso, arquivo = ação. `cobranca/cobranca.dashboard.js` → `GET /cobranca/dashboard`.
 - **Permissões**: array `perm: [N, 0]` em rota e sidebar, sempre os 2 lugares.
-- **Commits**: mensagem clara em português, footer `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.
+- **Commits**: mensagem clara em português, footer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
 - **TypeScript**: build prod tem `noUnusedLocals` strict — não deixar imports/states unused.
 - **Branch**: `master` em ambos repos. Sem feature branches no momento (deploy direto).
 
@@ -1353,6 +1488,9 @@ Resumo dos principais:
 - **Instruções de Trabalho**: editar instrução do produto X impacta TODAS as OPs (passadas e futuras) imediatamente — linkagem é dinâmica via `produto_codigo`. Manter versões anteriores não foi escopo da F1 (Pipefy também não tinha)
 - **Retorno do banco**: Intranet NÃO parseia CNAB. Operador roda FINA130/140 no Protheus → atualiza SE1 → POST `/sincronizar` consulta. Códigos de ocorrência fora do `MAP_OCORRENCIA` viram `DESCONHECIDO` — quando aparecer, adicionar manualmente em `boleto-lote-sincronizar.js`
 - **Lote de boleto não reenviável**: status `CRIADO` só vira `ENVIADO_PROTHEUS` 1 vez. Rejeições parciais ficam visíveis no `protheus_resposta.detalhes[]`, mas pra reenviar precisaria criar novo lote
+- **Protheus round-robin sem 8081 no 2º IP** (§1.1/§4.13): `ddns.gnatus.com.br` resolve p/ `179` **e** `200`, mas só o 179 publica a 8081 (REST). Chamadas REST pelo hostname caíam ~50% (`fetch failed`) → `PROTHEUS_API_URL` está **fixado no IP 179**. ⚠️ testar HTTPS do próprio servidor contra o IP público engana (**NAT hairpin**) — validar de fora / por loopback
+- **Loader de services é `require()` flat**: `config/loader.js` dá `require()` em cada entrada de `services/` no boot. Uma **subpasta em `services/` SEM `index.js`** derruba a API no boot (502). Toda subpasta (ex.: `services/bureau/`) precisa de `index.js` reexportando — senão deixar os arquivos soltos em `services/`
+- **CFOP `5924` não é venda** — removido do Relatório de Vendas (`vendas.relatorio-vendas.js`, constante `CFOPS`)
 
 ---
 
@@ -1379,6 +1517,20 @@ Resumo dos principais:
 - Editor visual de slides (atualmente o operador pega o que a IA devolveu, sem permitir ajustes pontuais)
 - Suporte a PDF/DOCX como input (hoje só XLSX/CSV)
 - Templates corporativos (escolher tema antes da geração)
+
+### Crédito / Bureau
+- **Faro em produção** (§3.16/§4.17): publicar o workflow real (serasa/bigdatacorp) + normalizar o `output_data` em `services/bureau/faro.js`. Fonte estável hoje = Quod. Doc `docs/pendencia-faro-workflow-producao.md`
+- Evoluir o workflow de aprovação (perm 15101) e a gestão de limite (15103)
+
+### Fiscal / SEFAZ
+- **Integração SEFAZ direta (DF-e)** p/ substituir o Transmite (a TOTVS recusou a API) — **PAUSADO** aguardando **certificado A1 (.pfx + senha) + CNPJ da matriz + UF**. Até lá a visão de NF-e recebidas depende do token de sessão do Transmite (§4.16)
+- Obter a chave da NF recebida fora da SF1010
+
+### Infra / Protheus (resiliência) — ver §1.1
+- **Failover multi-IP** no `services/protheus.js` (tentar N IPs) — elimina repontar o `.env` à mão
+- Rede publicar **8081 no VIP do 200** e então voltar `PROTHEUS_API_URL` p/ hostname (§4.13)
+- **Espelho SQL local na VPS** (blueprint `docs/blueprint-espelho-protheus.md`) — resiliência a quedas de link
+- **Segurança**: login READ-ONLY dedicado no lugar do `sa`, restringir o 1433 exposto, rotação de credenciais
 
 ### Outros
 - Notificações em tempo real (Socket.IO já carregado mas não usado)
@@ -1439,10 +1591,30 @@ Resumo dos principais:
 | 47 | `47-producao-instrucoes.sql` | `tab_prod_instrucao` — catálogo central de Instruções de Trabalho (1 por produto+etapa, ou geral). Storage no SharePoint `/sites/Pipefy/Documents/Instrucoes Produto/{codigo}/`. Linkagem dinâmica: editar instrução impacta todas OPs imediatamente |
 | 48 | `48-estoque-produto-meta-override.sql` | Estende `tab_estoque_produto_meta` com `lead_time_override`, `demanda_mensal_manual`, `estoque_seguranca_manual`, `observacao_manual`, `atualizado_por`, `manual_em`. Quando preenchido, ganha do cálculo automático no dashboard de Qualidade |
 | 49 | `49-financeiro-liberacao.sql` | `tab_lib_financeira_anotacao` (ações/observações por pedido na Liberação Financeira) + perm 8006 |
+| 50 | `50-boleto-lote-conta.sql` | Adiciona `banco_agencia`/`banco_conta` em `tab_boleto_envio_lote` (conta do portador no envio ao Protheus) |
+| 51 | `51-cc-orcamento.sql` | `tab_centro_custo_orcamento` — orçamento anual por Centro de Custo (§3.8 CC Orçamento). Usa perm 10001 |
+| 52 | `52-vendedor-avatar.sql` | `tab_vendedor_avatar` — avatar do vendedor (bytea) por `A3_COD`, substitui os arquivos estáticos |
+| 53 | `53-natureza-classificacao.sql` | `tab_natureza_classificacao` (classifica SE2 em CUSTO/DESPESA/RECEITA × VARIÁVEL/FIXO) — §3.8 Dashboard de Receita |
+| 54 | `54-credito-analise.sql` | Módulo Análise de Crédito: `tab_credito_config/regras/analise/score_hist` + perms **15100-15103** |
+| 55 | `55-credito-bureau.sql` | Cache+log de bureau externo (`tab_credito_consulta_externa`) + blend de score + perm **15104** |
+| 56 | `56-planejamento-faturabilidade.sql` | Perm **3002** — Faturabilidade (carteira SC6 × estoque SB2) |
+| 57 | `57-planejamento-controle.sql` | `tab_plan_status/meta/controle/controle_hist` (Gestão à Vista/kanban) + perm **3003** |
+| 58 | `58-integracao-op-pipedrive.sql` | `tab_op_pipedrive_produtos` + perm **1033** (OP→Pipedrive — depois abandonado) |
+| 59 | `59-integracao-op-pipefy.sql` | Renomeia p/ `tab_op_pipefy_produtos` + cria `tab_op_pipefy_ops`/`_log`; atualiza 1033 p/ "OP→Pipefy" |
+| 60 | `60-pipefy-webhook.sql` | `tab_pipefy_wh_evento` + `tab_pipefy_wh_fila` (webhooks Pipefy→WhatsApp processados na intranet) |
+| 61 | `61-fiscal.sql` | Perm **16001** — Painel Gerencial Fiscal |
+| 62 | `62-fiscal-fatura-anotacao.sql` | `tab_fiscal_fatura_anotacao` (anotações compartilhadas por pedido na Fila de Faturamento) |
+| 63 | `63-eyemobile.sql` | `tab_eyemobile_wh` (dedupe das transações recebidas pelo webhook EyeMobile) |
+| 64 | `64-transmite-config.sql` | `tab_transmite_config` (token de sessão do TOTVS Transmite gerenciável pela intranet) |
+| 65 | `65-credito-anotacao.sql` | `tab_credito_anotacao` (notas do time por cliente na Análise de Crédito) |
+| 66 | `66-eyemobile-precos.sql` | Perm **16100** — Atualizar Preços EyeMobile |
+| 67 | `67-planejamento-integracao-op.sql` | Move OP→Pipefy p/ Planejamento com perm **3004**; 1033 passa a ser só "Webhooks Pipefy→WhatsApp" |
+| 68 | `68-gerencia-inadimplencia-perm.sql` | Perm **10002** — Inadimplência por Safra (separada do DRE 10001) |
+| 69 | `69-vendas-espelho-pedidos.sql` | Perm **2007** — Espelho de Pedidos de Venda |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
 
-⚠️ Novas migrations devem incrementar a numeração (próxima é #50) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+⚠️ Novas migrations devem incrementar a numeração (próxima é **#70**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
 
 ```bash
 sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
@@ -1472,7 +1644,8 @@ sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSW
 | `12xxx` | Expedição |
 | `13xxx` | Compras (Aprovações) |
 | `14xxx` | Produção |
-| `15xxx` | Universidade |
+| `15xxx` | Universidade (150xx) / **Crédito (151xx)** |
+| `16xxx` | **Fiscal (16001) / EyeMobile (161xx)** |
 
 ### Permissões ativas
 
@@ -1486,12 +1659,17 @@ sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSW
 | 1030 | Tecnologia    | Cobrança WhatsApp (automação) |
 | 1031 | Tecnologia    | Importação Protheus (TRPWSIMP) — migration 27 |
 | 1032 | Tecnologia    | Auditoria (logs centralizados) — migration 29 |
+| 1033 | Tecnologia    | Webhooks Pipefy → WhatsApp (era "OP→Pipedrive"/58, virou "OP→Pipefy"/59; a gestão OP foi p/ 3004 na migration 67) |
 | 2001 | Faturamento   | Ranking de Vendedores (por NF) |
 | 2002 | Faturamento   | Relatório de Faturamento |
 | 2003 | Faturamento   | Vendas Analítico / Saídas Diversas |
 | 2004 | Faturamento   | Curva ABC / Carteira / Itens sem Movimento / Histórico Anual |
 | 2005 | Faturamento   | Ranking de Vendas (pedidos em aberto) — migration 41 |
+| 2007 | Faturamento   | Espelho de Pedidos de Venda — migration 69 |
 | 3001 | Planejamento  | Disponibilidade |
+| 3002 | Planejamento  | Faturabilidade (carteira × estoque) — migration 56 |
+| 3003 | Planejamento  | Controle de Faturamento (Gestão à Vista) — migration 57 |
+| 3004 | Planejamento  | Integração OP → Pipefy — migration 67 |
 | 4001 | Compras       | Solicitações de Compra |
 | 4002 | Compras       | Pedidos de Compra |
 | 4003 | Compras       | MCL (Compras Mínimas Lucrativas) |
@@ -1509,9 +1687,11 @@ sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSW
 | 8005 | Financeiro    | Envio de Boleto (curadoria + bordero) — migration 35 |
 | 8006 | Financeiro    | Liberação Financeira — migration 49 |
 | 9001 | Cobrança      | Painel / Dashboard / BU-Equipe / Faturamento vs Inadimplência / Equipes Ranking / Meta Perfil |
+| 9002 | Cobrança      | Operação — registrar ação / atualizar status do cliente (`cobranca.status.js`, junto com 9001) |
 | 9003 | Cobrança      | Minhas Ações |
 | 9004 | Cobrança      | Envio WhatsApp (curadoria operador) |
-| 10001 | Gerência     | DRE Gerencial |
+| 10001 | Gerência     | DRE Gerencial / Dashboard de Receita / CC Orçamento |
+| 10002 | Gerência     | Inadimplência por Safra — migration 68 |
 | 11001 | Controladoria| Estoque (lista simples) |
 | 11002 | Controladoria| Custo de Produto |
 | 11003 | Controladoria| Poder de Terceiros |
@@ -1525,6 +1705,13 @@ sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSW
 | 15001 | Universidade | Aluno |
 | 15002 | Universidade | Instrutor |
 | 15003 | Universidade | Admin |
+| 15100 | Crédito      | Análise de Crédito — consultar — migration 54 |
+| 15101 | Crédito      | Análise de Crédito — aprovar / workflow — migration 54 |
+| 15102 | Crédito      | Análise de Crédito — configurar regras/pesos — migration 54 |
+| 15103 | Crédito      | Análise de Crédito — gerir limite — migration 54 |
+| 15104 | Crédito      | Consulta externa ao bureau (Quod — tem custo) — migration 55 |
+| 16001 | Fiscal       | Painel Gerencial Fiscal — migration 61 |
+| 16100 | EyeMobile    | Atualizar Preços — migration 66 |
 
 ⚠️ Permissões `[]` (array vazio) = qualquer usuário logado (Dashboard, Alterar Senha)
 ⚠️ Padrão de uso: `requiredPerms={[N, 0]}` no `<Protect>` — usuário com perm N OU admin (0) passa
