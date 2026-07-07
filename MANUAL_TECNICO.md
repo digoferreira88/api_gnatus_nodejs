@@ -1292,7 +1292,7 @@ E1_VALOR > 0
 
 ### 4.16 Transmite (TOTVS) — NF-e recebidas p/ o Fiscal
 - **Service**: [services/transmite.js](services/transmite.js)
-- **`.env`**: `TRANSMITE_BASE_URL`, `TRANSMITE_TOKEN` (**token de SESSÃO** do Fluig — gerenciável pela tela "Token Transmite" do Painel Fiscal, `tab_transmite_config`, [migration 64](database/postgres/64-transmite-config.sql); NÃO precisa SSH). Cron **a cada 3h** alerta por e-mail quando o token está perto de expirar (~48h de vida)
+- **`.env`**: `TRANSMITE_BASE_URL`, `TRANSMITE_TOKEN` (**token de SESSÃO** do Fluig — gerenciável pela tela "Token Transmite" do Painel Fiscal, `tab_transmite_config`, [migration 64](database/postgres/64-transmite-config.sql); NÃO precisa SSH). Aviso de expiração (~48h de vida) é **só visual**: badge no topo do Painel Fiscal (o alerta por e-mail foi removido em 07/2026)
 - Lista NF-e recebidas por período (OData, filtro `DhEmi`) p/ a visão de NF-e recebidas do Painel Fiscal
 - ⚠️ **A TOTVS recusou acesso à API Transmite** (uso exclusivo do Protheus) → o caminho definitivo é **SEFAZ direto (DF-e)**, hoje **PAUSADO** (ver §1.1 e §9)
 
@@ -1306,7 +1306,7 @@ E1_VALOR > 0
 
 ## 4½. Crons (scheduler)
 
-[services/scheduler.js](services/scheduler.js) usa `node-schedule` e roda 5 jobs:
+[services/scheduler.js](services/scheduler.js) usa `node-schedule` e roda 4 jobs:
 
 | Cron | Horário | Job | Descrição |
 |---|---|---|---|
@@ -1314,7 +1314,8 @@ E1_VALOR > 0
 | `30 8 * * *` | 08:30 todo dia | `contratos` | Cron de alertas D-90/D-60/D-30 do vencimento de contratos (e-mail pro responsável). Idempotente via UNIQUE em `tab_contrato_alerta` |
 | `0 3 * * *` | 03:00 todo dia | `estoque-snapshot` | Refaz o snapshot do mês corrente em `tab_estoque_snapshot_mensal` + atualiza `tab_estoque_produto_meta` (lead time / unidade). Bootstrap inicial (12 meses) precisa ser manual: `node scripts/rodar-snapshot-estoque.js 12` |
 | `0 7-20 * * 1-5` | de hora em hora, 07h-20h seg-sex | `op-pipefy` | Sincroniza OPs do Protheus (`MURO.dbo.PIPEFYOP`) → cards no Pipefy ([services/pipefyOp.js](services/pipefyOp.js), §4.14). Só roda se `PIPEFY_TOKEN` no `.env`; log em `tab_op_pipefy_log`. Cadência enxuta p/ não estourar a cota de API (era 15min). ⚠️ máquina local que rodava isso deve ficar DESLIGADA |
-| `0 */3 * * *` | a cada 3 h | `transmite-token` | Verifica expiração do token de sessão do TOTVS Transmite (§4.16) e alerta por e-mail (`TRANSMITE_ALERT_TO`, default `ti@gnatus.com.br`) quando faltam poucas horas. Estado em `tab_transmite_config.alertado_em` |
+
+> O job `transmite-token` (alerta por E-MAIL de expiração, a cada 3h) foi **REMOVIDO em 07/2026** a pedido do usuário — o status do token agora é **só visual**: badge no topo do Painel Fiscal (verde OK / âmbar ≤12h / vermelho expirado, clicável p/ a tela de renovação). A coluna `tab_transmite_config.alertado_em` ficou sem uso.
 
 Inicializado no `index.js` via `app.services.Scheduler.start(app)`.
 
