@@ -67,8 +67,6 @@ module.exports = (app) => ({
           RTRIM(sc7.C7_PRODUTO) AS produto,
           RTRIM(sc7.C7_DESCRI)  AS descProduto,
           RTRIM(sc7.C7_ITEM)    AS itemPed,
-          RTRIM(sc7.C7_NOTA)    AS nota,
-          RTRIM(sc7.C7_SERIE)   AS serie,
           RTRIM(sc7.C7_FORNECE) AS fornece,
           RTRIM(sc7.C7_LOJA)    AS forneceLoja,
           sc7.C7_EMISSAO        AS emissao,
@@ -169,8 +167,6 @@ module.exports = (app) => ({
         aIt.docs.push({
           pedido: num,
           itemPed: trim(r.itemPed),
-          nota: trim(r.nota),
-          serie: trim(r.serie),
           emissao: String(r.emissao || ''),
           fornece: trim(r.fornece),
           forneceLoja: trim(r.forneceLoja),
@@ -259,6 +255,32 @@ module.exports = (app) => ({
         }
       }
 
+      // 4d) NF de entrada (SD1) por pedido+item — a SC7 desta base NAO guarda a
+      //     nota (sem C7_NOTA); o vinculo do documento fiscal e' via SD1
+      //     (D1_PEDIDO+D1_ITEMPC -> D1_DOC/D1_SERIE). Pedido ainda nao faturado
+      //     fica sem NF (compromisso). Usa numerosPC ja coletado acima.
+      const nfPorPedidoItem = new Map(); // `${pedido}|${item}` -> { nota, serie }
+      for (let i = 0; i < numerosPC.length; i += 500) {
+        const slice = numerosPC.slice(i, i + 500);
+        const inClause = slice.map((_, k) => `@d${k}`).join(',');
+        const p = {};
+        slice.forEach((n, k) => { p[`d${k}`] = n; });
+        try {
+          const rows = await Protheus.connectAndQuery(`
+            SELECT RTRIM(D1_PEDIDO) pedido, RTRIM(D1_ITEMPC) item,
+                   RTRIM(D1_DOC) doc, RTRIM(D1_SERIE) serie
+              FROM SD1010 WITH (NOLOCK)
+             WHERE D_E_L_E_T_ <> '*' AND D1_FILIAL = '01'
+               AND RTRIM(D1_DOC) <> '' AND D1_PEDIDO IN (${inClause})`, p);
+          rows.forEach(r => {
+            const k = `${trim(r.pedido)}|${trim(r.item)}`;
+            if (!nfPorPedidoItem.has(k)) nfPorPedidoItem.set(k, { nota: trim(r.doc), serie: trim(r.serie) });
+          });
+        } catch (e) {
+          console.warn('dre-centro-custo: SD1010 err:', e.message);
+        }
+      }
+
       // 5) Orcamento (anual) cadastrado em Postgres — usa o ANO do fim do periodo
       const anoFim = parseInt(fim.slice(0, 4), 10);
       const mesFim = parseInt(fim.slice(4, 6), 10);
@@ -332,17 +354,20 @@ module.exports = (app) => ({
                 pctConta: x.valor > 0 ? (y.valor / x.valor) * 100 : 0,
                 // Nivel 4: documentos (linhas de pedido) que compoem o item
                 documentos: y.docs
-                  .map(d => ({
-                    pedido: d.pedido,
-                    itemPed: d.itemPed,
-                    nota: d.nota,
-                    serie: d.serie,
-                    emissao: d.emissao,
-                    fornecedor: d.fornece,
-                    fornecedorNome: nomeFornecedor.get(`${d.fornece}|${d.forneceLoja}`) || '',
-                    valor: d.valor,
-                    pctItem: y.valor > 0 ? (d.valor / y.valor) * 100 : 0
-                  }))
+                  .map(d => {
+                    const nf = nfPorPedidoItem.get(`${d.pedido}|${d.itemPed}`);
+                    return {
+                      pedido: d.pedido,
+                      itemPed: d.itemPed,
+                      nota: nf ? nf.nota : '',
+                      serie: nf ? nf.serie : '',
+                      emissao: d.emissao,
+                      fornecedor: d.fornece,
+                      fornecedorNome: nomeFornecedor.get(`${d.fornece}|${d.forneceLoja}`) || '',
+                      valor: d.valor,
+                      pctItem: y.valor > 0 ? (d.valor / y.valor) * 100 : 0
+                    };
+                  })
                   .sort((a, b) => b.valor - a.valor)
               }))
               .sort((a, b) => b.valor - a.valor)
