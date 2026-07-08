@@ -428,10 +428,11 @@ Substituto do `GET /rest/Cobranca/boleto-linha` do Diego. Implementação 100% n
 - **Modo real** (`simular:false`): exige `banco+agencia+conta` (Diego faz `DbSeek` na `SEE` pra achar a carteira / `EE_DIRREC`). Sem isso → `LAYOUT_NAO_SUPORTADO`
 - **Banner de progresso**: enquanto Diego processa, frontend mostra `qtd_registros / qtd_registrados / qtd_liquidados / qtd_rejeitados`
 - Auditoria INFO em dry-run, CRITICO em import real (grava no Protheus via FINA205)
-- ⚠️ **GNATUS não importava o .RET historicamente** — registrava e baixava título manualmente. Este endpoint depende do `boleto-adotar-se1` retroativo enquanto o operador não adota o novo fluxo
+- ⚠️ **GNATUS não importava o .RET historicamente** — registrava e baixava título manualmente
+- **Auto-adoção (2026-07-08)**: após um import **REAL** bem-sucedido, o endpoint roda `boletoAdotar.adotarSe1(banco)` no fim → se o borderô foi feito **direto no Protheus** (sem lote na intranet), os títulos que o FINA205 acabou de registrar no SE1 (`E1_OCORREN='02'` + nosso número) são **adotados automaticamente** e ficam disparáveis, sem passo manual. Idempotente e best-effort (não quebra a resposta do import). A resposta traz `auto_adotados`/`auto_lotes`. *(Caso real que motivou: Eduarda importou o retorno Santander do borderô 001513 feito no Protheus — 363 registrados no Protheus mas 0 disparáveis, pois não havia lote; resolvido com adoção.)*
 
 ##### Endpoint `boleto-adotar-se1` — adoção retroativa
-Para títulos já registrados no banco antes da Intranet existir (remessa direta pelo Protheus, ou pós-import de bordero externo). Critério SE1:
+Para títulos já registrados no banco antes da Intranet existir (remessa direta pelo Protheus, ou pós-import de bordero externo). Lógica em **[services/boletoAdotar.js](services/boletoAdotar.js)** (fonte única — usada pelo botão manual E pela auto-adoção do importar-retorno). Critério SE1:
 ```
 E1_OCORREN = '02'  (entrada confirmada pelo banco)
 E1_NUMBCO <> ''     (nosso_numero atribuído)
