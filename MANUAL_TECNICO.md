@@ -688,6 +688,7 @@ E1_VALOR > 0
   - sem padrão → PENDENTE (fica de fora até reclassificação contábil)
 - Drill-down lazy de lançamentos por natureza (`/gerencia/dre/lancamentos?natureza=...`)
 - Botão "Auditoria 211" gera CSV pra contabilidade reclassificar (`/gerencia/dre/auditoria-211`)
+- **Aba "Centro de Custo"** (`GET /gerencia/dre/centro-custo`, [DRECentroCusto.tsx](../frontend_intranet_react/src/pages/Gerencia/DRECentroCusto.tsx)): visão de **gasto comprometido em pedidos de compra (SC7)** por CC, exclui rejeitados em alçada (SCR `CR_STATUS='06'`), com orçamento YTD (§CC Orçamento). **Drill de 4 níveis**: CC → conta contábil (C7_CONTA/CT1) → item (C7_PRODUTO) → **documentos/NFs** (linhas do pedido: C7_NUM/C7_ITEM + fornecedor SA2 + valor). ⚠️ **a SC7 desta base NÃO tem `C7_NOTA`** — a NF de entrada vem da **SD1** (`D1_PEDIDO`+`D1_ITEMPC` → `D1_DOC`/`D1_SERIE`); pedido ainda não faturado aparece como "sem NF (comprometido)"
 
 #### Dashboard de Receita · `/gerencia/dashboard-receita` · perm 10001
 
