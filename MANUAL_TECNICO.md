@@ -305,6 +305,13 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Compara solicitações de compra em curso vs custo padrão e flags itens fora do range
 - Endpoints: `mcl-dashboard`, `mcl-sc-list`, `mcl-sc-snapshot`, `mcl-sc-comparacao`, `mcl-scii`, `mcl-scii-sync`, `mcl-pva`, `mcl-config`, `mcl-indice-upsert`, `mcl-sync`
 
+#### Recebimento NF (conferência cega) · `/compras/recebimento-nf` · perm 4005
+- **Página**: [RecebimentoNF.tsx](../frontend_intranet_react/src/pages/Compras/RecebimentoNF.tsx) · **Endpoints**: [resources/recebimento/](resources/recebimento/) (`pendentes`, `espelho`, `conferir`, `:id/classificar`)
+- **Fluxo**: pré-nota digitada no Protheus (**SF1 com `F1_STATUS` em branco**; vira `'A'` ao classificar) → intranet lista (últimos 60 dias de `F1_RECBMTO`) → almoxarifado faz **conferência CEGA** (a qtd da NF **não sai do backend** antes de finalizar; nem o total do item, que revelaria a qtd) → finalizar calcula a diferença **no servidor** contra a `SD1` → `CONFERIDA` (tudo bateu) ou `DIVERGENTE` (regulariza e re-confere) → fiscal informa **TES por item** → **classificação no Protheus** via REST custom
+- **Tabelas** ([migration 71](database/postgres/71-recebimento-nf.sql)): `tab_receb_conferencia` (cabeçalho/status/quem) + `tab_receb_conferencia_item` (snapshot SD1 + contagem + diferença + TES). Estados: `RASCUNHO → CONFERIDA | DIVERGENTE → CLASSIFICADA`
+- Itens: SD1 + descrição/NCM da SB1 (`B1_POSIPI`). Fornecedor SA2. Auditoria em rascunho (INFO), finalizar e classificar (CRITICO)
+- ⚠️ **Classificação depende de endpoint custom do Diego** (`POST /Recebimento/classificar`, spec em [docs/spec-protheus-classificacao-prenota.md](../docs/spec-protheus-classificacao-prenota.md); env `PROTHEUS_API_PATH_CLASSIFICAR`). Enquanto não publicado, o botão devolve aviso claro (502) — o restante do fluxo funciona. Service: [services/protheusClassificacao.js](services/protheusClassificacao.js) (timeout 120s + retry transitório)
+
 ---
 
 ### 3.4 SAC
@@ -1618,10 +1625,11 @@ Resumo dos principais:
 | 68 | `68-gerencia-inadimplencia-perm.sql` | Perm **10002** — Inadimplência por Safra (separada do DRE 10001) |
 | 69 | `69-vendas-espelho-pedidos.sql` | Perm **2007** — Espelho de Pedidos de Venda |
 | 70 | `70-credito-anexo.sql` | `tab_credito_anexo` — consultas externas anexadas na Análise de Crédito (arquivo no SharePoint, metadata no PG) |
+| 71 | `71-recebimento-nf.sql` | Recebimento NF: `tab_receb_conferencia` + `tab_receb_conferencia_item` (conferência cega de pré-nota) + perm **4005** |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
 
-⚠️ Novas migrations devem incrementar a numeração (próxima é **#71**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+⚠️ Novas migrations devem incrementar a numeração (próxima é **#72**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
 
 ```bash
 sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
@@ -1681,6 +1689,7 @@ sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSW
 | 4002 | Compras       | Pedidos de Compra |
 | 4003 | Compras       | MCL (Compras Mínimas Lucrativas) |
 | 4004 | Compras       | Solicitar Compra (criar SC via Intranet) — migration 43 |
+| 4005 | Compras       | Recebimento NF (conferência cega de pré-nota) — migration 71 |
 | 5001 | Apoio Ger.    | Reserva de Sala / Gerador de Apresentações (IA) |
 | 5002 | Apoio Ger.    | Contratos - Ver — migration 36 |
 | 5003 | Apoio Ger.    | Contratos - Editar — migration 36 |
