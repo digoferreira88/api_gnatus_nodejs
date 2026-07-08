@@ -69,6 +69,8 @@ module.exports = (app) => ({
           RTRIM(sc7.C7_ITEM)    AS itemPed,
           RTRIM(sc7.C7_FORNECE) AS fornece,
           RTRIM(sc7.C7_LOJA)    AS forneceLoja,
+          sc7.C7_MOEDA          AS moeda,
+          sc7.C7_TXMOEDA        AS taxa,
           sc7.C7_EMISSAO        AS emissao,
           sc7.C7_TOTAL          AS valor
           FROM SC7010 sc7 WITH (NOLOCK)
@@ -119,6 +121,7 @@ module.exports = (app) => ({
       // item (C7_PRODUTO). Igual ao DRE Gerencial (expand de natureza → titulos).
       const porCC = new Map();   // cc -> { valor, qtdItens, pedidos:Set, porMes:Map, porConta:Map<conta, {valor, qtdItens, porItem:Map}> }
       const porMes = new Map();  // ymes -> { valor, qtdItens }
+      let qtdMoedaEstrangeira = 0;   // linhas convertidas de moeda estrangeira p/ R$
 
       for (const r of sc7) {
         const num = trim(r.numero);
@@ -132,7 +135,14 @@ module.exports = (app) => ({
         const produto = trim(r.produto);
         const descProduto = trim(r.descProduto);
         const ymes = String(r.emissao || '').slice(0, 6);
-        const valor = toN(r.valor);
+        // Moeda do pedido: 1=Real, 2=Dolar (C7_MOEDA). C7_TOTAL vem na moeda do
+        // documento -> converte p/ R$ pela taxa (C7_TXMOEDA) quando estrangeira,
+        // pra o realizado do CC ficar todo em reais.
+        const moeda = toN(r.moeda) || 1;
+        const taxa = toN(r.taxa);
+        const valorMoeda = toN(r.valor);   // valor na moeda do documento
+        const valor = (moeda !== 1 && taxa > 0) ? valorMoeda * taxa : valorMoeda;  // R$
+        if (moeda !== 1 && taxa > 0) qtdMoedaEstrangeira++;
 
         if (!porCC.has(cc)) porCC.set(cc, {
           valor: 0, qtdItens: 0, pedidos: new Set(),
@@ -170,7 +180,10 @@ module.exports = (app) => ({
           emissao: String(r.emissao || ''),
           fornece: trim(r.fornece),
           forneceLoja: trim(r.forneceLoja),
-          valor
+          moeda,
+          taxa,
+          valorMoeda,   // valor na moeda original (doc)
+          valor         // já convertido p/ R$
         });
 
         if (!porMes.has(ymes)) porMes.set(ymes, { valor: 0, qtdItens: 0 });
@@ -364,6 +377,9 @@ module.exports = (app) => ({
                       emissao: d.emissao,
                       fornecedor: d.fornece,
                       fornecedorNome: nomeFornecedor.get(`${d.fornece}|${d.forneceLoja}`) || '',
+                      moeda: d.moeda,
+                      taxa: d.taxa,
+                      valorMoeda: d.valorMoeda,
                       valor: d.valor,
                       pctItem: y.valor > 0 ? (d.valor / y.valor) * 100 : 0
                     };
@@ -427,6 +443,8 @@ module.exports = (app) => ({
           qtdItens: [...porCC.values()].reduce((s, x) => s + x.qtdItens, 0),
           qtdCentros: porCC.size,
           qtdCentrosComOrcamento: orcamentoPorCC.size,
+          qtdMoedaEstrangeira,   // linhas convertidas de moeda estrangeira p/ R$
+          valorTotalEmReais: valorTotal,   // (alias explícito — tudo já em R$)
           valorOrcadoAnual: orcadoAnualTotal || null,
           valorOrcadoYTD: orcadoYTDTotal || null,
           pctExecutadoYTD: orcadoYTDTotal > 0 ? (valorTotal / orcadoYTDTotal) * 100 : null
