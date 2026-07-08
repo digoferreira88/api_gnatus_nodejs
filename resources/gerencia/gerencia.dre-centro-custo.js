@@ -66,6 +66,11 @@ module.exports = (app) => ({
           RTRIM(sc7.C7_CONTA)   AS conta,
           RTRIM(sc7.C7_PRODUTO) AS produto,
           RTRIM(sc7.C7_DESCRI)  AS descProduto,
+          RTRIM(sc7.C7_ITEM)    AS itemPed,
+          RTRIM(sc7.C7_NOTA)    AS nota,
+          RTRIM(sc7.C7_SERIE)   AS serie,
+          RTRIM(sc7.C7_FORNECE) AS fornece,
+          RTRIM(sc7.C7_LOJA)    AS forneceLoja,
           sc7.C7_EMISSAO        AS emissao,
           sc7.C7_TOTAL          AS valor
           FROM SC7010 sc7 WITH (NOLOCK)
@@ -152,12 +157,25 @@ module.exports = (app) => ({
 
         // Quebra por item DENTRO da conta contabil (drill aninhado)
         const kItem = produto || '(sem produto)';
-        if (!aCt.porItem.has(kItem)) aCt.porItem.set(kItem, { descricao: descProduto, valor: 0, qtdItens: 0 });
+        if (!aCt.porItem.has(kItem)) aCt.porItem.set(kItem, { descricao: descProduto, valor: 0, qtdItens: 0, docs: [] });
         const aIt = aCt.porItem.get(kItem);
         aIt.valor += valor;
         aIt.qtdItens += 1;
         // Mantém a primeira descrição não-vazia (caso o mesmo produto venha com descrições diferentes)
         if (!aIt.descricao && descProduto) aIt.descricao = descProduto;
+
+        // Nível 4 (folha): documento/linha do pedido. NF (C7_NOTA) preenchida =
+        // pedido já faturado (nota de entrada); vazia = compromisso ainda sem NF.
+        aIt.docs.push({
+          pedido: num,
+          itemPed: trim(r.itemPed),
+          nota: trim(r.nota),
+          serie: trim(r.serie),
+          emissao: String(r.emissao || ''),
+          fornece: trim(r.fornece),
+          forneceLoja: trim(r.forneceLoja),
+          valor
+        });
 
         if (!porMes.has(ymes)) porMes.set(ymes, { valor: 0, qtdItens: 0 });
         const agMes = porMes.get(ymes);
@@ -210,6 +228,34 @@ module.exports = (app) => ({
           rows.forEach(r => { if (!descContas.has(trim(r.conta))) descContas.set(trim(r.conta), trim(r.descricao)); });
         } catch (e) {
           console.warn('dre-centro-custo: CT1010 err:', e.message);
+        }
+      }
+
+      // 4c) Nomes dos fornecedores (SA2010) pros documentos (nivel 4 do drill).
+      const fornecedoresUnicos = new Set();
+      for (const ag of porCC.values())
+        for (const ct of ag.porConta.values())
+          for (const it of ct.porItem.values())
+            for (const d of it.docs)
+              if (d.fornece) fornecedoresUnicos.add(`${d.fornece}|${d.forneceLoja}`);
+      const nomeFornecedor = new Map();
+      if (fornecedoresUnicos.size) {
+        const pares = [...fornecedoresUnicos];
+        for (let i = 0; i < pares.length; i += 400) {
+          const slice = pares.slice(i, i + 400);
+          const ors = slice.map((_, k) => `(sa2.A2_COD = @f${k} AND sa2.A2_LOJA = @fl${k})`).join(' OR ');
+          const p = {};
+          slice.forEach((par, k) => { const [c, l] = par.split('|'); p[`f${k}`] = c; p[`fl${k}`] = l; });
+          try {
+            const rows = await Protheus.connectAndQuery(`
+              SELECT RTRIM(sa2.A2_COD) cod, RTRIM(sa2.A2_LOJA) loja,
+                     RTRIM(sa2.A2_NREDUZ) nred, RTRIM(sa2.A2_NOME) nome
+                FROM SA2010 sa2 WITH (NOLOCK)
+               WHERE sa2.D_E_L_E_T_ <> '*' AND (${ors})`, p);
+            rows.forEach(r => nomeFornecedor.set(`${trim(r.cod)}|${trim(r.loja)}`, trim(r.nred) || trim(r.nome)));
+          } catch (e) {
+            console.warn('dre-centro-custo: SA2010 err:', e.message);
+          }
         }
       }
 
@@ -283,7 +329,21 @@ module.exports = (app) => ({
                 descricao: y.descricao || '(sem descricao)',
                 valor: y.valor,
                 qtdItens: y.qtdItens,
-                pctConta: x.valor > 0 ? (y.valor / x.valor) * 100 : 0
+                pctConta: x.valor > 0 ? (y.valor / x.valor) * 100 : 0,
+                // Nivel 4: documentos (linhas de pedido) que compoem o item
+                documentos: y.docs
+                  .map(d => ({
+                    pedido: d.pedido,
+                    itemPed: d.itemPed,
+                    nota: d.nota,
+                    serie: d.serie,
+                    emissao: d.emissao,
+                    fornecedor: d.fornece,
+                    fornecedorNome: nomeFornecedor.get(`${d.fornece}|${d.forneceLoja}`) || '',
+                    valor: d.valor,
+                    pctItem: y.valor > 0 ? (d.valor / y.valor) * 100 : 0
+                  }))
+                  .sort((a, b) => b.valor - a.valor)
               }))
               .sort((a, b) => b.valor - a.valor)
           }))
