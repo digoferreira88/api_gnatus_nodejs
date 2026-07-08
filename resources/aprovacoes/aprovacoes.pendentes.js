@@ -151,6 +151,7 @@ module.exports = (app) => ({
             `SELECT RTRIM(C1_NUM) numero,
                     MIN(C1_EMISSAO) emissao,
                     MAX(RTRIM(C1_SOLICIT)) solicitante,
+                    MAX(C1_MOEDA) moeda,
                     SUM(C1_TOTAL) total,
                     COUNT(*) qtdItens
                FROM SC1010 WITH (NOLOCK)
@@ -201,6 +202,8 @@ module.exports = (app) => ({
                     MIN(sc7.C7_EMISSAO) emissao,
                     MAX(RTRIM(sa2.A2_NOME)) fornecedor,
                     MAX(RTRIM(sc7.C7_USER)) comprador,
+                    MAX(sc7.C7_MOEDA)   moeda,
+                    MAX(sc7.C7_TXMOEDA) taxa,
                     SUM(sc7.C7_TOTAL) total,
                     COUNT(*) qtdItens
                FROM SC7010 sc7 WITH (NOLOCK)
@@ -323,6 +326,11 @@ module.exports = (app) => ({
             fornecedor: tipo === 'PC' && info ? trim(info.fornecedor) : '',
             qtdItens: info ? toN(info.qtdItens) : itens.length,
             totalDoc: (info && toN(info.total)) ? toN(info.total) : toN(s.valor),
+            // Moeda do documento: 1=Real, 2=Dolar (C7_MOEDA/C1_MOEDA). taxa =
+            // C7_TXMOEDA (so PC) pra exibir o equivalente em R$. Sem isso a tela
+            // mostrava valor em dolar como se fosse real (ex.: PC 024795).
+            moeda: toN(info?.moeda) || 1,
+            taxa: toN(info?.taxa) || 0,
             itens,
             anexos: anexos.get(key) || []
           });
