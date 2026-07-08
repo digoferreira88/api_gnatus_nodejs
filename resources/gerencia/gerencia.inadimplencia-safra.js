@@ -7,7 +7,7 @@
 //   - vencido   = SUM(E1_SALDO) em aberto e vencido hoje
 //   - aberto    = SUM(E1_SALDO) em aberto (vencido + a vencer)
 //   e as versões "sem acordos" (descontando clientes com status NEGOCIANDO,
-//   ACORDO_EM_ANDAMENTO ou RETENÇÃO no módulo de Cobrança).
+//   ACORDO_EM_ANDAMENTO, RETENÇÃO ou CONFISSÃO DE DÍVIDA no módulo de Cobrança).
 // Clientes com status DEVOLUÇÃO ou AJUSTE INTERNO são removidos por completo da
 // análise. JURÍDICO e PERDA contam como inadimplência. RETENÇÃO permanece no
 // Total mas é descontada de "Sem acordos" (como NEGOCIANDO/ACORDO EM ANDAMENTO) — 01/07/2026.
@@ -44,11 +44,11 @@ module.exports = (app) => ({
       for (let a = anoMin; a <= anoMax; a++) anos.push(String(a));
 
       // 1) clientes DESCONTADOS do "sem acordos" (mas presentes no Total):
-      //    status NEGOCIANDO, ACORDO_EM_ANDAMENTO ou RETENÇÃO na Cobrança,
-      //    mais qualquer cliente marcado manualmente na carteira NEGOCIACAO.
+      //    status NEGOCIANDO, ACORDO_EM_ANDAMENTO, RETENÇÃO ou CONFISSÃO DE DÍVIDA
+      //    na Cobrança, mais qualquer cliente marcado manualmente na carteira NEGOCIACAO.
       const negocRows = await Pg.connectAndQuery(
         `SELECT cliente_cod, cliente_loja FROM tab_cobranca_status_cliente
-           WHERE UPPER(TRIM(status)) IN ('NEGOCIANDO', 'ACORDO_EM_ANDAMENTO', 'RETENCAO')
+           WHERE UPPER(TRIM(status)) IN ('NEGOCIANDO', 'ACORDO_EM_ANDAMENTO', 'RETENCAO', 'CONFISSAO_DIVIDA')
          UNION
          SELECT cliente_cod, cliente_loja FROM tab_cobranca_atribuicao
            WHERE UPPER(TRIM(carteira)) = 'NEGOCIACAO'`, {});
