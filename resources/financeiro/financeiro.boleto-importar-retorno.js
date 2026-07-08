@@ -14,6 +14,7 @@ const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005
 const Auditoria = require('../../services/auditoria');
 const ProtheusRetorno = require('../../services/protheusRetorno');
 const CnabFiltro = require('../../services/cnabRetornoFiltro');
+const BoletoAdotar = require('../../services/boletoAdotar');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
@@ -156,6 +157,34 @@ module.exports = (app) => ({
           conta_enviada: trim(req.body?.conta)
         }
       });
+
+      // ===== Auto-adoção (2026-07-08) =====
+      // Import REAL de um borderô feito FORA da intranet (direto no Protheus) não
+      // gera boletos disparáveis por si só — não há lote na intranet. Depois que o
+      // FINA205 registra no SE1 (E1_OCORREN='02' + nosso número), adotamos os
+      // ÓRFÃOS desse banco: cria lote retroativo -> ficam disparáveis, sem passo
+      // manual. Idempotente (só adota o que ainda não está em lote). Best-effort:
+      // se falhar, NÃO quebra a resposta do import.
+      if (!simular && r.ok && banco) {
+        try {
+          const adocao = await BoletoAdotar.adotarSe1({
+            Pg: app.services.Pg, Protheus: app.services.Protheus, user, filtroBanco: banco
+          });
+          body.auto_adotados = adocao.adotados;
+          body.auto_lotes = adocao.lotes_criados;
+          if (adocao.adotados) {
+            Auditoria.registrar(app, {
+              modulo: 'Financeiro', submodulo: 'EnvioBoleto',
+              acao: 'ADOTAR_SE1', severidade: 'INFO', req,
+              entidade: 'lote', entidadeId: adocao.lotes.map(l => l.id).join(','),
+              descricao: `Auto-adotou ${adocao.adotados} título(s) da SE1 após import do retorno ${nomeArquivo || '(arquivo)'} — ${adocao.lotes_criados} lote(s), ficaram disparáveis`,
+              meta: { origem: 'importar-retorno', banco, adotados: adocao.adotados, lotes: adocao.lotes }
+            });
+          }
+        } catch (e) {
+          console.warn('boleto-importar-retorno: auto-adotar-se1 falhou —', e.message);
+        }
+      }
 
       // Repassa o corpo do Protheus (inclui detalhes[]) + status http original
       return res.status(r.httpStatus >= 200 && r.httpStatus < 600 ? r.httpStatus : 502).json(body);
