@@ -192,6 +192,115 @@ module.exports = (app) => ({
         agMes.qtdItens += 1;
       }
 
+      // 3b) TÍTULOS DIRETOS do financeiro (FINA050 — fatura de cartão etc.):
+      // gastos SEM pedido de compra (MONDAY/ADOBE/PIPEFY...) que não apareciam
+      // na visão. Atribuição de CC em cascata:
+      //   1. E2_CCD do título  2. rateio SEZ010 (EZ_CCUSTO)  3. de-para
+      //   fornecedor->CC (tab_cc_fornecedor_depara)  4. balde "(SEM CC)".
+      // Sem dupla contagem com pedidos: FINA050 é lançamento MANUAL — títulos de
+      // NF de pedido nascem via MATA100. No drill: conta = natureza (NAT xxx),
+      // item = fornecedor, documento = o título (flag direto:true).
+      let qtdTitulosDiretos = 0, valorTitulosDiretos = 0, qtdTitulosSemCC = 0;
+      const natUsadas = new Set();
+      try {
+        const se2 = await Protheus.connectAndQuery(`
+          SELECT RTRIM(e2.E2_PREFIXO) prefixo, RTRIM(e2.E2_NUM) numero, RTRIM(e2.E2_PARCELA) parcela,
+                 RTRIM(e2.E2_TIPO) tipo, RTRIM(e2.E2_FORNECE) fornece, RTRIM(e2.E2_LOJA) loja,
+                 RTRIM(e2.E2_NATUREZ) natureza, RTRIM(ISNULL(e2.E2_CCD, '')) ccd,
+                 e2.E2_EMISSAO emissao, e2.E2_VALOR valor,
+                 RTRIM(COALESCE(sa2.A2_NREDUZ, sa2.A2_NOME, e2.E2_NOMFOR, '')) fornecedorNome
+            FROM SE2010 e2 WITH (NOLOCK)
+            LEFT JOIN SA2010 sa2 WITH (NOLOCK)
+              ON sa2.A2_COD = e2.E2_FORNECE AND sa2.A2_LOJA = e2.E2_LOJA AND sa2.D_E_L_E_T_ <> '*'
+           WHERE e2.D_E_L_E_T_ <> '*' AND e2.E2_FILIAL = '01'
+             AND RTRIM(e2.E2_ORIGEM) = 'FINA050'
+             AND RTRIM(e2.E2_TIPO) NOT IN ('PA', 'RA')
+             AND e2.E2_VALOR > 0
+             AND e2.E2_EMISSAO BETWEEN @inicio AND @fim`, { inicio, fim });
+
+        // rateio SEZ dos títulos (batch por numero)
+        const rateio = new Map();   // `${pref}|${num}|${parc}|${forn}|${loja}` -> [{cc, valor}]
+        const numsTit = [...new Set(se2.map(r => trim(r.numero)))];
+        for (let i = 0; i < numsTit.length; i += 300) {
+          const slice = numsTit.slice(i, i + 300);
+          const p = {}; const inN = slice.map((n, k) => { p[`n${k}`] = n; return `@n${k}`; }).join(',');
+          try {
+            const rows = await Protheus.connectAndQuery(`
+              SELECT RTRIM(EZ_PREFIXO) prefixo, RTRIM(EZ_NUM) numero, RTRIM(EZ_PARCELA) parcela,
+                     RTRIM(EZ_CLIFOR) fornece, RTRIM(EZ_LOJA) loja, RTRIM(EZ_CCUSTO) cc, EZ_VALOR valor
+                FROM SEZ010 WITH (NOLOCK)
+               WHERE D_E_L_E_T_ <> '*' AND RTRIM(EZ_CCUSTO) <> '' AND EZ_NUM IN (${inN})`, p);
+            rows.forEach(r => {
+              const k = [trim(r.prefixo), trim(r.numero), trim(r.parcela), trim(r.fornece), trim(r.loja)].join('|');
+              if (!rateio.has(k)) rateio.set(k, []);
+              rateio.get(k).push({ cc: trim(r.cc), valor: toN(r.valor) });
+            });
+          } catch (e) { console.warn('dre-centro-custo: SEZ batch err:', e.message); }
+        }
+
+        // de-para fornecedor -> CC (PG). Chave fornece+loja, fallback fornece+''.
+        const depara = new Map();
+        try {
+          const dp = await Pg.connectAndQuery(`SELECT fornece, loja, cc FROM tab_cc_fornecedor_depara`, {});
+          dp.forEach(d => depara.set(`${trim(d.fornece)}|${trim(d.loja)}`, trim(d.cc)));
+        } catch (e) { console.warn('dre-centro-custo: de-para indisponível (migration 72?):', e.message); }
+
+        // injeta na árvore
+        const addTitulo = (cc, r, valor) => {
+          const kCC = cc || '(SEM CC)';
+          if (!cc) qtdTitulosSemCC++;
+          const natureza = trim(r.natureza) || '(sem natureza)';
+          const kConta = `NAT ${natureza}`;
+          natUsadas.add(natureza);
+          const kItem = trim(r.fornecedorNome) || trim(r.fornece) || '(sem fornecedor)';
+          const ymes = String(r.emissao || '').slice(0, 6);
+          const docId = `TIT ${trim(r.prefixo)}-${trim(r.numero)}`;
+
+          if (!porCC.has(kCC)) porCC.set(kCC, { valor: 0, qtdItens: 0, pedidos: new Set(), porMes: new Map(), porConta: new Map() });
+          const agCc = porCC.get(kCC);
+          agCc.valor += valor; agCc.qtdItens += 1; agCc.pedidos.add(docId);
+          agCc.porMes.set(ymes, toN(agCc.porMes.get(ymes)) + valor);
+
+          if (!agCc.porConta.has(kConta)) agCc.porConta.set(kConta, { valor: 0, qtdItens: 0, porItem: new Map() });
+          const aCt = agCc.porConta.get(kConta);
+          aCt.valor += valor; aCt.qtdItens += 1;
+
+          if (!aCt.porItem.has(kItem)) aCt.porItem.set(kItem, { descricao: 'Títulos diretos do financeiro (sem pedido)', valor: 0, qtdItens: 0, docs: [] });
+          const aIt = aCt.porItem.get(kItem);
+          aIt.valor += valor; aIt.qtdItens += 1;
+          aIt.docs.push({
+            pedido: `${trim(r.prefixo)}-${trim(r.numero)}`,
+            itemPed: trim(r.parcela),
+            emissao: String(r.emissao || ''),
+            fornece: trim(r.fornece), forneceLoja: trim(r.loja),
+            moeda: 1, taxa: 0, valorMoeda: valor, valor,
+            direto: true
+          });
+
+          if (!porMes.has(ymes)) porMes.set(ymes, { valor: 0, qtdItens: 0 });
+          const agMes = porMes.get(ymes);
+          agMes.valor += valor; agMes.qtdItens += 1;
+        };
+
+        for (const r of se2) {
+          qtdTitulosDiretos++;
+          valorTitulosDiretos += toN(r.valor);
+          const kTit = [trim(r.prefixo), trim(r.numero), trim(r.parcela), trim(r.fornece), trim(r.loja)].join('|');
+          const ccd = trim(r.ccd);
+          const rat = rateio.get(kTit);
+          if (ccd) {
+            addTitulo(ccd, r, toN(r.valor));
+          } else if (rat && rat.length) {
+            rat.forEach(x => addTitulo(x.cc, r, x.valor));   // rateio pode dividir em N CCs
+          } else {
+            const cc = depara.get(`${trim(r.fornece)}|${trim(r.loja)}`) || depara.get(`${trim(r.fornece)}|`) || '';
+            addTitulo(cc, r, toN(r.valor));
+          }
+        }
+      } catch (e) {
+        console.warn('dre-centro-custo: bloco de títulos diretos falhou (segue só pedidos):', e.message);
+      }
+
       // 4) Descricoes dos CCs (CTT010)
       const ccs = [...porCC.keys()];
       const descricoes = new Map();
@@ -212,6 +321,7 @@ module.exports = (app) => ({
           console.warn('dre-centro-custo: CTT010 err:', e.message);
         }
       }
+      descricoes.set('(SEM CC)', 'Títulos diretos sem CC — configure o de-para fornecedor→CC');
 
       // 4b) Descricoes das contas contabeis (CT1010) — todas as contas usadas
       // em qualquer CC. Uniao com Set pra evitar repeticao.
@@ -237,6 +347,22 @@ module.exports = (app) => ({
           rows.forEach(r => { if (!descContas.has(trim(r.conta))) descContas.set(trim(r.conta), trim(r.descricao)); });
         } catch (e) {
           console.warn('dre-centro-custo: CT1010 err:', e.message);
+        }
+      }
+
+      // 4b.1) Descrições das NATUREZAS (SED010) — chaves "NAT xxx" dos títulos diretos
+      if (natUsadas.size) {
+        const arr = [...natUsadas].filter(n => n && n !== '(sem natureza)');
+        for (let i = 0; i < arr.length; i += 400) {
+          const slice = arr.slice(i, i + 400);
+          const p = {}; const inN = slice.map((n, k) => { p[`n${k}`] = n; return `@n${k}`; }).join(',');
+          try {
+            const rows = await Protheus.connectAndQuery(`
+              SELECT RTRIM(ED_CODIGO) nat, RTRIM(ED_DESCRIC) descricao
+                FROM SED010 WITH (NOLOCK)
+               WHERE D_E_L_E_T_ <> '*' AND RTRIM(ED_CODIGO) IN (${inN})`, p);
+            rows.forEach(r => descContas.set(`NAT ${trim(r.nat)}`, `${trim(r.descricao)} (natureza — títulos diretos)`));
+          } catch (e) { console.warn('dre-centro-custo: SED010 err:', e.message); }
         }
       }
 
@@ -381,6 +507,7 @@ module.exports = (app) => ({
                       taxa: d.taxa,
                       valorMoeda: d.valorMoeda,
                       valor: d.valor,
+                      direto: d.direto === true,   // título FINA050 (sem pedido)
                       pctItem: y.valor > 0 ? (d.valor / y.valor) * 100 : 0
                     };
                   })
@@ -445,6 +572,10 @@ module.exports = (app) => ({
           qtdCentrosComOrcamento: orcamentoPorCC.size,
           qtdMoedaEstrangeira,   // linhas convertidas de moeda estrangeira p/ R$
           valorTotalEmReais: valorTotal,   // (alias explícito — tudo já em R$)
+          // Títulos diretos do financeiro (FINA050, sem pedido) incluídos na visão
+          qtdTitulosDiretos,
+          valorTitulosDiretos,
+          qtdTitulosSemCC,
           valorOrcadoAnual: orcadoAnualTotal || null,
           valorOrcadoYTD: orcadoYTDTotal || null,
           pctExecutadoYTD: orcadoYTDTotal > 0 ? (valorTotal / orcadoYTDTotal) * 100 : null
