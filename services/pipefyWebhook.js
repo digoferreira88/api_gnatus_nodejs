@@ -85,10 +85,57 @@ const FASES_CLIENTES_GCARE = {
   '342527971': { templateId: '2059375837972044', builder: buildConcluidoParams }        // CONCLUIDO
 };
 
+// ====================== G-CARE NOVO (24 | G-CARE, 306859922) ======================
+// Espelha os E-MAILS DE FASE (automacoes do Pipefy) como WhatsApp via Suri.
+// Templates aprovados no Meta ficam em env (SURI_TPL_GCARE_*); enquanto vazios,
+// NAO dispara (skip com log) — mesma logica do SURI_TPL_BOLETO. Textos p/ cadastro
+// em docs/spec-whatsapp-gcare.md. Campos/conectores validados ao vivo (start form
+// 341351610): cliente(nome_fantasia/telefone), ATA(nome_fantasia/telefone/e_mail),
+// tecnico(nome_completo), telefone_whatsapp, tipo_de_atendimento,
+// data_e_hora_agendada_para_o_servi_o, ordem_de_servi_o_n.
+const PIPE_GCARE_NOVO = '306859922';
+
+const TPL_GCARE = {
+  protocolo:       process.env.SURI_TPL_GCARE_PROTOCOLO       || '',   // card criado -> cliente
+  orcamento:       process.env.SURI_TPL_GCARE_ORCAMENTO       || '',   // aprovacao do orcamento -> cliente
+  validacao:       process.env.SURI_TPL_GCARE_VALIDACAO       || '',   // validacao/avaliacao -> cliente
+  concluido:       process.env.SURI_TPL_GCARE_CONCLUIDO       || '',   // concluido -> cliente
+  agendamento:     process.env.SURI_TPL_GCARE_AGENDAMENTO     || '',   // mudanca de agenda -> cliente
+  troca_tecnico:   process.env.SURI_TPL_GCARE_TROCA_TECNICO   || '',   // troca de tecnico -> cliente
+  solic_pagamento: process.env.SURI_TPL_GCARE_SOLIC_PAGAMENTO || '',   // solicitacao pagamento -> ATA
+  os_reprovada:    process.env.SURI_TPL_GCARE_OS_REPROVADA    || ''    // OS reprovada pelo cliente -> ATA
+};
+
+// card.create -> protocolo (cliente)
+const GCARE_CREATE = {
+  tpl: 'protocolo', destino: 'cliente',
+  params: (c) => [c.cliNome, c.os, c.tipoServico, c.dataAgendada, c.tecNome, c.ataFone]
+};
+// card.move -> fase de destino (id) -> config
+const GCARE_MOVE = {
+  '341608830': { tpl: 'orcamento', destino: 'cliente',                  // APROVACAO DO ORCAMENTO
+    params: async (c, id) => [c.cliNome, c.os, await publicFormLink(id), c.ataFone] },
+  '341356572': { tpl: 'validacao', destino: 'cliente',                  // VALIDACAO E APROVACAO DO CLIENTE
+    params: async (c, id) => [c.cliNome, c.os, c.tipoServico, await publicFormLink(id)] },
+  '341351613': { tpl: 'concluido', destino: 'cliente',                  // CONCLUIDO
+    params: (c) => [c.cliNome, c.os, c.ataFone, c.ataNome] },
+  '341437387': { tpl: 'solic_pagamento', destino: 'ata',               // SOLICITACAO DE PAGAMENTO
+    params: async (c, id) => [c.ataNome, c.os, await publicFormLink(id)] },
+  '341753703': { tpl: 'os_reprovada', destino: 'ata',                  // ORDEM DE SERVICO REPROVADA PELO CLIENTE
+    params: async (c, id) => [c.ataNome, c.os, c.tecNome, await publicFormLink(id)] }
+};
+// card.field_update -> por slug do campo alterado (nao ha move de fase)
+const GCARE_FIELD_TRIGGERS = {
+  'data_e_hora_agendada_para_o_servi_o': { tpl: 'agendamento', destino: 'cliente',
+    params: (c) => [c.cliNome, c.os, c.dataAgendada, c.ataFone, c.ataNome] },
+  't_cnico_respons_vel': { tpl: 'troca_tecnico', destino: 'cliente',
+    params: (c) => [c.cliNome, c.tipoServico, c.os, c.tecNome, c.ataFone, c.ataNome] }
+};
+
 // ---- pré-filtro (economia de API) ----
 // Só estas ações têm branch. Qualquer outra (field_update, done, comment...) é
 // descartada ANTES de consultar o card, evitando 1 chamada dadosCard por evento.
-const ACOES_TRATADAS = new Set(['card.create', 'card.move', 'card.late']);
+const ACOES_TRATADAS = new Set(['card.create', 'card.move', 'card.late', 'card.field_update']);
 // Pipes "fase-gated": só notificam em FASES mapeadas (responsável/cliente). SAC e
 // Teste notificam em QUALQUER create/move → NÃO entram aqui (nunca são pulados).
 // Hash do pipe_id no payload do webhook. Override por env PIPEFY_WH_PIPES_FASE_GATED.
@@ -183,6 +230,47 @@ async function buildConcluidoParams(card, clienteFields, cardId) {
   return base;
 }
 
+// ---------- contexto G-CARE NOVO (resolve conectores 1x por evento) ----------
+async function gcareContexto(card) {
+  const os = trim(valorCampo(card, 'ordem_de_servi_o_n')) || trim(card.title);
+  const tipoServico = trim(valorCampo(card, 'tipo_de_atendimento'));
+  const dataAgendada = trim(valorCampo(card, 'data_e_hora_agendada_para_o_servi_o'));
+
+  // CLIENTE: fone direto do card (telefone_whatsapp); nome/fallback fone no conector
+  let cliNome = '', cliFone = trim(valorCampo(card, 'telefone_whatsapp'));
+  const cliIds = arrayCampo(card, 'cliente');
+  if (cliIds.length) {
+    try {
+      const r = await dadosDatabasePorId(cliIds[0]);
+      cliNome = trim(valorRecord(r.record_fields, 'nome_fantasia')) || trim(valorRecord(r.record_fields, 'nome'));
+      if (!cliFone) cliFone = trim(valorRecord(r.record_fields, 'telefone'));
+    } catch (e) { /* segue com o que tem */ }
+  }
+
+  // ATA (assistencia tecnica autorizada)
+  let ataNome = '', ataFone = '';
+  const ataIds = arrayCampo(card, 'assist_ncia_t_cnica_autorizada');
+  if (ataIds.length) {
+    try {
+      const r = await dadosDatabasePorId(ataIds[0]);
+      ataNome = trim(valorRecord(r.record_fields, 'nome_fantasia')) || trim(valorRecord(r.record_fields, 'raz_o_social'));
+      ataFone = trim(valorRecord(r.record_fields, 'telefone'));
+    } catch (e) { /* segue */ }
+  }
+
+  // TECNICO responsavel
+  let tecNome = '';
+  const tecIds = arrayCampo(card, 't_cnico_respons_vel');
+  if (tecIds.length) {
+    try {
+      const r = await dadosDatabasePorId(tecIds[0]);
+      tecNome = trim(valorRecord(r.record_fields, 'nome_completo'));
+    } catch (e) { /* segue */ }
+  }
+
+  return { os, tipoServico, dataAgendada, cliNome, cliFone, ataNome, ataFone, tecNome };
+}
+
 // ---------- fila (dedupe identico ao PHP) ----------
 async function enfileirar(Pg, { fone, cardId, faseId, action, templateId, parametros }) {
   if (!fone) return false;
@@ -236,8 +324,13 @@ async function processarEvento({ Pg }, payload) {
   if (!ACOES_TRATADAS.has(action)) return { acoes: [`ação "${action || '?'}" não tratada — ignorado (sem API)`] };
   const pipeHash = trim(d.card?.pipe_id);
   if (action === 'card.move' && faseId && PIPES_FASE_GATED.has(pipeHash)
-      && !MAPA_FASE_RESPONSAVEL[faseId] && !FASES_CLIENTES_GCARE[faseId]) {
+      && !MAPA_FASE_RESPONSAVEL[faseId] && !FASES_CLIENTES_GCARE[faseId] && !GCARE_MOVE[faseId]) {
     return { acoes: [`fase ${faseId} sem gatilho no pipe ${pipeHash} — ignorado (sem API)`] };
+  }
+  // field_update: só interessa aos 2 campos-gatilho do G-Care novo — qualquer
+  // outro é descartado ANTES da API (field_update é evento frequente).
+  if (action === 'card.field_update' && !GCARE_FIELD_TRIGGERS[trim(d.field?.id)]) {
+    return { acoes: [`field_update em "${trim(d.field?.id) || '?'}" sem gatilho — ignorado (sem API)`] };
   }
 
   const card = await dadosCard(cardId);
@@ -305,6 +398,31 @@ async function processarEvento({ Pg }, payload) {
         const params = [valorRecord(cli.record_fields, 'nome_fantasia'), cardId, await publicFormLink(cardId)];
         if (await enfileirar(Pg, { fone, cardId, faseId, action, templateId: '', parametros: params })) acoes.push(`Teste_TI ${fone}`);
       } catch (e) { acoes.push(`Teste_TI: ERRO ${e.message}`); }
+    }
+  }
+
+  // 6) G-CARE NOVO (306859922) — WhatsApp ao CLIENTE/ATA espelhando os e-mails
+  // de fase. Fases via create/move; agenda e troca de tecnico via field_update.
+  if (pipeId === PIPE_GCARE_NOVO) {
+    let cfg = null, gatilho = '';
+    if (action === 'card.create') { cfg = GCARE_CREATE; gatilho = 'create'; }
+    else if (action === 'card.move' && GCARE_MOVE[faseId]) { cfg = GCARE_MOVE[faseId]; gatilho = `move→${faseId}`; }
+    else if (action === 'card.field_update') { cfg = GCARE_FIELD_TRIGGERS[trim(d.field?.id)]; gatilho = `field ${trim(d.field?.id)}`; }
+
+    if (cfg) {
+      const tplId = TPL_GCARE[cfg.tpl];
+      if (!tplId) {
+        acoes.push(`G-Care(novo) ${cfg.tpl}: template Suri não configurado (SURI_TPL_GCARE_${cfg.tpl.toUpperCase()}) — pulado`);
+      } else {
+        try {
+          const ctx = await gcareContexto(card);
+          const fone = fonePHP(cfg.destino === 'ata' ? ctx.ataFone : ctx.cliFone);
+          const params = await cfg.params(ctx, cardId);
+          if (await enfileirar(Pg, { fone, cardId, faseId, action, templateId: tplId, parametros: params }))
+            acoes.push(`G-Care(novo) ${cfg.tpl} [${gatilho}] → ${cfg.destino} ${fone}`);
+          else acoes.push(`G-Care(novo) ${cfg.tpl}: sem telefone válido (${cfg.destino}) ou duplicado`);
+        } catch (e) { acoes.push(`G-Care(novo) ${cfg.tpl}: ERRO ${e.message}`); }
+      }
     }
   }
 
