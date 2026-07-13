@@ -245,13 +245,13 @@ module.exports = (app) => ({
           dp.forEach(d => depara.set(`${trim(d.fornece)}|${trim(d.loja)}`, trim(d.cc)));
         } catch (e) { console.warn('dre-centro-custo: de-para indisponível (migration 72?):', e.message); }
 
-        // injeta na árvore — SÓ títulos COM CC atribuído. Os sem CC ficam FORA
-        // (só contados no aviso): a massa FINA050 inclui empréstimos/impostos
-        // (R$ milhões) que não são despesa de CC — um balde "(SEM CC)" dominaria
-        // o gráfico e distorceria a visão. MONDAY/ADOBE/etc entram assim que o
-        // de-para do fornecedor for cadastrado.
+        // injeta na árvore — títulos SEM CC entram no grupo "(SEM CC)" (decisão
+        // da controladoria em 09/07/2026: visualizar a massa não-atribuída pra
+        // trabalhar o de-para depois). Obs.: inclui empréstimos/impostos — o
+        // grupo pode ser grande; quando o de-para for populado, ele esvazia.
         const addTitulo = (cc, r, valor) => {
-          const kCC = cc;
+          const kCC = cc || '(SEM CC)';
+          if (!cc) qtdTitulosSemCC++;
           const natureza = trim(r.natureza) || '(sem natureza)';
           const kConta = `NAT ${natureza}`;
           natUsadas.add(natureza);
@@ -286,23 +286,18 @@ module.exports = (app) => ({
         };
 
         for (const r of se2) {
+          qtdTitulosDiretos++;
+          valorTitulosDiretos += toN(r.valor);
           const kTit = [trim(r.prefixo), trim(r.numero), trim(r.parcela), trim(r.fornece), trim(r.loja)].join('|');
           const ccd = trim(r.ccd);
           const rat = rateio.get(kTit);
           if (ccd) {
-            qtdTitulosDiretos++; valorTitulosDiretos += toN(r.valor);
             addTitulo(ccd, r, toN(r.valor));
           } else if (rat && rat.length) {
-            qtdTitulosDiretos++; valorTitulosDiretos += toN(r.valor);
             rat.forEach(x => addTitulo(x.cc, r, x.valor));   // rateio pode dividir em N CCs
           } else {
             const cc = depara.get(`${trim(r.fornece)}|${trim(r.loja)}`) || depara.get(`${trim(r.fornece)}|`) || '';
-            if (cc) {
-              qtdTitulosDiretos++; valorTitulosDiretos += toN(r.valor);
-              addTitulo(cc, r, toN(r.valor));
-            } else {
-              qtdTitulosSemCC++;   // fica FORA da visão (só no aviso)
-            }
+            addTitulo(cc, r, toN(r.valor));   // sem CC -> grupo "(SEM CC)"
           }
         }
       } catch (e) {
@@ -329,6 +324,7 @@ module.exports = (app) => ({
           console.warn('dre-centro-custo: CTT010 err:', e.message);
         }
       }
+      descricoes.set('(SEM CC)', 'Títulos diretos sem CC — configure o de-para fornecedor→CC');
 
       // 4b) Descricoes das contas contabeis (CT1010) — todas as contas usadas
       // em qualquer CC. Uniao com Set pra evitar repeticao.
