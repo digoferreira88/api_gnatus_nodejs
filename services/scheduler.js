@@ -244,6 +244,9 @@ const CRON_ESTOQUE_SNAPSHOT = '0 3 * * *';  // 03:00 todo dia
 // (~14 runs/dia vs 96 antes). Antes era '*/15 * * * *' e amplificava qualquer churn.
 const CRON_PIPEFY_OP = '0 7-20 * * 1-5';    // 07:00..20:00, de hora em hora, seg-sex
 
+// Reservas de estoque vencidas (SC0010) -> libera B2_RESERVA. De hora em hora.
+const CRON_RESERVAS_VENCIDAS = '15 * * * *';  // todo :15
+
 // Transmite: o alerta por E-MAIL de token expirando foi REMOVIDO (07/2026) a
 // pedido do usuário — o status do token agora é só VISUAL, no badge do topo do
 // Painel Fiscal (GET /fiscal/transmite-token). A coluna alertado_em em
@@ -301,6 +304,22 @@ function start(app) {
     }
   });
   console.log(`[scheduler] pipefy-op agendado: cron "${CRON_PIPEFY_OP}"`);
+
+  // Reservas de estoque VENCIDAS -> devolve o saldo a B2_RESERVA e remove da
+  // SC0010 (regra do sistema antigo: 2 dias apos a validade). A intranet antiga
+  // fazia essa limpeza a cada consulta de disponibilidade; aqui roda de hora em
+  // hora (a janela de 2 dias torna o lag irrelevante e evita escrita a cada read).
+  if (jobs.reservasVencidas) jobs.reservasVencidas.cancel();
+  jobs.reservasVencidas = schedule.scheduleJob(CRON_RESERVAS_VENCIDAS, async () => {
+    try {
+      const Reserva = require('./protheusReserva');
+      const { removidas } = await Reserva.limparVencidas(app.services.Protheus);
+      if (removidas > 0) console.log(`[scheduler] reservas-vencidas: ${removidas} reserva(s) expirada(s) liberada(s)`);
+    } catch (err) {
+      console.error('[scheduler] erro em reservas-vencidas:', err.message);
+    }
+  });
+  console.log(`[scheduler] reservas-vencidas agendado: cron "${CRON_RESERVAS_VENCIDAS}"`);
 
   // (transmite-token: alerta por e-mail removido em 07/2026 — status é visual
   //  no Painel Fiscal; ver comentário acima de start())

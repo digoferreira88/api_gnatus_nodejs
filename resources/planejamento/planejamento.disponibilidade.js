@@ -25,12 +25,14 @@ const DESCRITIVO = {
   sim: '### SIMULAÇÃO ###'
 };
 
+const Reserva = require('../../services/protheusReserva');
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/disponibilidade',
 
   handler: async (req, res) => {
-    const { Protheus } = app.services;
+    const { Pg, Protheus } = app.services;
     const { codigo, data, armazem } = req.query;
 
     if (!codigo || !data || !armazem) {
@@ -292,21 +294,42 @@ module.exports = (app) => ({
       }
 
       // ---------- Reservas (c6 com estatus=60 + sc0) ----------
+      // Regra do sistema antigo: só o DONO cancela a reserva (admin perm 0 cancela
+      // qualquer uma). O login é o prefixo do e-mail — mesmo formato gravado em
+      // C0_SOLICIT, o que mantém compatibilidade com as reservas da intranet antiga.
+      const user = req.user && req.user[0];
+      const loginAtual = user ? Reserva.loginDe(user) : '';
+      let isAdmin = false;
+      if (user) {
+        try {
+          const adm = await Pg.connectAndQuery(
+            `SELECT 1 FROM tab_intranet_usr_permissoes WHERE id_user = @id AND id_permissao = 0 LIMIT 1`,
+            { id: user.ID }
+          );
+          isAdmin = adm.length > 0;
+        } catch (e) { console.warn('[disponibilidade] check admin:', e.message); }
+      }
+
       const reservas = [
         ...sc6Res.map((r) => ({
           tipo: 'pedido-reserva',
           data: trim(r.data),
           pessoa: trim(r.numero),
           quantidade: toNumber(r.saldo),
-          recno: null
+          recno: null,
+          podeCancelar: false            // reserva de pedido de venda — não se cancela por aqui
         })),
-        ...sc0.map((r) => ({
-          tipo: 'reserva',
-          data: trim(r.data),
-          pessoa: trim(r.solicitante),
-          quantidade: toNumber(r.quantidade),
-          recno: toNumber(r.recno)
-        }))
+        ...sc0.map((r) => {
+          const dono = trim(r.solicitante);
+          return {
+            tipo: 'reserva',
+            data: trim(r.data),
+            pessoa: dono,
+            quantidade: toNumber(r.quantidade),
+            recno: toNumber(r.recno),
+            podeCancelar: !!loginAtual && (isAdmin || dono.toLowerCase() === loginAtual.toLowerCase())
+          };
+        })
       ];
 
       return res.json({
@@ -320,6 +343,7 @@ module.exports = (app) => ({
         armazens,
         breakdownEstoque: breakdown,
         reservas,
+        usuarioLogado: loginAtual,
         movimentos
       });
     } catch (error) {
