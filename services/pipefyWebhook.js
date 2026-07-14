@@ -95,21 +95,24 @@ const FASES_CLIENTES_GCARE = {
 // data_e_hora_agendada_para_o_servi_o, ordem_de_servi_o_n.
 const PIPE_GCARE_NOVO = '306859922';
 
+// IDs dos templates aprovados no Suri/Meta (13/07/2026). Fixos aqui (mesmo
+// padrao dos templates do G-Care interno acima); env sobrepoe se precisar trocar.
 const TPL_GCARE = {
-  protocolo:       process.env.SURI_TPL_GCARE_PROTOCOLO       || '',   // card criado -> cliente
-  orcamento:       process.env.SURI_TPL_GCARE_ORCAMENTO       || '',   // aprovacao do orcamento -> cliente
-  validacao:       process.env.SURI_TPL_GCARE_VALIDACAO       || '',   // validacao/avaliacao -> cliente
-  concluido:       process.env.SURI_TPL_GCARE_CONCLUIDO       || '',   // concluido -> cliente
-  agendamento:     process.env.SURI_TPL_GCARE_AGENDAMENTO     || '',   // mudanca de agenda -> cliente
-  troca_tecnico:   process.env.SURI_TPL_GCARE_TROCA_TECNICO   || '',   // troca de tecnico -> cliente
-  solic_pagamento: process.env.SURI_TPL_GCARE_SOLIC_PAGAMENTO || '',   // solicitacao pagamento -> ATA
-  os_reprovada:    process.env.SURI_TPL_GCARE_OS_REPROVADA    || ''    // OS reprovada pelo cliente -> ATA
+  protocolo:       process.env.SURI_TPL_GCARE_PROTOCOLO       || '1590706475821174',   // card criado -> cliente (7 params)
+  orcamento:       process.env.SURI_TPL_GCARE_ORCAMENTO       || '1345407020429145',   // aprovacao do orcamento -> cliente
+  validacao:       process.env.SURI_TPL_GCARE_VALIDACAO       || '2936016356749696',   // validacao/avaliacao -> cliente
+  concluido:       process.env.SURI_TPL_GCARE_CONCLUIDO       || '1302368038546457',   // concluido -> cliente
+  agendamento:     process.env.SURI_TPL_GCARE_AGENDAMENTO     || '1074055651620488',   // mudanca de agenda -> cliente
+  troca_tecnico:   process.env.SURI_TPL_GCARE_TROCA_TECNICO   || '1709811653593007',   // troca de tecnico -> cliente
+  solic_pagamento: process.env.SURI_TPL_GCARE_SOLIC_PAGAMENTO || '2217584992372328',   // solicitacao pagamento -> ATA
+  os_reprovada:    process.env.SURI_TPL_GCARE_OS_REPROVADA    || '2244178796357639'    // OS reprovada pelo cliente -> ATA
 };
 
-// card.create -> protocolo (cliente)
+// card.create -> protocolo (cliente). 7 params: o nº da OS aparece 2x no texto
+// ({{2}} e {{6}}) — no WhatsApp/Meta cada ocorrencia exige uma variavel propria.
 const GCARE_CREATE = {
   tpl: 'protocolo', destino: 'cliente',
-  params: (c) => [c.cliNome, c.os, c.tipoServico, c.dataAgendada, c.tecNome, c.ataFone]
+  params: (c) => [c.cliNome, c.os, c.tipoServico, c.dataAgendada, c.tecNome, c.os, c.ataFone]
 };
 // card.move -> fase de destino (id) -> config
 const GCARE_MOVE = {
