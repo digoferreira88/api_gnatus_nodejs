@@ -51,7 +51,8 @@ A Intranet GNATUS substitui processos manuais (planilhas, sistemas legados, form
 - **n8n** (127.0.0.1:5678, https://n8n.gnatus.com.br). Todos os vhosts do host em `/etc/nginx/sites-available/` com cert Let's Encrypt (auto-renew).
 
 ### 🔒 Segurança — rotação de credenciais (TODO)
-- **Intranet é READ-ONLY no Protheus** (manter). A conexão usa `sa` (sysadmin) num **1433 exposto por DDNS** → trocar por login READ-ONLY dedicado, restringir o 1433 (allowlist/VPN) e **rotacionar a senha do `sa`**.
+- **Intranet é READ-ONLY no Protheus, com UMA exceção: a RESERVA DE ESTOQUE** ([services/protheusReserva.js](services/protheusReserva.js) → `SC0010` + `SB2010.B2_RESERVA`, §3.2). Todo o resto é leitura. A conexão usa `sa` (sysadmin) num **1433 exposto por DDNS** → restringir o 1433 (allowlist/VPN) e **rotacionar a senha do `sa`**.
+  - ⚠️ **Se trocar o `sa` por um login READ-ONLY, a reserva PARA de funcionar.** O login dedicado precisa de `SELECT` em tudo + **`INSERT/UPDATE` em `SC0010` e `UPDATE` em `SB2010`** (nada além disso).
 - Rotacionar também o que trafegou por chat/legado: senha do servidor LAN `192.168.1.251`, PSK IPsec, chaves EyeMobile (`X-EYEMOBILE-ACCESS/SECRET-KEY`), tokens Transmite, secret sandbox Faro, senha do DB do GLPI.
 
 ---
@@ -1056,6 +1057,14 @@ E1_VALOR > 0
 - Análise de disponibilidade de itens MR/MP no estoque vs demanda
 - Roda em SB2 + SC6 (itens de pedido) + SC7 (pedidos de compra)
 - **Melhoria (2026-06)**: traz a **descrição do produto** (SB1) além do código — quando não há disponibilidade, ajuda a saber se o código foi digitado errado
+
+##### 🔴 RESERVA DE ESTOQUE — o ÚNICO ponto que ESCREVE no Protheus (2026-07)
+- **Service**: [services/protheusReserva.js](services/protheusReserva.js) · **Endpoints**: `POST /planejamento/reserva` + `DELETE /planejamento/reserva/:recno` (perm 3001) · botão **Reservar** no card de disponibilidade
+- Porte da reserva da **intranet antiga (coyote/PHP), que segue viva e gravando nas mesmas tabelas** — a convenção foi decodificada dos registros reais para manter compatibilidade: `SC0010` (reservas) com **`C0_NUM` = o próprio `R_E_C_N_O_` zero-padded (6)**, `C0_TIPO='VD'`, `C0_FILIAL='01'`, **`C0_SOLICIT` = login da intranet (prefixo do e-mail**, ex.: `daniela.costa`), `C0_EMISSAO`=hoje, `C0_VALIDA`=data reservada
+- **A reserva incrementa `SB2010.B2_RESERVA`** → derruba a disponibilidade para o ERP inteiro (é o que dá efeito real à reserva). Cancelar/expirar **devolve** o saldo
+- **Atomicidade**: todo write é um batch único com `BEGIN TRAN` + `TRY/CATCH` (ou grava SC0010 **e** SB2010, ou nada). `R_E_C_N_O_` **não é identity e não há trigger na SC0010** → calculado `MAX+1` dentro da transação com **`TABLOCKX`** (tabela pequena) para não duplicar em concorrência. ⚠️ `SB2010` **tem** trigger de MRP, que dispara no UPDATE (esperado — o sistema antigo já fazia)
+- **Regras**: valida a disponibilidade **dentro da transação** (não deixa reservar a mais); **só o dono cancela** (admin perm 0 cancela qualquer uma); **expira 2 dias após a validade** — limpeza pelo scheduler (`CRON_RESERVAS_VENCIDAS`, todo :15) + antes de cada nova reserva. O antigo limpava a cada consulta (write em todo read)
+- Auditoria CRITICO em reservar/cancelar. **Validado em produção** (ciclo criar→cancelar restaura `B2_RESERVA`; bloqueio por dono e recusa de excesso testados)
 
 #### Faturabilidade · `/planejamento/faturabilidade` · perm 3002
 - **Página**: [PlanejamentoFaturamento.tsx](../frontend_intranet_react/src/pages/Planejamento/PlanejamentoFaturamento.tsx)
