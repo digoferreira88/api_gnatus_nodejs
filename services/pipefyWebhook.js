@@ -103,7 +103,7 @@ const TPL_GCARE = {
   validacao:       process.env.SURI_TPL_GCARE_VALIDACAO       || '2936016356749696',   // validacao/avaliacao -> cliente
   concluido:       process.env.SURI_TPL_GCARE_CONCLUIDO       || '1302368038546457',   // concluido -> cliente
   agendamento:     process.env.SURI_TPL_GCARE_AGENDAMENTO     || '1074055651620488',   // mudanca de agenda -> cliente
-  troca_tecnico:   process.env.SURI_TPL_GCARE_TROCA_TECNICO   || '1709811653593007',   // troca de tecnico -> cliente
+  troca_tecnico:   process.env.SURI_TPL_GCARE_TROCA_TECNICO   || '1562710422221068',   // troca de tecnico -> cliente (id anterior reprovado)
   solic_pagamento: process.env.SURI_TPL_GCARE_SOLIC_PAGAMENTO || '2217584992372328',   // solicitacao pagamento -> ATA
   os_reprovada:    process.env.SURI_TPL_GCARE_OS_REPROVADA    || '2244178796357639'    // OS reprovada pelo cliente -> ATA
 };
