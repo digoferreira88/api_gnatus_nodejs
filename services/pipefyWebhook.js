@@ -105,7 +105,7 @@ const TPL_GCARE = {
   agendamento:     process.env.SURI_TPL_GCARE_AGENDAMENTO     || '1074055651620488',   // mudanca de agenda -> cliente
   troca_tecnico:   process.env.SURI_TPL_GCARE_TROCA_TECNICO   || '1562710422221068',   // troca de tecnico -> cliente (id anterior reprovado)
   solic_pagamento: process.env.SURI_TPL_GCARE_SOLIC_PAGAMENTO || '2217584992372328',   // solicitacao pagamento -> ATA
-  os_reprovada:    process.env.SURI_TPL_GCARE_OS_REPROVADA    || '2244178796357639'    // OS reprovada pelo cliente -> ATA
+  os_reprovada:    process.env.SURI_TPL_GCARE_OS_REPROVADA    || '1529347948923999'    // OS reprovada pelo cliente -> ATA (id anterior reprovado)
 };
 
 // card.create -> protocolo (cliente). 7 params: o nº da OS aparece 2x no texto
