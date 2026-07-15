@@ -247,6 +247,10 @@ const CRON_PIPEFY_OP = '0 7-20 * * 1-5';    // 07:00..20:00, de hora em hora, se
 // Reservas de estoque vencidas (SC0010) -> libera B2_RESERVA. De hora em hora.
 const CRON_RESERVAS_VENCIDAS = '15 * * * *';  // todo :15
 
+// NPS pós-venda: pedidos faturados (estatus 99) -> convite + WhatsApp. Comercial,
+// de hora em hora (só roda com o módulo ATIVO + template Suri configurado).
+const CRON_NPS_POSVENDA = '40 8-19 * * 1-5';  // :40, 08h-19h, seg-sex
+
 // Transmite: o alerta por E-MAIL de token expirando foi REMOVIDO (07/2026) a
 // pedido do usuário — o status do token agora é só VISUAL, no badge do topo do
 // Painel Fiscal (GET /fiscal/transmite-token). A coluna alertado_em em
@@ -320,6 +324,20 @@ function start(app) {
     }
   });
   console.log(`[scheduler] reservas-vencidas agendado: cron "${CRON_RESERVAS_VENCIDAS}"`);
+
+  // NPS pós-venda: dispara pesquisa dos pedidos faturados (estatus 99). Dormente
+  // até o CX ligar (tab_nps_config.ativo) + configurar o template Suri (SURI_TPL_NPS).
+  if (jobs.npsPosvenda) jobs.npsPosvenda.cancel();
+  jobs.npsPosvenda = schedule.scheduleJob(CRON_NPS_POSVENDA, async () => {
+    try {
+      const NPS = require('./npsPosvenda');
+      const stats = await NPS.processarFaturados(app);
+      if (stats && (stats.criados || stats.enviados)) console.log('[scheduler] nps-posvenda:', JSON.stringify(stats));
+    } catch (err) {
+      console.error('[scheduler] erro no nps-posvenda:', err.message);
+    }
+  });
+  console.log(`[scheduler] nps-posvenda agendado: cron "${CRON_NPS_POSVENDA}"`);
 
   // (transmite-token: alerta por e-mail removido em 07/2026 — status é visual
   //  no Painel Fiscal; ver comentário acima de start())
