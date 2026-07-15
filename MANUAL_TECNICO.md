@@ -327,6 +327,13 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 - Lista chamadas de todos os ramais + player de áudio das gravações
 - Backend [services/falemais.js](services/falemais.js) usa Sigma API + Gravacoes API
 
+#### Pesquisa de Pós-venda (NPS) · `/sac/nps` (admin) + `/pesquisa/:token` (público) · perm 6003
+Plataforma de NPS pós-venda ([migration 74](database/postgres/74-nps-posvenda.sql)). **Fluxo**: pedido chega a **estatus 99** (TOTALMENTE FATURADO) → [scheduler](services/scheduler.js) (`40 8-19 * * 1-5`, só com módulo ATIVO + `SURI_TPL_NPS`) acha via SD2/`pedidos_estatus` (`processarFaturados` em [services/npsPosvenda.js](services/npsPosvenda.js)) → cria convite (`tab_nps_convite`, dedupe filial+pedido, token aleatório) → dispara link por **WhatsApp/Suri** → cliente responde na **página pública anônima** → classifica **DETRATOR/NEUTRO/PROMOTOR** (thresholds em `tab_nps_config`, default 0-6/7-8/9-10, editável CX).
+- **Tabelas**: `tab_nps_config` (chave/valor), `tab_nps_pergunta` (editável pelo CX; 1 do tipo `nps` = a que classifica; soft-delete p/ preservar respostas), `tab_nps_convite`, `tab_nps_resposta`, `tab_nps_acao` (ações sobre detratores).
+- **Endpoints públicos** (anonymous, [resources/nps/](resources/nps/)): `GET/POST /nps/publico/:token`. **Admin** (perm 6003, [resources/sac/sac.nps-*.js](resources/sac/)): `dashboard` (NPS score/distribuição/evolução — recharts), `detratores` (lista+respostas+ações), `acao/:conviteId` (registra + tenta ticket Octadesk), `admin`/`config`/`perguntas`.
+- **Frontend**: [PesquisaNPS.tsx](../frontend_intranet_react/src/pages/NPS/PesquisaNPS.tsx) (pública, mobile-first, sem sidebar) + [NPSPosVenda.tsx](../frontend_intranet_react/src/pages/NPS/NPSPosVenda.tsx) (abas Dashboard/Detratores/Perguntas/Config).
+- ⚠️ **Dependências gated** (não quebram o fluxo): (1) **template Suri** do convite — env `SURI_TPL_NPS` (params `[nome, link]`), enquanto vazio o scheduler não dispara; (2) **Octadesk** — [services/octadesk.js](services/octadesk.js) é STUB **aguardando a doc da API** (envs `OCTADESK_API_URL`/`OCTADESK_API_TOKEN`); a ação de detrator é registrada mesmo sem o ticket; (3) **nota de corte** a definir pelo CX. Env `NPS_BASE_URL` (default intranew) monta o link `/pesquisa/<token>`.
+
 ---
 
 ### 3.5 Financeiro
@@ -1643,10 +1650,11 @@ Resumo dos principais:
 | 71 | `71-recebimento-nf.sql` | Recebimento NF: `tab_receb_conferencia` + `tab_receb_conferencia_item` (conferência cega de pré-nota) + perm **4005** |
 | 72 | `72-cc-fornecedor-depara.sql` | `tab_cc_fornecedor_depara` — de-para fornecedor→CC p/ títulos diretos do financeiro (cartão/FINA050) na DRE por Centro de Custo |
 | 73 | `73-credito-registro.sql` | `tab_credito_registro` (histórico permanente das análises de crédito, append-only + versionado) + `registro_id` em tab_credito_anexo. Perm 8006 (existente) |
+| 74 | `74-nps-posvenda.sql` | NPS Pós-venda: `tab_nps_config/pergunta/convite/resposta/acao` (pesquisa disparada ao faturar estatus 99) + perm **6003** |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
 
-⚠️ Novas migrations devem incrementar a numeração (próxima é **#74**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+⚠️ Novas migrations devem incrementar a numeração (próxima é **#75**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
 
 ```bash
 sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
@@ -1712,6 +1720,7 @@ sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSW
 | 5003 | Apoio Ger.    | Contratos - Editar — migration 36 |
 | 5004 | Apoio Ger.    | Contratos - Aprovar Aditivos — migration 36 |
 | 6001 | SAC           | Consulta de Cliente |
+| 6003 | SAC          | Pesquisa Pós-venda (NPS) — migration 74 |
 | 6002 | SAC           | Supervisão |
 | 7001 | Perfil        | Cofre de Senhas |
 | 8001 | Financeiro    | Contas a Pagar |
