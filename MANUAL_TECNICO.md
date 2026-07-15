@@ -332,6 +332,7 @@ Plataforma de NPS pós-venda ([migration 74](database/postgres/74-nps-posvenda.s
 - **Tabelas**: `tab_nps_config` (chave/valor), `tab_nps_pergunta` (editável pelo CX; 1 do tipo `nps` = a que classifica; soft-delete p/ preservar respostas), `tab_nps_convite`, `tab_nps_resposta`, `tab_nps_acao` (ações sobre detratores).
 - **Endpoints públicos** (anonymous, [resources/nps/](resources/nps/)): `GET/POST /nps/publico/:token`. **Admin** (perm 6003, [resources/sac/sac.nps-*.js](resources/sac/)): `dashboard` (NPS score/distribuição/evolução — recharts), `detratores` (lista+respostas+ações), `acao/:conviteId` (registra + tenta ticket Octadesk), `admin`/`config`/`perguntas`.
 - **Frontend**: [PesquisaNPS.tsx](../frontend_intranet_react/src/pages/NPS/PesquisaNPS.tsx) (pública, mobile-first, sem sidebar) + [NPSPosVenda.tsx](../frontend_intranet_react/src/pages/NPS/NPSPosVenda.tsx) (abas Dashboard/Detratores/Perguntas/Config).
+- **Melhorias** ([migration 75](database/postgres/75-nps-melhorias.sql)): **lembrete D+X** (reenvia 1× quem não respondeu — `processarLembretes`, config `lembreteDias`); **anti-fadiga** (não repete o mesmo cliente na janela `antifadigaDias`); **alerta de detrator crítico** (nota ≤ `criticoMax` → e-mail em tempo real via [emailService](services/emailService.js) p/ `alertaEmails`, disparado no endpoint público); **segmentação** BU/vendedor/transportadora/linha (colunas no convite, vindas de SC5+SA3+SA4+SBM `OUTER APPLY` grupo predominante; dashboard agrega NPS por segmento); **link+QR manual** (`POST /sac/nps/link` gera/reaproveita convite + QR via npm `qrcode`, p/ envio manual ou impressão na NF/caixa).
 - ⚠️ **Dependências gated** (não quebram o fluxo): (1) **template Suri** do convite — env `SURI_TPL_NPS` (params `[nome, link]`), enquanto vazio o scheduler não dispara; (2) **Octadesk** — [services/octadesk.js](services/octadesk.js) é STUB **aguardando a doc da API** (envs `OCTADESK_API_URL`/`OCTADESK_API_TOKEN`); a ação de detrator é registrada mesmo sem o ticket; (3) **nota de corte** a definir pelo CX. Env `NPS_BASE_URL` (default intranew) monta o link `/pesquisa/<token>`.
 
 ---
@@ -1651,10 +1652,11 @@ Resumo dos principais:
 | 72 | `72-cc-fornecedor-depara.sql` | `tab_cc_fornecedor_depara` — de-para fornecedor→CC p/ títulos diretos do financeiro (cartão/FINA050) na DRE por Centro de Custo |
 | 73 | `73-credito-registro.sql` | `tab_credito_registro` (histórico permanente das análises de crédito, append-only + versionado) + `registro_id` em tab_credito_anexo. Perm 8006 (existente) |
 | 74 | `74-nps-posvenda.sql` | NPS Pós-venda: `tab_nps_config/pergunta/convite/resposta/acao` (pesquisa disparada ao faturar estatus 99) + perm **6003** |
+| 75 | `75-nps-melhorias.sql` | NPS: segmentação (BU/vendedor/transportadora/linha) + lembrete D+X + anti-fadiga + alerta detrator crítico + colunas no convite |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
 
-⚠️ Novas migrations devem incrementar a numeração (próxima é **#75**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+⚠️ Novas migrations devem incrementar a numeração (próxima é **#76**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
 
 ```bash
 sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
