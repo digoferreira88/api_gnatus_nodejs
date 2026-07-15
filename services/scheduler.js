@@ -333,6 +333,8 @@ function start(app) {
       const NPS = require('./npsPosvenda');
       const stats = await NPS.processarFaturados(app);
       if (stats && (stats.criados || stats.enviados)) console.log('[scheduler] nps-posvenda:', JSON.stringify(stats));
+      const lb = await NPS.processarLembretes(app);
+      if (lb && lb.enviados) console.log('[scheduler] nps-lembretes:', JSON.stringify(lb));
     } catch (err) {
       console.error('[scheduler] erro no nps-posvenda:', err.message);
     }

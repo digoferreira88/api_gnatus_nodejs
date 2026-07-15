@@ -20,6 +20,7 @@ module.exports = (app) => ({
       const rows = await Pg.connectAndQuery(`
         SELECT c.id, c.pedido, c.cliente_cod, c.cliente_loja, c.cliente_nome, c.cnpj, c.telefone,
                c.nf, c.valor_pedido, c.nota_nps, c.respondido_em,
+               c.bu_nome, c.vendedor_nome, c.transportadora_nome, c.linha_desc,
                (SELECT COUNT(*) FROM tab_nps_acao a WHERE a.convite_id = c.id) qtd_acoes
           FROM tab_nps_convite c
          WHERE ${conds.join(' AND ')}
@@ -49,6 +50,7 @@ module.exports = (app) => ({
           id: r.id, pedido: trim(r.pedido),
           clienteCod: trim(r.cliente_cod), clienteLoja: trim(r.cliente_loja), clienteNome: trim(r.cliente_nome),
           cnpj: trim(r.cnpj), telefone: trim(r.telefone), nf: trim(r.nf), valorPedido: N(r.valor_pedido),
+          buNome: trim(r.bu_nome), vendedorNome: trim(r.vendedor_nome), transportadoraNome: trim(r.transportadora_nome), linhaDesc: trim(r.linha_desc),
           notaNps: r.nota_nps, respondidoEm: r.respondido_em, qtdAcoes: N(r.qtd_acoes),
           respostas: respPorConv.get(r.id) || [], acoes: acoesPorConv.get(r.id) || []
         })),

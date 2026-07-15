@@ -52,6 +52,7 @@
     "pluralize": "^8.0.0",
     "pm2": "^6.0.8",
     "puppeteer": "^24.32.0",
+    "qrcode": "^1.5.4",
     "safe-eval": "^0.4.1",
     "socket.io": "^4.7.1",
     "string-mask": "^0.3.0"

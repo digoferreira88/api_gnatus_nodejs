@@ -32,6 +32,12 @@ module.exports = (app) => ({
       await set('ativo', b.ativo === true || b.ativo === 'true');
       await set('dataInicio', trim(b.dataInicio) || null);
       await set('expiraDias', Math.max(1, Math.trunc(N(b.expiraDias) || 30)));
+      await set('lembreteDias', Math.max(0, Math.trunc(N(b.lembreteDias) || 0)));
+      await set('antifadigaDias', Math.max(0, Math.trunc(N(b.antifadigaDias) || 0)));
+      await set('criticoMax', Math.min(10, Math.max(0, Math.trunc(N(b.criticoMax) || 0))));
+      await set('alertaEmails', Array.isArray(b.alertaEmails)
+        ? b.alertaEmails.map(e => trim(e)).filter(e => /@/.test(e)).slice(0, 20)
+        : trim(b.alertaEmails).split(/[;,\s]+/).filter(e => /@/.test(e)).slice(0, 20));
       await set('mensagem', {
         titulo: trim(b.mensagem?.titulo).slice(0, 200),
         subtitulo: trim(b.mensagem?.subtitulo).slice(0, 300),

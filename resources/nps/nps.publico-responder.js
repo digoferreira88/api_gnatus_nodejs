@@ -70,6 +70,11 @@ module.exports = (app) => ({
          WHERE id = @id`,
         { cls: classificacao, nota: notaNps, id: conv.id });
 
+      // Detrator crítico -> alerta em tempo real por e-mail (não bloqueia a resposta)
+      if (classificacao === 'DETRATOR' && notaNps != null && notaNps <= cfg.criticoMax) {
+        NPS.alertarDetratorCritico(app, conv.id).catch(() => {});
+      }
+
       return res.json({ estado: 'OBRIGADO', agradecimento: (cfg.mensagem && cfg.mensagem.agradecimento) || 'Obrigado pela sua resposta!' });
     } catch (err) {
       console.error('nps/publico-responder:', err);

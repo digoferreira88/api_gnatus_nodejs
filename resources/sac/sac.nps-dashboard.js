@@ -56,7 +56,32 @@ module.exports = (app) => ({
         return { mes: e.mes, promotores: N(e.promotores), neutros: N(e.neutros), detratores: N(e.detratores), total, nps };
       }).reverse();
 
+      // Segmentação: NPS por BU / vendedor / transportadora / linha de produto.
+      // Só considera respondidos com classificação. Ordena por volume.
+      const segmentar = async (colCod, colNome) => {
+        const rows = await Pg.connectAndQuery(`
+          SELECT COALESCE(NULLIF(${colNome}, ''), NULLIF(${colCod}, ''), '(não informado)') rotulo,
+                 COUNT(*) total,
+                 COUNT(*) FILTER (WHERE classificacao='PROMOTOR') prom,
+                 COUNT(*) FILTER (WHERE classificacao='DETRATOR') detr
+            FROM tab_nps_convite c
+           WHERE classificacao IS NOT NULL ${conds.length ? 'AND ' + conds.join(' AND ') : ''}
+           GROUP BY 1 ORDER BY total DESC LIMIT 15`, p);
+        return rows.map(r => ({
+          rotulo: r.rotulo, total: N(r.total),
+          nps: N(r.total) > 0 ? Math.round(((N(r.prom) - N(r.detr)) / N(r.total)) * 100) : 0,
+          detratores: N(r.detr)
+        }));
+      };
+      const [porBu, porVendedor, porTransportadora, porLinha] = await Promise.all([
+        segmentar('bu_cod', 'bu_nome'),
+        segmentar('vendedor_cod', 'vendedor_nome'),
+        segmentar('transportadora_cod', 'transportadora_nome'),
+        segmentar('linha_cod', 'linha_desc')
+      ]);
+
       return res.json({
+        segmentos: { porBu, porVendedor, porTransportadora, porLinha },
         kpis: {
           enviados: N(t.enviados), respondidos,
           taxaResposta: N(t.enviados) > 0 ? +(respondidos / N(t.enviados) * 100).toFixed(1) : 0,
