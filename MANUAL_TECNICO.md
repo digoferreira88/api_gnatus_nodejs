@@ -329,7 +329,8 @@ Cada item de menu / rota tem array `perm: [N, 0]`:
 
 #### Pesquisa de Pós-venda (NPS) · `/sac/nps` (admin) + `/pesquisa/:token` (público) · perm 6003
 Plataforma de NPS pós-venda ([migration 74](database/postgres/74-nps-posvenda.sql)). **Fluxo**: pedido chega a **estatus 99** (TOTALMENTE FATURADO) → [scheduler](services/scheduler.js) (`40 8-19 * * 1-5`, só com módulo ATIVO + `SURI_TPL_NPS`) acha via SD2/`pedidos_estatus` (`processarFaturados` em [services/npsPosvenda.js](services/npsPosvenda.js)) → cria convite (`tab_nps_convite`, dedupe filial+pedido, token aleatório) → dispara link por **WhatsApp/Suri** → cliente responde na **página pública anônima** → classifica **DETRATOR/NEUTRO/PROMOTOR** (thresholds em `tab_nps_config`, default 0-6/7-8/9-10, editável CX).
-- **Tabelas**: `tab_nps_config` (chave/valor), `tab_nps_pergunta` (editável pelo CX; 1 do tipo `nps` = a que classifica; soft-delete p/ preservar respostas), `tab_nps_convite`, `tab_nps_resposta`, `tab_nps_acao` (ações sobre detratores).
+- **Tabelas**: `tab_nps_config` (chave/valor), `tab_nps_pergunta` (editável pelo CX; a pergunta classificadora `e_nps` pode ser `nps`/`escala` por nota **OU `opcao` (CSAT)** com `class_map` opção→PROMOTOR/NEUTRO/DETRATOR — migration 76; soft-delete preserva respostas), `tab_nps_convite`, `tab_nps_resposta`, `tab_nps_acao` (ações sobre detratores, com `causa`).
+- **Formulário atual (CX, CSAT)**: P1 opção "Como você avalia sua experiência de compra…" (Muito satisfeito/Satisfeito→Promotor · Neutro→Neutro · Insatisfeito/Muito insatisfeito→Detrator) + P2/P3 abertas. Classificação via `NPS.classificarResposta` (opção usa `class_map`; nota usa thresholds). Regras CX: Promotor=registrar · Neutro=registrar+Pareto · Detrator=avaliar+ticket SAC(Octadesk)+**classificar a causa** (campo `causa` → **Pareto de causas** no dashboard).
 - **Endpoints públicos** (anonymous, [resources/nps/](resources/nps/)): `GET/POST /nps/publico/:token`. **Admin** (perm 6003, [resources/sac/sac.nps-*.js](resources/sac/)): `dashboard` (NPS score/distribuição/evolução — recharts), `detratores` (lista+respostas+ações), `acao/:conviteId` (registra + tenta ticket Octadesk), `admin`/`config`/`perguntas`.
 - **Frontend**: [PesquisaNPS.tsx](../frontend_intranet_react/src/pages/NPS/PesquisaNPS.tsx) (pública, mobile-first, sem sidebar) + [NPSPosVenda.tsx](../frontend_intranet_react/src/pages/NPS/NPSPosVenda.tsx) (abas Dashboard/Detratores/Perguntas/Config).
 - **Melhorias** ([migration 75](database/postgres/75-nps-melhorias.sql)): **lembrete D+X** (reenvia 1× quem não respondeu — `processarLembretes`, config `lembreteDias`); **anti-fadiga** (não repete o mesmo cliente na janela `antifadigaDias`); **alerta de detrator crítico** (nota ≤ `criticoMax` → e-mail em tempo real via [emailService](services/emailService.js) p/ `alertaEmails`, disparado no endpoint público); **segmentação** BU/vendedor/transportadora/linha (colunas no convite, vindas de SC5+SA3+SA4+SBM `OUTER APPLY` grupo predominante; dashboard agrega NPS por segmento); **link+QR manual** (`POST /sac/nps/link` gera/reaproveita convite + QR via npm `qrcode`, p/ envio manual ou impressão na NF/caixa).
@@ -1654,11 +1655,12 @@ Resumo dos principais:
 | 72 | `72-cc-fornecedor-depara.sql` | `tab_cc_fornecedor_depara` — de-para fornecedor→CC p/ títulos diretos do financeiro (cartão/FINA050) na DRE por Centro de Custo |
 | 73 | `73-credito-registro.sql` | `tab_credito_registro` (histórico permanente das análises de crédito, append-only + versionado) + `registro_id` em tab_credito_anexo. Perm 8006 (existente) |
 | 74 | `74-nps-posvenda.sql` | NPS Pós-venda: `tab_nps_config/pergunta/convite/resposta/acao` (pesquisa disparada ao faturar estatus 99) + perm **6003** |
+| 76 | `76-nps-csat.sql` | NPS: pergunta classificadora por OPÇÃO (CSAT, `class_map`) + `causa` no detrator + perguntas do CX |
 | 75 | `75-nps-melhorias.sql` | NPS: segmentação (BU/vendedor/transportadora/linha) + lembrete D+X + anti-fadiga + alerta detrator crítico + colunas no convite |
 
 ⚠️ Migrations são **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Pode rodar de novo sem quebrar.
 
-⚠️ Novas migrations devem incrementar a numeração (próxima é **#76**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
+⚠️ Novas migrations devem incrementar a numeração (próxima é **#77**) e seguir o padrão `NN-modulo-acao.sql`. Aplicar como user `intranet` (não `postgres`):
 
 ```bash
 sudo -u intranet bash -c 'set -a; . /home/intranet/backend/.env; set +a; PGPASSWORD="$PG_PASSWORD" psql -h localhost -U intranet -d intranet -f /home/intranet/backend/database/postgres/NN-xxx.sql'
