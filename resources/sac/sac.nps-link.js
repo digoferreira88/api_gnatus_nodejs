@@ -27,33 +27,43 @@ module.exports = (app) => ({
       if (!conv.length) {
         // busca dados do pedido no Protheus
         const r = await Protheus.connectAndQuery(`
-          SELECT TOP 1 RTRIM(sc5.C5_CLIENTE) cod, RTRIM(sc5.C5_LOJACLI) loja, RTRIM(sa1.A1_NOME) nome, RTRIM(sa1.A1_CGC) cgc,
+          SELECT TOP 1 RTRIM(sc5.C5_CLIENTE) cod, RTRIM(sc5.C5_LOJACLI) loja, RTRIM(sa1.A1_NOME) nome, RTRIM(sa1.A1_NREDUZ) empresa, RTRIM(sa1.A1_CGC) cgc,
                  RTRIM(sc5.C5_ZTIPO) buCod, RTRIM(x5.X5_DESCRI) buNome,
                  RTRIM(sc5.C5_VEND1) vendCod, RTRIM(sa3.A3_NOME) vendNome,
                  RTRIM(sc5.C5_TRANSP) transpCod, RTRIM(sa4.A4_NOME) transpNome,
-                 CAST(ISNULL(tp.total,0) AS NUMERIC(15,2)) valor
+                 CAST(ISNULL(tp.total,0) AS NUMERIC(15,2)) valor,
+                 RTRIM(prod.prodCod) prodCod, RTRIM(prod.prodDesc) prodDesc,
+                 (SELECT MAX(D2_EMISSAO) FROM SD2010 WITH (NOLOCK) WHERE D2_FILIAL='01' AND RTRIM(D2_PEDIDO)=RTRIM(sc5.C5_NUM) AND D_E_L_E_T_<>'*') dataFat
             FROM SC5010 sc5 WITH (NOLOCK)
             LEFT JOIN SA1010 sa1 WITH (NOLOCK) ON sa1.A1_COD=sc5.C5_CLIENTE AND sa1.A1_LOJA=sc5.C5_LOJACLI AND sa1.D_E_L_E_T_<>'*'
             LEFT JOIN SX5010 x5 WITH (NOLOCK) ON RTRIM(x5.X5_TABELA)='Z1' AND RTRIM(x5.X5_CHAVE)=RTRIM(sc5.C5_ZTIPO) AND x5.D_E_L_E_T_<>'*'
             LEFT JOIN SA3010 sa3 WITH (NOLOCK) ON sa3.A3_COD=sc5.C5_VEND1 AND sa3.D_E_L_E_T_<>'*'
             LEFT JOIN SA4010 sa4 WITH (NOLOCK) ON sa4.A4_COD=sc5.C5_TRANSP AND sa4.D_E_L_E_T_<>'*'
             LEFT JOIN total_pedido_sc6 tp WITH (NOLOCK) ON tp.c6_num=sc5.C5_NUM
+            OUTER APPLY (SELECT TOP 1 RTRIM(c6.C6_PRODUTO) prodCod, RTRIM(c6.C6_DESCRI) prodDesc
+                           FROM SC6010 c6 WITH (NOLOCK)
+                          WHERE c6.C6_FILIAL='01' AND RTRIM(c6.C6_NUM)=RTRIM(sc5.C5_NUM) AND c6.D_E_L_E_T_<>'*'
+                          ORDER BY c6.C6_VALOR DESC) prod
            WHERE sc5.C5_FILIAL='01' AND RTRIM(sc5.C5_NUM)=@p AND sc5.D_E_L_E_T_<>'*'`, { p: pedido });
         if (!r.length) return res.status(404).json({ message: `Pedido ${pedido} não encontrado no Protheus.` });
         const d = r[0];
         const cfg = await NPS.lerConfig(Pg);
         const token = NPS.gerarToken();
         const ins = await Pg.connectAndQuery(`
-          INSERT INTO tab_nps_convite (token, pedido, filial, cliente_cod, cliente_loja, cliente_nome, cnpj, valor_pedido,
+          INSERT INTO tab_nps_convite (token, pedido, filial, cliente_cod, cliente_loja, cliente_nome, empresa, cnpj, valor_pedido,
                                        bu_cod, bu_nome, vendedor_cod, vendedor_nome, transportadora_cod, transportadora_nome,
+                                       produto_cod, produto_desc, data_faturamento,
                                        status, canal, expira_em)
-          VALUES (@token, @p, '01', @cod, @loja, @nome, @cnpj, @valor, @buCod, @buNome, @vendCod, @vendNome, @transpCod, @transpNome,
+          VALUES (@token, @p, '01', @cod, @loja, @nome, @empresa, @cnpj, @valor, @buCod, @buNome, @vendCod, @vendNome, @transpCod, @transpNome,
+                  @prodCod, @prodDesc, @dataFat,
                   'ENVIADO', 'MANUAL', NOW() + (@dias || ' days')::interval)
           RETURNING id, token`,
           {
-            token, p: pedido, cod: trim(d.cod), loja: trim(d.loja), nome: trim(d.nome), cnpj: trim(d.cgc), valor: N(d.valor),
+            token, p: pedido, cod: trim(d.cod), loja: trim(d.loja), nome: trim(d.nome), empresa: trim(d.empresa) || null, cnpj: trim(d.cgc), valor: N(d.valor),
             buCod: trim(d.buCod), buNome: trim(d.buNome), vendCod: trim(d.vendCod), vendNome: trim(d.vendNome),
-            transpCod: trim(d.transpCod), transpNome: trim(d.transpNome), dias: String(cfg.expiraDias)
+            transpCod: trim(d.transpCod), transpNome: trim(d.transpNome),
+            prodCod: trim(d.prodCod) || null, prodDesc: trim(d.prodDesc) || null, dataFat: trim(d.dataFat) || null,
+            dias: String(cfg.expiraDias)
           });
         conv = ins;
       }

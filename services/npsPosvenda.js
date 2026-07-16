@@ -110,13 +110,14 @@ async function processarFaturados(app) {
     cand = await Protheus.connectAndQuery(`
       SELECT TOP 200
              RTRIM(sc5.C5_NUM) pedido, RTRIM(sc5.C5_CLIENTE) cod, RTRIM(sc5.C5_LOJACLI) loja,
-             RTRIM(sa1.A1_NOME) nome, RTRIM(sa1.A1_CGC) cgc,
+             RTRIM(sa1.A1_NOME) nome, RTRIM(sa1.A1_NREDUZ) empresa, RTRIM(sa1.A1_CGC) cgc,
              RTRIM(sa1.A1_DDDCEL) dddcel, RTRIM(sa1.A1_DDD) ddd, RTRIM(sa1.A1_TEL) tel,
              nf.dataFat, nf.nf, CAST(ISNULL(tp.total,0) AS NUMERIC(15,2)) valor,
              RTRIM(sc5.C5_ZTIPO) buCod, RTRIM(x5.X5_DESCRI) buNome,
              RTRIM(sc5.C5_VEND1) vendCod, RTRIM(sa3.A3_NOME) vendNome,
              RTRIM(sc5.C5_TRANSP) transpCod, RTRIM(sa4.A4_NOME) transpNome,
-             RTRIM(lin.grupo) linhaCod, RTRIM(lin.grupoDesc) linhaDesc
+             RTRIM(lin.grupo) linhaCod, RTRIM(lin.grupoDesc) linhaDesc,
+             RTRIM(prod.prodCod) prodCod, RTRIM(prod.prodDesc) prodDesc
         FROM (SELECT D2_PEDIDO ped, MAX(D2_EMISSAO) dataFat, MAX(RTRIM(D2_DOC)) nf
                 FROM SD2010 WITH (NOLOCK)
                WHERE D_E_L_E_T_ <> '*' AND D2_FILIAL = '01' AND D2_EMISSAO >= @dini AND RTRIM(D2_PEDIDO) <> ''
@@ -136,6 +137,10 @@ async function processarFaturados(app) {
                       WHERE c6.C6_FILIAL='01' AND RTRIM(c6.C6_NUM)=RTRIM(sc5.C5_NUM) AND c6.D_E_L_E_T_<>'*'
                       GROUP BY sb1.B1_GRUPO, bm.BM_DESC
                       ORDER BY SUM(c6.C6_VALOR) DESC) lin
+        OUTER APPLY (SELECT TOP 1 RTRIM(c6.C6_PRODUTO) prodCod, RTRIM(c6.C6_DESCRI) prodDesc
+                       FROM SC6010 c6 WITH (NOLOCK)
+                      WHERE c6.C6_FILIAL='01' AND RTRIM(c6.C6_NUM)=RTRIM(sc5.C5_NUM) AND c6.D_E_L_E_T_<>'*'
+                      ORDER BY c6.C6_VALOR DESC) prod
        ORDER BY nf.dataFat DESC`, { dini });
   } catch (e) {
     console.error('[nps] falha ao buscar faturados:', e.message);
@@ -160,19 +165,22 @@ async function processarFaturados(app) {
     let ins;
     try {
       ins = await Pg.connectAndQuery(`
-        INSERT INTO tab_nps_convite (token, pedido, filial, cliente_cod, cliente_loja, cliente_nome, cnpj, telefone, nf, valor_pedido,
+        INSERT INTO tab_nps_convite (token, pedido, filial, cliente_cod, cliente_loja, cliente_nome, empresa, cnpj, telefone, nf, valor_pedido,
                                      bu_cod, bu_nome, vendedor_cod, vendedor_nome, transportadora_cod, transportadora_nome, linha_cod, linha_desc,
+                                     produto_cod, produto_desc, data_faturamento,
                                      status, expira_em)
-        VALUES (@token, @pedido, '01', @cod, @loja, @nome, @cnpj, @tel, @nf, @valor,
+        VALUES (@token, @pedido, '01', @cod, @loja, @nome, @empresa, @cnpj, @tel, @nf, @valor,
                 @buCod, @buNome, @vendCod, @vendNome, @transpCod, @transpNome, @linhaCod, @linhaDesc,
+                @prodCod, @prodDesc, @dataFat,
                 'PENDENTE', NOW() + (@dias || ' days')::interval)
         ON CONFLICT (filial, pedido) DO NOTHING
         RETURNING id`,
         {
-          token, pedido, cod: trim(r.cod), loja: trim(r.loja), nome: trim(r.nome), cnpj: trim(r.cgc),
+          token, pedido, cod: trim(r.cod), loja: trim(r.loja), nome: trim(r.nome), empresa: trim(r.empresa) || null, cnpj: trim(r.cgc),
           tel: null, nf: trim(r.nf), valor: N(r.valor),
           buCod: trim(r.buCod), buNome: trim(r.buNome), vendCod: trim(r.vendCod), vendNome: trim(r.vendNome),
           transpCod: trim(r.transpCod), transpNome: trim(r.transpNome), linhaCod: trim(r.linhaCod), linhaDesc: trim(r.linhaDesc),
+          prodCod: trim(r.prodCod) || null, prodDesc: trim(r.prodDesc) || null, dataFat: trim(r.dataFat) || null,
           dias: String(cfg.expiraDias)
         });
     } catch (e) { console.warn('[nps] insert convite:', e.message); falhas++; continue; }
