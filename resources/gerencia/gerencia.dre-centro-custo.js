@@ -423,6 +423,30 @@ module.exports = (app) => ({
         }
       }
 
+      // 4e) Total e nº de itens do PEDIDO COMPLETO (todos os itens, todas as
+      //     contas/CCs). No 4º nível cada linha e' UM item do pedido; sem esse
+      //     contexto "PC 024541/0001 ... R$ 51" da a impressao de que o pedido/NF
+      //     inteiro foi R$ 51. Aqui trazemos o total do pedido (em R$, convertendo
+      //     moeda estrangeira) e a contagem de itens pra desfazer a confusao.
+      const totalPorPedido = new Map(); // pedido -> { total (R$), qtItens }
+      for (let i = 0; i < numerosPC.length; i += 500) {
+        const slice = numerosPC.slice(i, i + 500);
+        const inClause = slice.map((_, k) => `@t${k}`).join(',');
+        const p = {};
+        slice.forEach((n, k) => { p[`t${k}`] = n; });
+        try {
+          const rows = await Protheus.connectAndQuery(`
+            SELECT RTRIM(C7_NUM) pedido, COUNT(*) qt,
+                   SUM(CASE WHEN C7_MOEDA <> 1 AND C7_TXMOEDA > 0 THEN C7_TOTAL * C7_TXMOEDA ELSE C7_TOTAL END) total
+              FROM SC7010 WITH (NOLOCK)
+             WHERE D_E_L_E_T_ <> '*' AND C7_FILIAL = '01' AND C7_NUM IN (${inClause})
+             GROUP BY C7_NUM`, p);
+          rows.forEach(r => totalPorPedido.set(trim(r.pedido), { total: toN(r.total), qtItens: toN(r.qt) }));
+        } catch (e) {
+          console.warn('dre-centro-custo: total pedido err:', e.message);
+        }
+      }
+
       // 5) Orcamento (anual) cadastrado em Postgres — usa o ANO do fim do periodo
       const anoFim = parseInt(fim.slice(0, 4), 10);
       const mesFim = parseInt(fim.slice(4, 6), 10);
@@ -498,6 +522,7 @@ module.exports = (app) => ({
                 documentos: y.docs
                   .map(d => {
                     const nf = nfPorPedidoItem.get(`${d.pedido}|${d.itemPed}`);
+                    const pt = d.direto ? null : totalPorPedido.get(d.pedido);
                     return {
                       pedido: d.pedido,
                       itemPed: d.itemPed,
@@ -511,6 +536,10 @@ module.exports = (app) => ({
                       valorMoeda: d.valorMoeda,
                       valor: d.valor,
                       direto: d.direto === true,   // título FINA050 (sem pedido)
+                      // Contexto do pedido completo (evita ler o valor do item como
+                      // se fosse o valor do pedido/NF inteiro).
+                      pedidoTotal: pt ? pt.total : null,
+                      pedidoQtdItens: pt ? pt.qtItens : null,
                       pctItem: y.valor > 0 ? (d.valor / y.valor) * 100 : 0
                     };
                   })
