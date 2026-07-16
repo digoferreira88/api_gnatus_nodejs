@@ -28,6 +28,7 @@ module.exports = (app) => ({
     const b = req.body || {};
     const tipo = TIPOS.includes(trim(b.tipo)) ? trim(b.tipo) : 'OUTRO';
     const observacao = trim(b.observacao).slice(0, 2000) || null;
+    const causa = trim(b.causa).slice(0, 160) || null;   // regra CX: classificar a causa do detrator
 
     try {
       const conv = await Pg.connectAndQuery(
@@ -83,9 +84,9 @@ module.exports = (app) => ({
       }
 
       const ins = await Pg.connectAndQuery(`
-        INSERT INTO tab_nps_acao (convite_id, tipo, octadesk_ticket_id, octadesk_url, observacao, usuario_id, usuario_nome)
-        VALUES (@cid, @tipo, @tk, @url, @obs, @uid, @unome) RETURNING id`,
-        { cid: conviteId, tipo, tk: ticketId, url: ticketUrl, obs: observacao, uid: user.ID, unome: trim(user.NOME) || trim(user.EMAIL) });
+        INSERT INTO tab_nps_acao (convite_id, tipo, causa, octadesk_ticket_id, octadesk_url, observacao, usuario_id, usuario_nome)
+        VALUES (@cid, @tipo, @causa, @tk, @url, @obs, @uid, @unome) RETURNING id`,
+        { cid: conviteId, tipo, causa, tk: ticketId, url: ticketUrl, obs: observacao, uid: user.ID, unome: trim(user.NOME) || trim(user.EMAIL) });
 
       Auditoria.registrar(app, {
         modulo: 'SAC', submodulo: 'NPS', acao: 'ACAO_DETRATOR', severidade: 'INFO', req,

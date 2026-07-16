@@ -38,10 +38,10 @@ module.exports = (app) => ({
           respPorConv.get(r.convite_id).push({ pergunta: trim(r.pergunta_texto), tipo: trim(r.tipo), nota: r.nota, texto: trim(r.texto), opcao: trim(r.opcao) });
         });
         const acoes = await Pg.connectAndQuery(
-          `SELECT convite_id, tipo, octadesk_ticket_id, octadesk_url, observacao, usuario_nome, criado_em FROM tab_nps_acao WHERE convite_id IN (${inIds}) ORDER BY criado_em DESC`, pi);
+          `SELECT convite_id, tipo, causa, octadesk_ticket_id, octadesk_url, observacao, usuario_nome, criado_em FROM tab_nps_acao WHERE convite_id IN (${inIds}) ORDER BY criado_em DESC`, pi);
         acoes.forEach(a => {
           if (!acoesPorConv.has(a.convite_id)) acoesPorConv.set(a.convite_id, []);
-          acoesPorConv.get(a.convite_id).push({ tipo: trim(a.tipo), ticketId: trim(a.octadesk_ticket_id), url: trim(a.octadesk_url), observacao: trim(a.observacao), usuario: trim(a.usuario_nome), criadoEm: a.criado_em });
+          acoesPorConv.get(a.convite_id).push({ tipo: trim(a.tipo), causa: trim(a.causa), ticketId: trim(a.octadesk_ticket_id), url: trim(a.octadesk_url), observacao: trim(a.observacao), usuario: trim(a.usuario_nome), criadoEm: a.criado_em });
         });
       }
 

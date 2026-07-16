@@ -32,13 +32,44 @@ module.exports = (app) => ({
       const promotores = N(t.promotores), detratores = N(t.detratores), neutros = N(t.neutros);
       const npsScore = respondidos > 0 ? Math.round(((promotores - detratores) / respondidos) * 100) : null;
 
-      // distribuição por nota 0-10
-      const dist = await Pg.connectAndQuery(`
-        SELECT nota_nps nota, COUNT(*) qtd FROM tab_nps_convite c
-        ${where ? where + ' AND' : 'WHERE'} nota_nps IS NOT NULL
-        GROUP BY nota_nps ORDER BY nota_nps`, p);
-      const distMap = new Map(dist.map(d => [N(d.nota), N(d.qtd)]));
-      const distribuicao = Array.from({ length: 11 }, (_, i) => ({ nota: i, qtd: distMap.get(i) || 0 }));
+      // Distribuição das respostas da pergunta classificadora. CSAT (opção): por
+      // rótulo, na ordem das opções, colorido pela classificação (class_map).
+      // NPS/escala: por nota. Fallback: 0-10 da nota_nps.
+      const pNpsRows = await Pg.connectAndQuery(
+        `SELECT id, tipo, opcoes, class_map FROM tab_nps_pergunta WHERE e_nps AND ativa ORDER BY ordem LIMIT 1`, {});
+      const pNps = pNpsRows[0];
+      let distribuicao = [];
+      if (pNps && trim(pNps.tipo) === 'opcao') {
+        const rows = await Pg.connectAndQuery(`
+          SELECT r.opcao rotulo, COUNT(*) qtd
+            FROM tab_nps_resposta r JOIN tab_nps_convite c ON c.id = r.convite_id
+           WHERE r.pergunta_id = @pid AND COALESCE(r.opcao,'') <> '' ${conds.length ? 'AND ' + conds.join(' AND ') : ''}
+           GROUP BY r.opcao`, { ...p, pid: pNps.id });
+        const cnt = new Map(rows.map(r => [trim(r.rotulo), N(r.qtd)]));
+        const cmap = pNps.class_map || {};
+        const opts = Array.isArray(pNps.opcoes) ? pNps.opcoes : [...cnt.keys()];
+        distribuicao = opts.map(o => ({ rotulo: o, qtd: cnt.get(o) || 0, classificacao: trim(cmap[o]).toUpperCase() }));
+      } else {
+        const dist = await Pg.connectAndQuery(`
+          SELECT nota_nps nota, COUNT(*) qtd FROM tab_nps_convite c
+          ${where ? where + ' AND' : 'WHERE'} nota_nps IS NOT NULL
+          GROUP BY nota_nps ORDER BY nota_nps`, p);
+        const distMap = new Map(dist.map(d => [N(d.nota), N(d.qtd)]));
+        distribuicao = Array.from({ length: 11 }, (_, i) => ({ rotulo: String(i), nota: i, qtd: distMap.get(i) || 0 }));
+      }
+
+      // Pareto de causas (regra CX: classificar a causa do detrator + Pareto mensal).
+      const causaRows = await Pg.connectAndQuery(`
+        SELECT a.causa rotulo, COUNT(*) qtd
+          FROM tab_nps_acao a JOIN tab_nps_convite c ON c.id = a.convite_id
+         WHERE COALESCE(a.causa,'') <> '' ${conds.length ? 'AND ' + conds.join(' AND ') : ''}
+         GROUP BY a.causa ORDER BY qtd DESC LIMIT 20`, p);
+      const totalCausas = causaRows.reduce((s, r) => s + N(r.qtd), 0);
+      let acum = 0;
+      const pareto = causaRows.map(r => {
+        acum += N(r.qtd);
+        return { causa: trim(r.rotulo), qtd: N(r.qtd), acumuladoPct: totalCausas > 0 ? +(acum / totalCausas * 100).toFixed(1) : 0 };
+      });
 
       // evolução mensal (últimos 12 meses respondidos)
       const evo = await Pg.connectAndQuery(`
@@ -90,6 +121,7 @@ module.exports = (app) => ({
           npsScore
         },
         distribuicao,
+        pareto,
         classificacao: [
           { nome: 'Promotores', valor: promotores, cor: '#1e7d4f' },
           { nome: 'Neutros', valor: neutros, cor: '#f5a500' },

@@ -16,12 +16,13 @@ module.exports = (app) => ({
     try {
       const cfg = await NPS.lerConfig(Pg);
       const perguntas = await Pg.connectAndQuery(
-        `SELECT id, ordem, texto, tipo, opcoes, obrigatoria, e_nps, ativa FROM tab_nps_pergunta ORDER BY ordem, id`, {});
+        `SELECT id, ordem, texto, tipo, opcoes, class_map, obrigatoria, e_nps, ativa FROM tab_nps_pergunta ORDER BY ordem, id`, {});
       return res.json({
         config: cfg,
         perguntas: perguntas.map(p => ({
           id: p.id, ordem: p.ordem, texto: trim(p.texto), tipo: trim(p.tipo),
-          opcoes: Array.isArray(p.opcoes) ? p.opcoes : [], obrigatoria: p.obrigatoria, eNps: p.e_nps, ativa: p.ativa
+          opcoes: Array.isArray(p.opcoes) ? p.opcoes : [], classMap: p.class_map || {},
+          obrigatoria: p.obrigatoria, eNps: p.e_nps, ativa: p.ativa
         })),
         dependencias: {
           suriTemplate: !!NPS.TPL_NPS(),

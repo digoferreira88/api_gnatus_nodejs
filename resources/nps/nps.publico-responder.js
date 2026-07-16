@@ -27,7 +27,7 @@ module.exports = (app) => ({
       if (conv.expira_em && new Date(conv.expira_em) < new Date()) return res.status(410).json({ estado: 'EXPIRADO', message: 'Esta pesquisa expirou.' });
 
       const perguntas = await Pg.connectAndQuery(
-        `SELECT id, texto, tipo, obrigatoria, e_nps FROM tab_nps_pergunta WHERE ativa = TRUE`, {});
+        `SELECT id, texto, tipo, opcoes, class_map, obrigatoria, e_nps FROM tab_nps_pergunta WHERE ativa = TRUE`, {});
       const pById = new Map(perguntas.map(p => [Number(p.id), p]));
       const respMap = new Map(respostas.map(r => [Number(r.perguntaId), r]));
 
@@ -41,12 +41,11 @@ module.exports = (app) => ({
         if (vazio) return res.status(400).json({ message: `Responda: "${trim(p.texto)}"`, perguntaId: p.id });
       }
 
-      // acha a nota NPS
-      const pNps = perguntas.find(p => p.e_nps);
-      let notaNps = null;
-      if (pNps) { const r = respMap.get(Number(pNps.id)); if (r && r.nota != null && r.nota !== '') notaNps = N(r.nota); }
+      // classifica pela pergunta classificadora (opção CSAT ou nota NPS)
       const cfg = await NPS.lerConfig(Pg);
-      const classificacao = notaNps != null ? NPS.classificar(notaNps, cfg) : null;
+      const pNps = perguntas.find(p => p.e_nps);
+      const rNps = pNps ? respMap.get(Number(pNps.id)) : null;
+      const { classificacao, notaNps } = NPS.classificarResposta(pNps, rNps, cfg);
 
       // grava respostas (upsert por pergunta)
       for (const r of respostas) {

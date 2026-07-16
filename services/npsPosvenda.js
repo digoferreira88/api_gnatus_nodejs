@@ -48,6 +48,30 @@ function classificar(nota, cfg) {
   return 'NEUTRO';
 }
 
+// Classifica a partir da PERGUNTA classificadora (e_nps) e da resposta dada:
+//   - tipo 'opcao' (CSAT): usa class_map[opção] -> PROMOTOR|NEUTRO|DETRATOR;
+//     a "nota" vira um ordinal (1ª opção = maior) só p/ média/gráficos.
+//   - tipo 'nps'/'escala': usa a nota + thresholds.
+// pNps = { tipo, opcoes[], class_map{} }. resp = { nota, opcao }.
+// Retorna { classificacao, notaNps }.
+function classificarResposta(pNps, resp, cfg) {
+  if (!pNps || !resp) return { classificacao: null, notaNps: null };
+  const tipo = trim(pNps.tipo);
+  if (tipo === 'opcao') {
+    const opc = trim(resp.opcao);
+    if (!opc) return { classificacao: null, notaNps: null };
+    const cmap = pNps.class_map || {};
+    const cls = trim(cmap[opc]).toUpperCase();
+    const opts = Array.isArray(pNps.opcoes) ? pNps.opcoes : [];
+    const idx = opts.indexOf(opc);
+    const notaNps = idx >= 0 ? (opts.length - idx) : null;   // 1ª opção = maior nota
+    return { classificacao: ['PROMOTOR', 'NEUTRO', 'DETRATOR'].includes(cls) ? cls : null, notaNps };
+  }
+  if (resp.nota == null || resp.nota === '') return { classificacao: null, notaNps: null };
+  const nota = N(resp.nota);
+  return { classificacao: classificar(nota, cfg), notaNps: nota };
+}
+
 // Dispara o link da pesquisa por WhatsApp (Suri). Retorna { ok, motivo, raw }.
 async function dispararWhatsapp({ telefone, nome, token }) {
   const tpl = TPL_NPS();
@@ -244,4 +268,4 @@ async function alertarDetratorCritico(app, conviteId) {
   }
 }
 
-module.exports = { gerarToken, lerConfig, classificar, dispararWhatsapp, linkPesquisa, BASE_PUBLICA, TPL_NPS, processarFaturados, processarLembretes, alertarDetratorCritico };
+module.exports = { gerarToken, lerConfig, classificar, classificarResposta, dispararWhatsapp, linkPesquisa, BASE_PUBLICA, TPL_NPS, processarFaturados, processarLembretes, alertarDetratorCritico };
