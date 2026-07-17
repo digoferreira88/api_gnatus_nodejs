@@ -77,12 +77,15 @@ const MAPA_FASE_RESPONSAVEL = {
   '342679717': 'respons_vel_5'
 };
 
-// G-CARE: fases que notificam o CLIENTE (template + builder de parametros)
+// G-CARE INTERNO (307050389): fases que notificam o CLIENTE (template + builder).
+// IDs configuraveis por env (SURI_TPL_GCI_*) — troca de template sem deploy.
+// APROVACAO DO ORCAMENTO recriado 17/07/2026 (o anterior 1274682047953977 foi
+// removido na Suri e retornava "Template not found" p/ todos os cards).
 const FASES_CLIENTES_GCARE = {
-  '342679685': { templateId: '1289814069144901', builder: buildEntradaFiscalParams },   // ENTRADA FISCAL
-  '342527982': { templateId: '1274682047953977', builder: buildOrcamentoParams },       // APROVACAO DO ORCAMENTO
-  '342564106': { templateId: '1462330982253878', builder: buildPagamentoParams },       // AGUARDANDO PAGAMENTO
-  '342527971': { templateId: '2059375837972044', builder: buildConcluidoParams }        // CONCLUIDO
+  '342679685': { templateId: process.env.SURI_TPL_GCI_ENTRADA   || '1289814069144901', builder: buildEntradaFiscalParams },  // ENTRADA FISCAL
+  '342527982': { templateId: process.env.SURI_TPL_GCI_ORCAMENTO || '3061938047335732', builder: buildOrcamentoParams },      // APROVACAO DO ORCAMENTO
+  '342564106': { templateId: process.env.SURI_TPL_GCI_PAGAMENTO || '1462330982253878', builder: buildPagamentoParams },      // AGUARDANDO PAGAMENTO
+  '342527971': { templateId: process.env.SURI_TPL_GCI_CONCLUIDO || '2059375837972044', builder: buildConcluidoParams }       // CONCLUIDO
 };
 
 // ====================== G-CARE NOVO (24 | G-CARE, 306859922) ======================
@@ -216,7 +219,9 @@ function buildEntradaFiscalParams(card, clienteFields, cardId) {
     valorCampo(card, 'selecione_o_equipamento'), valorCampo(card, 'informe_o_n_mero_de_s_rie'), cardId];
 }
 async function buildOrcamentoParams(card, clienteFields, cardId) {
-  return [valorRecord(clienteFields, 'nome_fantasia'), cardId, await publicFormLink(cardId)];
+  // template 3061938047335732: {{1}} nome do cliente · {{2}} Nº da OS interna
+  // (campo ordem_de_servi_o_n) · {{3}} link público do orçamento.
+  return [valorRecord(clienteFields, 'nome_fantasia'), valorCampo(card, 'ordem_de_servi_o_n'), await publicFormLink(cardId)];
 }
 async function buildPagamentoParams(card, clienteFields, cardId) {
   return [valorRecord(clienteFields, 'nome_fantasia'), cardId,
