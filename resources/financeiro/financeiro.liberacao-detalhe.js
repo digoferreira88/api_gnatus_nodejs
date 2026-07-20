@@ -7,9 +7,9 @@
 //
 // O download de cada conhecimento é feito por GET /financeiro/liberacao/anexo/:codObj.
 //
-// Permissão 8006.
+// Permissão 8006 (edição) ou 8007 (somente visualização).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);

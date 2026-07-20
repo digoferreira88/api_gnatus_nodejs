@@ -1,8 +1,8 @@
 // GET /financeiro/credito-registro/:grupo/historico
 // Todas as versões de uma análise (do mais recente ao mais antigo) + os anexos
-// vinculados ao grupo. Perm 8006.
+// vinculados ao grupo. Perm 8006 (edição) ou 8007 (somente visualização).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);

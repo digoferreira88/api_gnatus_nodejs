@@ -6,12 +6,12 @@
 //   InternalId = "  " (2 espaços) + AC9_CODOBJ (10 chars)
 //   Resposta: { ListOfKnowledge: [{ FileName, EncodeDocument(base64) }] }
 //
-// Permissão 8006.
+// Permissão 8006 (edição) ou 8007 (somente visualização).
 
 const trim = (v) => String(v || '').trim();
 const Auditoria = require('../../services/auditoria');
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 
 const mimeFromExt = (name) => {
   const ext = (name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();

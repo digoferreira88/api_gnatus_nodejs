@@ -3,9 +3,9 @@
 // Consulta/relatório dos registros de análise de crédito (só as versões
 // VIGENTES por padrão). Filtros: BU, período (criado_em), cliente (cod ou nome),
 // CPF/CNPJ, nº pedido, analista, resultado, motivo. formato=csv exporta.
-// Perm 8006.
+// Perm 8006 (edição) ou 8007 (somente visualização).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 const CR = require('../../services/creditoRegistro');
 
 const trim = (v) => String(v == null ? '' : v).trim();

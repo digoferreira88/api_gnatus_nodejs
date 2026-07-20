@@ -7,9 +7,9 @@
 // resultado (SC9 via view pedidos_estatus). Data de liberação = último C9_DATALIB.
 //
 // Período (default: últimos 30 dias) filtra pela data da última liberação.
-// Permissão 8006.
+// Permissão 8006 (edição) ou 8007 (somente visualização).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);

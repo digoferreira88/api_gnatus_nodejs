@@ -13,9 +13,9 @@
 // Filtros (query): tipo (C5_ZTIPO), formaPgto (C5_FORMAPG), busca (pedido ou
 // nome do cliente). Devolve tambem listas distintas pra popular os filtros.
 //
-// Permissão 8006.
+// Permissão 8006 (edição) ou 8007 (somente visualização).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);

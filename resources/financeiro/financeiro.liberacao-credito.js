@@ -10,9 +10,9 @@
 // Critérios alinhados com o módulo de Cobrança: usa E1_VENCREA (vencimento real),
 // exclui E1_TIPO IN ('RA','NCC') e considera em aberto = E1_SALDO > 0.
 //
-// Permissão 8006.
+// Permissão 8006 (edição) ou 8007 (somente visualização).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);

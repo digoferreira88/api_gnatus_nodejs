@@ -1,9 +1,9 @@
 // GET /financeiro/credito-registro/anexo/:id/download — URL temporária de
-// download do anexo do registro (SharePoint). Perm 8006. Só anexos de registro.
+// download do anexo do registro (SharePoint). Perm 8006 (edição) ou 8007 (somente visualização). Só anexos de registro.
 
 const Graph = require('../../services/graphFiles');
 const Auditoria = require('../../services/auditoria');
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 
 module.exports = (app) => ({
   verb: 'get',
