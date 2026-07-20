@@ -108,21 +108,52 @@ const TPL_GCARE = {
   agendamento:     process.env.SURI_TPL_GCARE_AGENDAMENTO     || '1074055651620488',   // mudanca de agenda -> cliente
   troca_tecnico:   process.env.SURI_TPL_GCARE_TROCA_TECNICO   || '1562710422221068',   // troca de tecnico -> cliente (id anterior reprovado)
   solic_pagamento: process.env.SURI_TPL_GCARE_SOLIC_PAGAMENTO || '2217584992372328',   // solicitacao pagamento -> ATA
-  os_reprovada:    process.env.SURI_TPL_GCARE_OS_REPROVADA    || '1529347948923999'    // OS reprovada pelo cliente -> ATA (id anterior reprovado)
+  os_reprovada:    process.env.SURI_TPL_GCARE_OS_REPROVADA    || '1529347948923999',   // OS reprovada pelo cliente -> ATA (id anterior reprovado)
+
+  // --- 20/07/2026: os e-mails do pipe mudaram (11 -> 14 automacoes) e surgiu um
+  // terceiro destinatario (TECNICO). Estes 6 sao NOVOS e estao AGUARDANDO
+  // APROVACAO no Meta; ficam vazios de proposito para nao disparar "template not
+  // found" (mesmo erro do 1274682047953977 no G-Care interno). Para ativar basta
+  // preencher o .env e `pm2 reload api --update-env` — sem deploy. IDs enviados
+  // p/ aprovacao: ata_abertura=1717236192653883 · ata_orc_aprovado=1518329723373514
+  // · ata_orc_reprovado=1763569718327145 · tec_abertura=902157338995565
+  // · tec_agendamento=2063063027930407 · tec_troca=2080431819522006
+  ata_abertura:      process.env.SURI_TPL_GCARE_ATA_ABERTURA      || '',   // card criado -> ATA
+  ata_orc_aprovado:  process.env.SURI_TPL_GCARE_ATA_ORC_APROVADO  || '',   // orcamento aprovado -> ATA
+  ata_orc_reprovado: process.env.SURI_TPL_GCARE_ATA_ORC_REPROVADO || '',   // orcamento reprovado -> ATA
+  tec_abertura:      process.env.SURI_TPL_GCARE_TEC_ABERTURA      || '',   // card criado -> TECNICO
+  tec_agendamento:   process.env.SURI_TPL_GCARE_TEC_AGENDAMENTO   || '',   // mudanca de agenda -> TECNICO
+  tec_troca:         process.env.SURI_TPL_GCARE_TEC_TROCA         || ''    // designado como novo tecnico -> TECNICO
 };
 
-// card.create -> protocolo (cliente). 7 params: o nº da OS aparece 2x no texto
-// ({{2}} e {{6}}) — no WhatsApp/Meta cada ocorrencia exige uma variavel propria.
-const GCARE_CREATE = {
-  tpl: 'protocolo', destino: 'cliente',
-  params: (c) => [c.cliNome, c.os, c.tipoServico, c.dataAgendada, c.tecNome, c.os, c.ataFone]
+// Versao 2 de templates que JA existem e cujo E-MAIL DE ORIGEM mudou em 20/07/2026:
+// o texto novo tem parametros a mais, entao trocar so o ID quebraria o envio. Enquanto
+// o env estiver vazio segue valendo o v1 (aprovado e em uso) com os params antigos;
+// ao preencher, o dispatcher passa a usar o ID novo E o builder `paramsV2`.
+const TPL_GCARE_V2 = {
+  protocolo: process.env.SURI_TPL_GCARE_PROTOCOLO_V2 || '',   // aguardando aprovacao: 1543913217109780 (ganhou endereco + assinatura)
+  validacao: process.env.SURI_TPL_GCARE_VALIDACAO_V2 || ''    // aguardando aprovacao: 1710997960124908 (novo texto do aviso de 3 dias)
 };
-// card.move -> fase de destino (id) -> config
+
+// card.create -> 3 avisos (cliente, ATA e tecnico), espelhando os e-mails
+// 309367355, 309417840 e 309727285. No protocolo o nº da OS aparece 2x no texto
+// — no WhatsApp/Meta cada ocorrencia exige uma variavel propria.
+const GCARE_CREATE = [
+  { tpl: 'protocolo', destino: 'cliente', v2: 'protocolo',
+    params:   (c) => [c.cliNome, c.os, c.tipoServico, c.dataAgendada, c.tecNome, c.os, c.ataFone],
+    paramsV2: (c) => [c.cliNome, c.os, c.tipoServico, c.dataAgendada, c.tecNome, c.endereco, c.os, c.ataFone, c.ataNome] },
+  { tpl: 'ata_abertura', destino: 'ata',
+    params: async (c, id) => [c.ataNome, c.os, c.cliNomeCompleto, c.dataAgendada, c.tecNome, c.endereco, await publicFormLink(id)] },
+  { tpl: 'tec_abertura', destino: 'tecnico',
+    params: async (c, id) => [c.tecNome, c.os, c.cliNomeCompleto, c.dataAgendada, c.endereco, await publicFormLink(id), c.ataFone, c.ataNome] }
+];
+// card.move -> fase de destino (id) -> config (ou lista de configs)
 const GCARE_MOVE = {
   '341608830': { tpl: 'orcamento', destino: 'cliente',                  // APROVACAO DO ORCAMENTO
     params: async (c, id) => [c.cliNome, c.os, await publicFormLink(id), c.ataFone] },
-  '341356572': { tpl: 'validacao', destino: 'cliente',                  // VALIDACAO E APROVACAO DO CLIENTE
-    params: async (c, id) => [c.cliNome, c.os, c.tipoServico, await publicFormLink(id)] },
+  '341356572': { tpl: 'validacao', destino: 'cliente', v2: 'validacao', // VALIDACAO E APROVACAO DO CLIENTE
+    params:   async (c, id) => [c.cliNome, c.os, c.tipoServico, await publicFormLink(id)],
+    paramsV2: async (c, id) => [c.cliNome, c.tipoServico, c.os, await publicFormLink(id), c.ataNome] },
   '341351613': { tpl: 'concluido', destino: 'cliente',                  // CONCLUIDO
     params: (c) => [c.cliNome, c.os, c.ataFone, c.ataNome] },
   '341437387': { tpl: 'solic_pagamento', destino: 'ata',               // SOLICITACAO DE PAGAMENTO
@@ -132,10 +163,27 @@ const GCARE_MOVE = {
 };
 // card.field_update -> por slug do campo alterado (nao ha move de fase)
 const GCARE_FIELD_TRIGGERS = {
-  'data_e_hora_agendada_para_o_servi_o': { tpl: 'agendamento', destino: 'cliente',
-    params: (c) => [c.cliNome, c.os, c.dataAgendada, c.ataFone, c.ataNome] },
-  't_cnico_respons_vel': { tpl: 'troca_tecnico', destino: 'cliente',
-    params: (c) => [c.cliNome, c.tipoServico, c.os, c.tecNome, c.ataFone, c.ataNome] }
+  'data_e_hora_agendada_para_o_servi_o': [
+    { tpl: 'agendamento', destino: 'cliente',
+      params: (c) => [c.cliNome, c.os, c.dataAgendada, c.ataFone, c.ataNome] },
+    { tpl: 'tec_agendamento', destino: 'tecnico',
+      params: async (c, id) => [c.tecNome, c.os, c.dataAgendada, c.cliNome, c.endereco, await publicFormLink(id), c.ataFone, c.ataNome] }
+  ],
+  't_cnico_respons_vel': [
+    { tpl: 'troca_tecnico', destino: 'cliente',
+      params: (c) => [c.cliNome, c.tipoServico, c.os, c.tecNome, c.ataFone, c.ataNome] },
+    { tpl: 'tec_troca', destino: 'tecnico',
+      params: async (c, id) => [c.tecNome, c.tipoServico, c.os, c.cliNome, c.dataAgendada, c.endereco, await publicFormLink(id), c.ataFone, c.ataNome] }
+  ],
+  // APROVACAO DO ORCAMENTO -> STATUS DO ORCAMENTO (APROVADO/REPROVADO). No Pipefy os
+  // dois e-mails (309375275/309375279) disparam no campo DATA com condicao sobre este
+  // status; aqui o gatilho e o proprio status, que resolve os dois casos numa so passada.
+  'status_do_or_amento_1': [
+    { tpl: 'ata_orc_aprovado', destino: 'ata', quando: (c) => c.statusOrcamento === 'APROVADO',
+      params: async (c, id) => [c.ataNome, c.os, await publicFormLink(id)] },
+    { tpl: 'ata_orc_reprovado', destino: 'ata', quando: (c) => c.statusOrcamento === 'REPROVADO',
+      params: async (c, id) => [c.ataNome, c.os, await publicFormLink(id)] }
+  ]
 };
 
 // ---- pré-filtro (economia de API) ----
@@ -239,21 +287,47 @@ async function buildConcluidoParams(card, clienteFields, cardId) {
 }
 
 // ---------- contexto G-CARE NOVO (resolve conectores 1x por evento) ----------
+// Endereco em UMA linha: os e-mails usam 5 campos (logradouro/bairro/cidade/UF/CEP);
+// no WhatsApp isso vira um unico parametro.
+function montaEndereco(logr, bairro, cidade, uf, cep) {
+  const municipio = [trim(cidade), trim(uf)].filter(Boolean).join('/');
+  const base = [trim(logr), trim(bairro), municipio].filter(Boolean).join(' - ');
+  const c = trim(cep);
+  return c ? (base ? `${base} - CEP ${c}` : `CEP ${c}`) : base;
+}
+
 async function gcareContexto(card) {
   const os = trim(valorCampo(card, 'ordem_de_servi_o_n')) || trim(card.title);
   const tipoServico = trim(valorCampo(card, 'tipo_de_atendimento'));
   const dataAgendada = trim(valorCampo(card, 'data_e_hora_agendada_para_o_servi_o'));
+  const statusOrcamento = trim(valorCampo(card, 'status_do_or_amento_1')).toUpperCase();
 
   // CLIENTE: fone direto do card (telefone_whatsapp); nome/fallback fone no conector
-  let cliNome = '', cliFone = trim(valorCampo(card, 'telefone_whatsapp'));
+  let cliNome = '', cliNomeCompleto = '', cliFone = trim(valorCampo(card, 'telefone_whatsapp'));
+  let endCadastrado = '';
   const cliIds = arrayCampo(card, 'cliente');
   if (cliIds.length) {
     try {
       const r = await dadosDatabasePorId(cliIds[0]);
-      cliNome = trim(valorRecord(r.record_fields, 'nome_fantasia')) || trim(valorRecord(r.record_fields, 'nome'));
+      cliNomeCompleto = trim(valorRecord(r.record_fields, 'nome'));
+      cliNome = trim(valorRecord(r.record_fields, 'nome_fantasia')) || cliNomeCompleto;
       if (!cliFone) cliFone = trim(valorRecord(r.record_fields, 'telefone'));
+      endCadastrado = montaEndereco(
+        valorRecord(r.record_fields, 'endere_o'), valorRecord(r.record_fields, 'bairro'),
+        valorRecord(r.record_fields, 'cidade'), valorRecord(r.record_fields, 'estado'),
+        valorRecord(r.record_fields, 'cep'));
     } catch (e) { /* segue com o que tem */ }
   }
+  if (!cliNomeCompleto) cliNomeCompleto = cliNome;
+
+  // Endereco do atendimento: o do cadastro quando "SERA NO ENDERECO CADASTRADO? = SIM",
+  // senao o bloco alternativo digitado no proprio card.
+  const endAlternativo = montaEndereco(
+    valorCampo(card, 'endere_o_do_cliente'), valorCampo(card, 'bairro_do_cliente'),
+    valorCampo(card, 'cidade_do_cliente'), valorCampo(card, 'estado_do_cliente'),
+    valorCampo(card, 'cep_do_cliente'));
+  const usaCadastro = trim(valorCampo(card, 'a_instala_o_manuten_o_visita_t_cnica_ser_no_mesmo_endere_o_cadastradado')).toUpperCase() !== 'NÃO';
+  const endereco = (usaCadastro ? endCadastrado : endAlternativo) || endCadastrado || endAlternativo;
 
   // ATA (assistencia tecnica autorizada)
   let ataNome = '', ataFone = '';
@@ -266,17 +340,19 @@ async function gcareContexto(card) {
     } catch (e) { /* segue */ }
   }
 
-  // TECNICO responsavel
-  let tecNome = '';
+  // TECNICO responsavel (a tabela tem TELEFONE (WHATSAPP) = telefone_whatsapp)
+  let tecNome = '', tecFone = '';
   const tecIds = arrayCampo(card, 't_cnico_respons_vel');
   if (tecIds.length) {
     try {
       const r = await dadosDatabasePorId(tecIds[0]);
       tecNome = trim(valorRecord(r.record_fields, 'nome_completo'));
+      tecFone = trim(valorRecord(r.record_fields, 'telefone_whatsapp'));
     } catch (e) { /* segue */ }
   }
 
-  return { os, tipoServico, dataAgendada, cliNome, cliFone, ataNome, ataFone, tecNome };
+  return { os, tipoServico, dataAgendada, statusOrcamento, endereco,
+    cliNome, cliNomeCompleto, cliFone, ataNome, ataFone, tecNome, tecFone };
 }
 
 // ---------- fila (dedupe identico ao PHP) ----------
@@ -409,24 +485,38 @@ async function processarEvento({ Pg }, payload) {
     }
   }
 
-  // 6) G-CARE NOVO (306859922) — WhatsApp ao CLIENTE/ATA espelhando os e-mails
-  // de fase. Fases via create/move; agenda e troca de tecnico via field_update.
+  // 6) G-CARE NOVO (306859922) — WhatsApp ao CLIENTE/ATA/TECNICO espelhando os
+  // e-mails de fase. Fases via create/move; agenda, troca de tecnico e status do
+  // orcamento via field_update. Um mesmo evento pode gerar VARIOS envios (ex.:
+  // card criado avisa cliente, ATA e tecnico), por isso a config e uma lista.
   if (pipeId === PIPE_GCARE_NOVO) {
-    let cfg = null, gatilho = '';
-    if (action === 'card.create') { cfg = GCARE_CREATE; gatilho = 'create'; }
-    else if (action === 'card.move' && GCARE_MOVE[faseId]) { cfg = GCARE_MOVE[faseId]; gatilho = `move→${faseId}`; }
-    else if (action === 'card.field_update') { cfg = GCARE_FIELD_TRIGGERS[trim(d.field?.id)]; gatilho = `field ${trim(d.field?.id)}`; }
+    let cfgs = null, gatilho = '';
+    if (action === 'card.create') { cfgs = GCARE_CREATE; gatilho = 'create'; }
+    else if (action === 'card.move' && GCARE_MOVE[faseId]) { cfgs = GCARE_MOVE[faseId]; gatilho = `move→${faseId}`; }
+    else if (action === 'card.field_update') { cfgs = GCARE_FIELD_TRIGGERS[trim(d.field?.id)]; gatilho = `field ${trim(d.field?.id)}`; }
 
-    if (cfg) {
-      const tplId = TPL_GCARE[cfg.tpl];
-      if (!tplId) {
-        acoes.push(`G-Care(novo) ${cfg.tpl}: template Suri não configurado (SURI_TPL_GCARE_${cfg.tpl.toUpperCase()}) — pulado`);
-      } else {
+    const lista = [].concat(cfgs || []);
+    if (lista.length) {
+      let ctx = null;
+      for (const cfg of lista) {
+        // v2 = versao nova do template (e-mail alterado); so entra quando o env esta
+        // preenchido, senao segue o v1 aprovado com o builder antigo.
+        const idV2 = cfg.v2 ? TPL_GCARE_V2[cfg.v2] : '';
+        const tplId = idV2 || TPL_GCARE[cfg.tpl];
+        const build = (idV2 && cfg.paramsV2) ? cfg.paramsV2 : cfg.params;
+        if (!tplId) {
+          acoes.push(`G-Care(novo) ${cfg.tpl}: template Suri não configurado (SURI_TPL_GCARE_${cfg.tpl.toUpperCase()}) — pulado`);
+          continue;
+        }
         try {
-          const ctx = await gcareContexto(card);
-          const fone = fonePHP(cfg.destino === 'ata' ? ctx.ataFone : ctx.cliFone);
-          const params = await cfg.params(ctx, cardId);
-          if (await enfileirar(Pg, { fone, cardId, faseId, action, templateId: tplId, parametros: params }))
+          if (!ctx) ctx = await gcareContexto(card);
+          if (cfg.quando && !cfg.quando(ctx)) continue;   // ex.: orcamento aprovado x reprovado
+          const fone = fonePHP(cfg.destino === 'ata' ? ctx.ataFone
+            : cfg.destino === 'tecnico' ? ctx.tecFone : ctx.cliFone);
+          const params = await build(ctx, cardId);
+          // acao no dedupe leva o tpl: senao os 3 avisos do card.create (mesma fase,
+          // mesma acao) seriam vistos como duplicata quando caem no mesmo telefone.
+          if (await enfileirar(Pg, { fone, cardId, faseId, action: `${action}:${cfg.tpl}`, templateId: tplId, parametros: params }))
             acoes.push(`G-Care(novo) ${cfg.tpl} [${gatilho}] → ${cfg.destino} ${fone}`);
           else acoes.push(`G-Care(novo) ${cfg.tpl}: sem telefone válido (${cfg.destino}) ou duplicado`);
         } catch (e) { acoes.push(`G-Care(novo) ${cfg.tpl}: ERRO ${e.message}`); }
