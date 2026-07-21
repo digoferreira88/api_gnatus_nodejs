@@ -295,4 +295,4 @@ async function alertarDetratorCritico(app, conviteId) {
   }
 }
 
-module.exports = { gerarToken, lerConfig, classificar, classificarResposta, dispararWhatsapp, linkPesquisa, BASE_PUBLICA, TPL_NPS, processarFaturados, processarLembretes, alertarDetratorCritico };
+module.exports = { gerarToken, lerConfig, classificar, classificarResposta, dispararWhatsapp, montarTelefone, linkPesquisa, BASE_PUBLICA, TPL_NPS, processarFaturados, processarLembretes, alertarDetratorCritico };
