@@ -514,11 +514,15 @@ async function processarEvento({ Pg }, payload) {
           const fone = fonePHP(cfg.destino === 'ata' ? ctx.ataFone
             : cfg.destino === 'tecnico' ? ctx.tecFone : ctx.cliFone);
           const params = await build(ctx, cardId);
-          // acao no dedupe leva o tpl: senao os 3 avisos do card.create (mesma fase,
-          // mesma acao) seriam vistos como duplicata quando caem no mesmo telefone.
-          if (await enfileirar(Pg, { fone, cardId, faseId, action: `${action}:${cfg.tpl}`, templateId: tplId, parametros: params }))
+          // Dedupe por TELEFONE dentro do evento (chave = phone+card+fase+acao, SEM o
+          // template): se cliente, ATA e tecnico forem o MESMO numero (mesma pessoa em
+          // 2 papeis, ou teste com 1 numero), envia UMA vez so — a 1a config da lista
+          // vence (cliente tem prioridade). Numeros distintos (caso normal de producao)
+          // recebem cada um o seu template. Corrige o card 1417017461 (cliente=tecnico
+          // no mesmo fone recebia protocolo E tec_abertura).
+          if (await enfileirar(Pg, { fone, cardId, faseId, action, templateId: tplId, parametros: params }))
             acoes.push(`G-Care(novo) ${cfg.tpl} [${gatilho}] → ${cfg.destino} ${fone}`);
-          else acoes.push(`G-Care(novo) ${cfg.tpl}: sem telefone válido (${cfg.destino}) ou duplicado`);
+          else acoes.push(`G-Care(novo) ${cfg.tpl}: sem telefone válido (${cfg.destino}) ou já enviado a este número`);
         } catch (e) { acoes.push(`G-Care(novo) ${cfg.tpl}: ERRO ${e.message}`); }
       }
     }
