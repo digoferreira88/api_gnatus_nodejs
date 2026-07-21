@@ -73,6 +73,17 @@ function classificarResposta(pNps, resp, cfg) {
   return { classificacao: classificar(nota, cfg), notaNps: nota };
 }
 
+// Monta o telefone bruto a partir dos campos da SA1. A1_TEL = número; DDD vem de
+// A1_DDD (fallback A1_DDDCEL, que na base guarda só o DDD). Strip de zero à
+// esquerda no DDD ("027"->"27"). Se A1_TEL já vier com DDD embutido, o
+// normalizePhone da Suri rejeita o excesso — por isso priorizamos DDD+número.
+function montarTelefone(ddd, dddcel, tel) {
+  const soDig = (s) => String(s || '').replace(/\D/g, '');
+  const d = (soDig(ddd) || soDig(dddcel)).replace(/^0+/, '');
+  const n = soDig(tel);
+  return n ? (d + n) : '';
+}
+
 // Dispara o link da pesquisa por WhatsApp (Suri). Retorna { ok, motivo, raw }.
 async function dispararWhatsapp({ telefone, nome, token }) {
   const tpl = TPL_NPS();
@@ -195,9 +206,10 @@ async function processarFaturados(app) {
     criados++;
     const conviteId = ins[0].id;
 
-    // telefone (SA1: celular preferido)
-    const dddcel = String(r.dddcel || '').replace(/\D/g, '').replace(/^0+/, '');
-    const brutoTel = dddcel || (String(r.ddd || '').replace(/\D/g, '') + String(r.tel || '').replace(/\D/g, ''));
+    // telefone (SA1). ⚠️ A1_DDDCEL guarda SÓ o DDD do celular (ex.: "81"), NÃO o
+    // número — nunca usar sozinho. O número vem de A1_TEL; o DDD de A1_DDD (com
+    // fallback A1_DDDCEL). Ambos podem ter zero à esquerda ("027") → normaliza.
+    const brutoTel = montarTelefone(r.ddd, r.dddcel, r.tel);
     const disp = await dispararWhatsapp({ telefone: brutoTel, nome: trim(r.nome), token });
 
     if (disp.ok) {
