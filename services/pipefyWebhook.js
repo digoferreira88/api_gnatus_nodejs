@@ -123,7 +123,10 @@ const TPL_GCARE = {
   ata_orc_reprovado: process.env.SURI_TPL_GCARE_ATA_ORC_REPROVADO || '',   // orcamento reprovado -> ATA
   tec_abertura:      process.env.SURI_TPL_GCARE_TEC_ABERTURA      || '',   // card criado -> TECNICO
   tec_agendamento:   process.env.SURI_TPL_GCARE_TEC_AGENDAMENTO   || '',   // mudanca de agenda -> TECNICO
-  tec_troca:         process.env.SURI_TPL_GCARE_TEC_TROCA         || ''    // designado como novo tecnico -> TECNICO
+  tec_troca:         process.env.SURI_TPL_GCARE_TEC_TROCA         || '',   // designado como novo tecnico -> TECNICO
+  // 21/07/2026: espelha o e-mail 309735580 "MUDANCA DE FASE -> INFORMA O TECNICO"
+  // (1 template em 4 automacoes de fase). Aprovado no Meta; ID Suri abaixo.
+  tec_mudanca_fase:  process.env.SURI_TPL_GCARE_TEC_MUDANCA_FASE  || '1583457166741014'   // mudou p/ fase de servico -> TECNICO
 };
 
 // Versao 2 de templates que JA existem e cujo E-MAIL DE ORIGEM mudou em 20/07/2026:
@@ -159,7 +162,17 @@ const GCARE_MOVE = {
   '341437387': { tpl: 'solic_pagamento', destino: 'ata',               // SOLICITACAO DE PAGAMENTO
     params: async (c, id) => [c.ataNome, c.os, await publicFormLink(id)] },
   '341753703': { tpl: 'os_reprovada', destino: 'ata',                  // ORDEM DE SERVICO REPROVADA PELO CLIENTE
-    params: async (c, id) => [c.ataNome, c.os, c.tecNome, await publicFormLink(id)] }
+    params: async (c, id) => [c.ataNome, c.os, c.tecNome, await publicFormLink(id)] },
+  // 21/07/2026: mudanca de fase de servico -> avisa o TECNICO (tpl tec_mudanca_fase).
+  // O nome da fase entra fixo por entrada em {{3}} (cada fase e uma config propria).
+  '341351640': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // DIAGNOSTICO
+    params: async (c, id) => [c.tecNome, c.os, 'Diagnóstico', await publicFormLink(id), c.ataFone, c.ataNome] },
+  '341351612': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // LIMPEZA E HIGIENIZACAO
+    params: async (c, id) => [c.tecNome, c.os, 'Limpeza e Higienização', await publicFormLink(id), c.ataFone, c.ataNome] },
+  '341351659': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // MANUTENCAO
+    params: async (c, id) => [c.tecNome, c.os, 'Manutenção', await publicFormLink(id), c.ataFone, c.ataNome] },
+  '341351696': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // TESTES FUNCIONAIS
+    params: async (c, id) => [c.tecNome, c.os, 'Testes Funcionais', await publicFormLink(id), c.ataFone, c.ataNome] }
 };
 // card.field_update -> por slug do campo alterado (nao ha move de fase)
 const GCARE_FIELD_TRIGGERS = {
