@@ -141,6 +141,7 @@ async function processarFaturados(app) {
                WHERE D_E_L_E_T_ <> '*' AND D2_FILIAL = '01' AND D2_EMISSAO >= @dini ${filtroDataFim} AND RTRIM(D2_PEDIDO) <> ''
                GROUP BY D2_PEDIDO) nf
         JOIN SC5010 sc5 WITH (NOLOCK) ON sc5.C5_FILIAL = '01' AND RTRIM(sc5.C5_NUM) = nf.ped AND sc5.D_E_L_E_T_ <> '*'
+                                     AND RTRIM(sc5.C5_ZTIPO) = 'COV'   -- pesquisa NPS só para Comercial Varejo (BU COV)
         JOIN (SELECT c6_num, MAX(estatus_cod) mx FROM pedidos_estatus WITH (NOLOCK) WHERE c6_filial = '01' GROUP BY c6_num) pe
           ON pe.c6_num = sc5.C5_NUM AND pe.mx = 99
         LEFT JOIN SA1010 sa1 WITH (NOLOCK) ON sa1.A1_COD = sc5.C5_CLIENTE AND sa1.A1_LOJA = sc5.C5_LOJACLI AND sa1.D_E_L_E_T_ <> '*'
