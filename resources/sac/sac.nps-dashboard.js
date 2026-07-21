@@ -20,7 +20,7 @@ module.exports = (app) => ({
     try {
       const tot = await Pg.connectAndQuery(`
         SELECT
-          COUNT(*) enviados,
+          COUNT(*) FILTER (WHERE status IN ('ENVIADO','RESPONDIDO')) enviados,
           COUNT(*) FILTER (WHERE status = 'RESPONDIDO') respondidos,
           COUNT(*) FILTER (WHERE classificacao = 'PROMOTOR') promotores,
           COUNT(*) FILTER (WHERE classificacao = 'NEUTRO')   neutros,
