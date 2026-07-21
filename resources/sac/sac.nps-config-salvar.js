@@ -31,6 +31,7 @@ module.exports = (app) => ({
       await set('classificacao', { detratorMax, promotorMin });
       await set('ativo', b.ativo === true || b.ativo === 'true');
       await set('dataInicio', trim(b.dataInicio) || null);
+      await set('dataFim', trim(b.dataFim) || null);
       await set('expiraDias', Math.max(1, Math.trunc(N(b.expiraDias) || 30)));
       await set('lembreteDias', Math.max(0, Math.trunc(N(b.lembreteDias) || 0)));
       await set('antifadigaDias', Math.max(0, Math.trunc(N(b.antifadigaDias) || 0)));

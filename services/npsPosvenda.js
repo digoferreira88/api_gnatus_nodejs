@@ -30,7 +30,8 @@ async function lerConfig(Pg) {
     detratorMax: N(cfg.classificacao?.detratorMax ?? 6),
     promotorMin: N(cfg.classificacao?.promotorMin ?? 9),
     ativo: cfg.ativo === true || cfg.ativo === 'true',
-    dataInicio: cfg.dataInicio || null,   // 'YYYY-MM-DD' ou null
+    dataInicio: cfg.dataInicio || null,   // 'YYYY-MM-DD' ou null — piso do faturamento (obrigatorio)
+    dataFim: cfg.dataFim || null,         // 'YYYY-MM-DD' ou null — teto do faturamento (opcional; vazio = sem limite)
     expiraDias: N(cfg.expiraDias ?? 30),
     lembreteDias: N(cfg.lembreteDias ?? 3),
     antifadigaDias: N(cfg.antifadigaDias ?? 30),
@@ -103,6 +104,12 @@ async function processarFaturados(app) {
   const dini = String(cfg.dataInicio).replace(/-/g, '').slice(0, 8);
   if (!/^\d{8}$/.test(dini)) return { skipped: 'dataInicio_invalida' };
 
+  // Teto opcional (data limite). Vazio/invalido = sem limite superior (nao aborta:
+  // ao contrario do piso, o teto nao e obrigatorio). Inclusivo do proprio dia.
+  const dfimRaw = cfg.dataFim ? String(cfg.dataFim).replace(/-/g, '').slice(0, 8) : '';
+  const dfim = /^\d{8}$/.test(dfimRaw) ? dfimRaw : '';
+  const filtroDataFim = dfim ? 'AND D2_EMISSAO <= @dfim' : '';
+
   // Candidatos: NF de saída (SD2) emitida a partir de dini, cujo pedido está
   // totalmente faturado (MAX estatus = 99). Driven pela SD2 recente (bounded).
   let cand;
@@ -120,7 +127,7 @@ async function processarFaturados(app) {
              RTRIM(prod.prodCod) prodCod, RTRIM(prod.prodDesc) prodDesc
         FROM (SELECT D2_PEDIDO ped, MAX(D2_EMISSAO) dataFat, MAX(RTRIM(D2_DOC)) nf
                 FROM SD2010 WITH (NOLOCK)
-               WHERE D_E_L_E_T_ <> '*' AND D2_FILIAL = '01' AND D2_EMISSAO >= @dini AND RTRIM(D2_PEDIDO) <> ''
+               WHERE D_E_L_E_T_ <> '*' AND D2_FILIAL = '01' AND D2_EMISSAO >= @dini ${filtroDataFim} AND RTRIM(D2_PEDIDO) <> ''
                GROUP BY D2_PEDIDO) nf
         JOIN SC5010 sc5 WITH (NOLOCK) ON sc5.C5_FILIAL = '01' AND RTRIM(sc5.C5_NUM) = nf.ped AND sc5.D_E_L_E_T_ <> '*'
         JOIN (SELECT c6_num, MAX(estatus_cod) mx FROM pedidos_estatus WITH (NOLOCK) WHERE c6_filial = '01' GROUP BY c6_num) pe
@@ -141,7 +148,7 @@ async function processarFaturados(app) {
                        FROM SC6010 c6 WITH (NOLOCK)
                       WHERE c6.C6_FILIAL='01' AND RTRIM(c6.C6_NUM)=RTRIM(sc5.C5_NUM) AND c6.D_E_L_E_T_<>'*'
                       ORDER BY c6.C6_VALOR DESC) prod
-       ORDER BY nf.dataFat DESC`, { dini });
+       ORDER BY nf.dataFat DESC`, dfim ? { dini, dfim } : { dini });
   } catch (e) {
     console.error('[nps] falha ao buscar faturados:', e.message);
     return { erro: e.message };
