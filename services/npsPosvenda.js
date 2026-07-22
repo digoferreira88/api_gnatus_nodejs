@@ -17,6 +17,12 @@ const linkPesquisa = (token) => `${BASE_PUBLICA()}/pesquisa/${token}`;
 // Template Suri (aprovado no Meta) do convite. Params: [nome, link].
 const TPL_NPS = () => trim(process.env.SURI_TPL_NPS);
 
+// Caixa remetente do e-mail da pesquisa (canal secundário do CX). Fixa em
+// cx@gnatus.com.br para o cliente reconhecer e responder na caixa certa. ⚠️ a App
+// Registration do Graph precisa ter a Application Access Policy liberando ESTA
+// caixa (senão o sendMail retorna 403), além da caixa global e da cobranca@.
+const SENDER_CX = () => trim(process.env.EMAIL_SENDER_CX) || 'cx@gnatus.com.br';
+
 function gerarToken() {
   return crypto.randomBytes(18).toString('base64url');   // ~24 chars url-safe
 }
@@ -99,6 +105,147 @@ async function dispararWhatsapp({ telefone, nome, token }) {
   } catch (e) {
     return { ok: false, motivo: e.message };
   }
+}
+
+// Escapa texto para interpolar com segurança dentro do HTML do e-mail (nome/empresa
+// vêm do cadastro; sem isto um "&" ou "<" no nome quebraria a marcação).
+const escHtml = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// Monta o e-mail (assunto + HTML + texto) do convite da pesquisa. Layout seguro
+// para clientes de e-mail: tabelas + estilos inline, largura 600, botão
+// "bulletproof" (com fallback VML pro Outlook desktop). Identidade visual da
+// marca (mesma paleta da página pública /pesquisa): navy #0f2f57, azul #1e5fb5,
+// verde CTA #1e7d4f. Retorna { subject, html, text }.
+function montarEmailConvite({ nome, empresa, link }) {
+  const primeiro = trim(nome).split(/\s+/)[0] || 'Cliente';
+  const saud = escHtml(primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase());
+  const emp = escHtml(trim(empresa));
+  const href = escHtml(trim(link));
+
+  const subject = `${saud}, sua opinião é muito importante para a Gnatus 💙`;
+
+  const text =
+`Olá, ${primeiro}!
+
+Obrigado por escolher a Gnatus. Sua opinião nos ajuda a evoluir sempre.
+Poderia responder nossa pesquisa rápida? Leva menos de 1 minuto:
+
+${trim(link)}
+
+Um abraço,
+Equipe de Experiência do Cliente — Gnatus`;
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="x-apple-disable-message-reformatting"/>
+<title>Pesquisa de satisfação Gnatus</title>
+<!--[if mso]><style>table,td,div,a{font-family:Arial,sans-serif !important}</style><![endif]-->
+</head>
+<body style="margin:0;padding:0;background:#eef2f7;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">Leva menos de 1 minuto — conte pra gente como foi sua experiência.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f7;">
+  <tr><td align="center" style="padding:24px 12px;">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(15,47,87,.12);">
+      <!-- header -->
+      <tr><td align="center" style="background:#0f2f57;padding:28px 24px;">
+        <div style="font-family:Segoe UI,Arial,sans-serif;font-size:30px;font-weight:900;letter-spacing:3px;color:#ffffff;">GNATUS</div>
+        <div style="font-family:Segoe UI,Arial,sans-serif;font-size:12px;letter-spacing:1px;color:#9fc0ec;margin-top:4px;text-transform:uppercase;">Pesquisa de satisfação</div>
+      </td></tr>
+      <!-- corpo -->
+      <tr><td style="padding:34px 34px 8px 34px;font-family:Segoe UI,Arial,sans-serif;color:#1a2740;">
+        <div style="font-size:20px;font-weight:800;color:#1a2740;">Olá, ${saud}! 👋</div>
+        <p style="font-size:15px;line-height:1.6;color:#3d4a5c;margin:14px 0 0 0;">
+          Obrigado por escolher a Gnatus${emp ? ` e por confiar na <b>${emp}</b>` : ''}. Queremos muito saber como foi a sua experiência.
+        </p>
+        <p style="font-size:15px;line-height:1.6;color:#3d4a5c;margin:12px 0 0 0;">
+          É bem rapidinho — <b>leva menos de 1 minuto</b> — e a sua resposta nos ajuda a evoluir sempre. 💙
+        </p>
+      </td></tr>
+      <!-- botao bulletproof -->
+      <tr><td align="center" style="padding:26px 34px 6px 34px;">
+        <!--[if mso]>
+        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${href}" style="height:52px;v-text-anchor:middle;width:280px;" arcsize="24%" strokecolor="#1e7d4f" fillcolor="#1e7d4f">
+          <w:anchorlock/><center style="color:#ffffff;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;">Responder pesquisa</center>
+        </v:roundrect>
+        <![endif]-->
+        <!--[if !mso]><!-->
+        <a href="${href}" target="_blank" style="display:inline-block;background:#1e7d4f;color:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:16px;font-weight:800;text-decoration:none;padding:15px 40px;border-radius:12px;">Responder pesquisa</a>
+        <!--<![endif]-->
+      </td></tr>
+      <!-- link fallback -->
+      <tr><td align="center" style="padding:6px 34px 30px 34px;font-family:Segoe UI,Arial,sans-serif;">
+        <div style="font-size:12px;color:#8093ac;">Se o botão não funcionar, copie e cole este endereço no navegador:</div>
+        <div style="font-size:12px;margin-top:4px;"><a href="${href}" target="_blank" style="color:#1e5fb5;word-break:break-all;">${href}</a></div>
+      </td></tr>
+      <!-- rodape -->
+      <tr><td style="background:#f4f7fb;padding:22px 34px;font-family:Segoe UI,Arial,sans-serif;border-top:1px solid #e3e9f2;">
+        <div style="font-size:13px;color:#5a6b82;">Um abraço,<br/><b style="color:#1a2740;">Equipe de Experiência do Cliente</b> · Gnatus</div>
+        <div style="font-size:11px;color:#9aa7b8;margin-top:12px;line-height:1.5;">
+          Você recebeu este e-mail porque realizou uma compra recente com a Gnatus. Este é um contato pontual de pesquisa de satisfação.
+        </div>
+      </td></tr>
+    </table>
+    <div style="font-family:Segoe UI,Arial,sans-serif;font-size:11px;color:#9aa7b8;margin-top:14px;">Gnatus · Pesquisa de satisfação</div>
+  </td></tr>
+</table>
+</body>
+</html>`;
+
+  return { subject, html, text };
+}
+
+// Dispara o link da pesquisa por E-MAIL (canal secundário, tratativa do CX).
+// Remetente = cx@gnatus.com.br. Resolve o e-mail de destino nesta ordem:
+// override informado > e-mail vivo da SA1 do cliente do convite. Registra
+// email_enviado_em/email_destino e, se o convite estava em ERRO (WhatsApp
+// falhou), promove para ENVIADO — agora foi entregue por outro canal.
+// Retorna { ok, email, motivo }.
+async function dispararEmail(app, { conviteId, emailOverride }) {
+  const { Pg, Protheus } = app.services;
+  const rows = await Pg.connectAndQuery(
+    `SELECT id, token, cliente_nome, empresa, cliente_cod, cliente_loja, status
+       FROM tab_nps_convite WHERE id=@id`, { id: conviteId });
+  if (!rows.length) return { ok: false, motivo: 'convite_nao_encontrado' };
+  const c = rows[0];
+
+  // e-mail de destino: override do CX > e-mail vivo da SA1
+  let email = trim(emailOverride);
+  if (!email && Protheus && trim(c.cliente_cod)) {
+    try {
+      const sa1 = await Protheus.connectAndQuery(
+        `SELECT RTRIM(A1_EMAIL) EMAIL FROM SA1010 WITH (NOLOCK)
+          WHERE D_E_L_E_T_<>'*' AND RTRIM(A1_COD)=@cod AND RTRIM(A1_LOJA)=@loja`,
+        { cod: trim(c.cliente_cod), loja: trim(c.cliente_loja) });
+      email = trim(sa1[0]?.EMAIL);
+    } catch (e) { console.warn('[nps] email SA1:', e.message); }
+  }
+  // pega só o 1o e-mail se a SA1 trouxer vários (separados por ; ou ,)
+  email = email.split(/[;,\s]+/).map((s) => s.trim()).filter(Boolean)[0] || '';
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, motivo: 'email_invalido', email };
+
+  const { subject, html, text } = montarEmailConvite({
+    nome: c.cliente_nome, empresa: c.empresa, link: linkPesquisa(c.token)
+  });
+
+  try {
+    const emailService = require('./emailService');
+    await emailService.sendEmail({ from: SENDER_CX(), to: email, subject, html, text });
+  } catch (e) {
+    console.error('[nps] dispararEmail:', e.message);
+    return { ok: false, motivo: e.message, email };
+  }
+
+  await Pg.connectAndQuery(
+    `UPDATE tab_nps_convite
+        SET email_enviado_em=NOW(), email_destino=@email,
+            status = CASE WHEN status='ERRO' THEN 'ENVIADO' ELSE status END,
+            enviado_em = COALESCE(enviado_em, NOW())
+      WHERE id=@id`, { id: conviteId, email });
+  return { ok: true, email };
 }
 
 // Poll do scheduler: acha pedidos que chegaram a estatus 99 (TOTALMENTE
@@ -296,4 +443,4 @@ async function alertarDetratorCritico(app, conviteId) {
   }
 }
 
-module.exports = { gerarToken, lerConfig, classificar, classificarResposta, dispararWhatsapp, montarTelefone, linkPesquisa, BASE_PUBLICA, TPL_NPS, processarFaturados, processarLembretes, alertarDetratorCritico };
+module.exports = { gerarToken, lerConfig, classificar, classificarResposta, dispararWhatsapp, dispararEmail, montarEmailConvite, montarTelefone, linkPesquisa, BASE_PUBLICA, TPL_NPS, SENDER_CX, processarFaturados, processarLembretes, alertarDetratorCritico };

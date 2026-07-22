@@ -47,7 +47,8 @@ module.exports = (app) => ({
         SELECT c.id, c.token, c.pedido, c.cliente_cod, c.cliente_loja, c.cliente_nome, c.empresa, c.cnpj,
                c.telefone, c.nf, c.valor_pedido, c.produto_desc, c.data_faturamento,
                c.bu_nome, c.vendedor_nome, c.status, c.classificacao, c.nota_nps,
-               c.enviado_em, c.respondido_em, c.lembrete_em, c.expira_em, c.envio_resposta
+               c.enviado_em, c.respondido_em, c.lembrete_em, c.expira_em, c.envio_resposta,
+               c.email_enviado_em, c.email_destino
           FROM tab_nps_convite c
          WHERE ${conds.join(' AND ')}
          ORDER BY c.enviado_em DESC NULLS LAST, c.criado_em DESC
@@ -79,17 +80,20 @@ module.exports = (app) => ({
         buNome: trim(r.bu_nome), vendedorNome: trim(r.vendedor_nome),
         status: trim(r.status), classificacao: trim(r.classificacao), notaNps: r.nota_nps,
         enviadoEm: r.enviado_em, respondidoEm: r.respondido_em, lembreteEm: r.lembrete_em, expiraEm: r.expira_em,
+        emailEnviadoEm: r.email_enviado_em, emailDestino: trim(r.email_destino),
         motivoErro: r.status === 'ERRO' ? trim(r.envio_resposta?.motivo) : ''
       }));
 
       if (trim(q.formato).toLowerCase() === 'csv') {
         const head = ['Status', 'Cliente', 'Empresa', 'CPF/CNPJ', 'Pedido', 'NF', 'Produto', 'Faturamento',
-          'Telefone', 'E-mail', 'BU', 'Vendedor', 'Enviado em', 'Respondido em', 'Classificação', 'Nota', 'Motivo erro', 'Link pesquisa'];
+          'Telefone', 'E-mail', 'BU', 'Vendedor', 'Enviado em', 'Respondido em', 'E-mail enviado em', 'Destino e-mail',
+          'Classificação', 'Nota', 'Motivo erro', 'Link pesquisa'];
         const fmtTs = (t) => t ? new Date(t).toLocaleString('pt-BR') : '';
         const linhas = registros.map(r => [
           r.status, `${r.clienteCod}/${r.clienteLoja} ${r.clienteNome}`.trim(), r.empresa, r.cnpj,
           r.pedido, r.nf, r.produtoDesc, r.dataFaturamento, r.telefone, r.email, r.buNome, r.vendedorNome,
-          fmtTs(r.enviadoEm), fmtTs(r.respondidoEm), r.classificacao, r.notaNps ?? '', r.motivoErro, r.link
+          fmtTs(r.enviadoEm), fmtTs(r.respondidoEm), fmtTs(r.emailEnviadoEm), r.emailDestino,
+          r.classificacao, r.notaNps ?? '', r.motivoErro, r.link
         ].map(csvCell).join(';'));
         const csv = '﻿' + [head.join(';'), ...linhas].join('\r\n');
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
