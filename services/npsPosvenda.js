@@ -120,7 +120,6 @@ const escHtml = (s) => String(s == null ? '' : s)
 function montarEmailConvite({ nome, empresa, link }) {
   const primeiro = trim(nome).split(/\s+/)[0] || 'Cliente';
   const saud = escHtml(primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase());
-  const emp = escHtml(trim(empresa));
   const href = escHtml(trim(link));
 
   const subject = `${saud}, sua opinião é muito importante para a Gnatus 💙`;
@@ -159,7 +158,7 @@ Equipe de Experiência do Cliente — Gnatus`;
       <tr><td style="padding:34px 34px 8px 34px;font-family:Segoe UI,Arial,sans-serif;color:#1a2740;">
         <div style="font-size:20px;font-weight:800;color:#1a2740;">Olá, ${saud}! 👋</div>
         <p style="font-size:15px;line-height:1.6;color:#3d4a5c;margin:14px 0 0 0;">
-          Obrigado por escolher a Gnatus${emp ? ` e por confiar na <b>${emp}</b>` : ''}. Queremos muito saber como foi a sua experiência.
+          Obrigado por escolher a <b>Gnatus</b>! Queremos muito saber como foi a sua experiência com a gente.
         </p>
         <p style="font-size:15px;line-height:1.6;color:#3d4a5c;margin:12px 0 0 0;">
           É bem rapidinho — <b>leva menos de 1 minuto</b> — e a sua resposta nos ajuda a evoluir sempre. 💙
