@@ -172,7 +172,20 @@ const GCARE_MOVE = {
   '341351659': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // MANUTENCAO
     params: async (c, id) => [c.tecNome, c.os, 'Manutenção', await publicFormLink(id), c.ataFone, c.ataNome] },
   '341351696': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // TESTES FUNCIONAIS
-    params: async (c, id) => [c.tecNome, c.os, 'Testes Funcionais', await publicFormLink(id), c.ataFone, c.ataNome] }
+    params: async (c, id) => [c.tecNome, c.os, 'Testes Funcionais', await publicFormLink(id), c.ataFone, c.ataNome] },
+  // 23/07/2026: fases de campo do tecnico que faltavam avisar. O pipe nao tinha
+  // automacao de e-mail p/ elas — cobertura ampliada com o mesmo template generico
+  // (nome da fase fixo em {{3}}). Validacao (341356572) NAO entra: la so o cliente.
+  '341351728': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // INSPECAO INICIAL (INSTALACAO)
+    params: async (c, id) => [c.tecNome, c.os, 'Inspeção Inicial (Instalação)', await publicFormLink(id), c.ataFone, c.ataNome] },
+  '341398757': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // INSPECAO INICIAL (MANUTENCAO)
+    params: async (c, id) => [c.tecNome, c.os, 'Inspeção Inicial (Manutenção)', await publicFormLink(id), c.ataFone, c.ataNome] },
+  '341398750': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // VISITA TECNICA
+    params: async (c, id) => [c.tecNome, c.os, 'Visita Técnica', await publicFormLink(id), c.ataFone, c.ataNome] },
+  '341351739': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // INSTALACAO
+    params: async (c, id) => [c.tecNome, c.os, 'Instalação', await publicFormLink(id), c.ataFone, c.ataNome] },
+  '343690137': { tpl: 'tec_mudanca_fase', destino: 'tecnico',           // SOLICITACAO DE PECA(S) DE REPOSICAO
+    params: async (c, id) => [c.tecNome, c.os, 'Solicitação de Peça(s) de Reposição', await publicFormLink(id), c.ataFone, c.ataNome] }
 };
 // card.field_update -> por slug do campo alterado (nao ha move de fase)
 const GCARE_FIELD_TRIGGERS = {
