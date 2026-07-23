@@ -5,6 +5,7 @@
 
 const crypto = require('crypto');
 const Suri = require('./suri');
+const PipefySac = require('./pipefySac');
 
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
@@ -312,7 +313,22 @@ async function processarFaturados(app) {
     return { erro: e.message };
   }
 
-  let criados = 0, enviados = 0, semTelefone = 0, jaExistiam = 0, falhas = 0, antifadiga = 0;
+  // TRAVA SAC: carrega uma vez os CPFs/CNPJs com reclamação ABERTA (card fora do
+  // "Concluído") no pipe do Atendimento ao Consumidor. Um cliente em atendimento
+  // NÃO recebe a pesquisa automática — vira REVISAO p/ o operador decidir, pois
+  // pesquisar quem está reclamando enviesaria a satisfação. Fail-open: se o
+  // Pipefy falhar, segue o disparo normal (não trava a esteira toda por causa
+  // de indisponibilidade), apenas registra o aviso.
+  let sacMapa = null;
+  try {
+    const sac = await PipefySac.carregarOcorrenciasAbertas();
+    sacMapa = sac.mapa;
+    console.log(`[nps] trava SAC: ${sacMapa.size} doc(s) com ocorrência aberta (${sac.totalCards} cards ativos em "${sac.pipeNome}")`);
+  } catch (e) {
+    console.warn('[nps] trava SAC indisponível (segue fail-open):', e.message);
+  }
+
+  let criados = 0, enviados = 0, semTelefone = 0, jaExistiam = 0, falhas = 0, antifadiga = 0, emRevisao = 0;
   for (const r of cand) {
     const pedido = trim(r.pedido);
 
@@ -357,22 +373,36 @@ async function processarFaturados(app) {
     // número — nunca usar sozinho. O número vem de A1_TEL; o DDD de A1_DDD (com
     // fallback A1_DDDCEL). Ambos podem ter zero à esquerda ("027") → normaliza.
     const brutoTel = montarTelefone(r.ddd, r.dddcel, r.tel);
+    const telNorm = Suri.normalizePhone(brutoTel);
+    const sacSet = sacMapa ? ', sac_verificado_em=NOW()' : '';   // fragmento controlado
+
+    // TRAVA SAC: cliente com reclamação aberta → NÃO dispara automático; guarda o
+    // telefone (p/ o operador poder enviar depois) + as ocorrências e marca REVISAO.
+    const ocorr = PipefySac.ocorrenciasDe(sacMapa, r.cgc);
+    if (ocorr.length) {
+      emRevisao++;
+      await Pg.connectAndQuery(
+        `UPDATE tab_nps_convite SET status='REVISAO', telefone=@tel, sac_ocorrencias=@o::jsonb, sac_verificado_em=NOW() WHERE id=@id`,
+        { tel: telNorm, o: JSON.stringify(ocorr), id: conviteId });
+      continue;   // operador decide na aba Envios
+    }
+
     const disp = await dispararWhatsapp({ telefone: brutoTel, nome: trim(r.nome), token });
 
     if (disp.ok) {
       enviados++;
       await Pg.connectAndQuery(
-        `UPDATE tab_nps_convite SET status='ENVIADO', telefone=@tel, enviado_em=NOW(), envio_resposta=@r::jsonb WHERE id=@id`,
-        { tel: Suri.normalizePhone(brutoTel), r: JSON.stringify(disp.raw || { motivo: disp.motivo }), id: conviteId });
+        `UPDATE tab_nps_convite SET status='ENVIADO', telefone=@tel, enviado_em=NOW(), envio_resposta=@r::jsonb${sacSet} WHERE id=@id`,
+        { tel: telNorm, r: JSON.stringify(disp.raw || { motivo: disp.motivo }), id: conviteId });
     } else {
       if (disp.motivo === 'telefone_invalido') semTelefone++; else falhas++;
       await Pg.connectAndQuery(
-        `UPDATE tab_nps_convite SET status='ERRO', telefone=@tel, envio_resposta=@r::jsonb WHERE id=@id`,
-        { tel: Suri.normalizePhone(brutoTel), r: JSON.stringify({ motivo: disp.motivo }), id: conviteId });
+        `UPDATE tab_nps_convite SET status='ERRO', telefone=@tel, envio_resposta=@r::jsonb${sacSet} WHERE id=@id`,
+        { tel: telNorm, r: JSON.stringify({ motivo: disp.motivo }), id: conviteId });
     }
   }
 
-  return { candidatos: cand.length, criados, enviados, semTelefone, jaExistiam, antifadiga, falhas };
+  return { candidatos: cand.length, criados, enviados, emRevisao, semTelefone, jaExistiam, antifadiga, falhas };
 }
 
 // Lembrete D+X: reenvia o link p/ quem foi ENVIADO, não respondeu, passou o

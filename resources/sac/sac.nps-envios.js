@@ -30,10 +30,10 @@ module.exports = (app) => ({
     const status = trim(q.status).toUpperCase();
     if (status === 'NAO_RESPONDIDO') {
       conds.push("c.status = 'ENVIADO' AND (c.expira_em IS NULL OR c.expira_em > NOW())");
-    } else if (['ENVIADO', 'RESPONDIDO', 'ERRO'].includes(status)) {
+    } else if (['ENVIADO', 'RESPONDIDO', 'ERRO', 'REVISAO'].includes(status)) {
       conds.push('c.status = @status'); p.status = status;
     } else {
-      conds.push("c.status IN ('ENVIADO','RESPONDIDO','ERRO')");   // acionáveis
+      conds.push("c.status IN ('ENVIADO','RESPONDIDO','ERRO','REVISAO')");   // acionáveis (REVISAO = travado pelo SAC)
     }
     if (trim(q.inicio)) { conds.push('c.criado_em >= @inicio'); p.inicio = trim(q.inicio); }
     if (trim(q.fim))    { conds.push('c.criado_em < (@fim::date + 1)'); p.fim = trim(q.fim); }
@@ -48,7 +48,7 @@ module.exports = (app) => ({
                c.telefone, c.nf, c.valor_pedido, c.produto_desc, c.data_faturamento,
                c.bu_nome, c.vendedor_nome, c.status, c.classificacao, c.nota_nps,
                c.enviado_em, c.respondido_em, c.lembrete_em, c.expira_em, c.envio_resposta,
-               c.email_enviado_em, c.email_destino
+               c.email_enviado_em, c.email_destino, c.sac_ocorrencias, c.sac_verificado_em
           FROM tab_nps_convite c
          WHERE ${conds.join(' AND ')}
          ORDER BY c.enviado_em DESC NULLS LAST, c.criado_em DESC
@@ -81,18 +81,20 @@ module.exports = (app) => ({
         status: trim(r.status), classificacao: trim(r.classificacao), notaNps: r.nota_nps,
         enviadoEm: r.enviado_em, respondidoEm: r.respondido_em, lembreteEm: r.lembrete_em, expiraEm: r.expira_em,
         emailEnviadoEm: r.email_enviado_em, emailDestino: trim(r.email_destino),
+        sacOcorrencias: Array.isArray(r.sac_ocorrencias) ? r.sac_ocorrencias : [], sacVerificadoEm: r.sac_verificado_em,
         motivoErro: r.status === 'ERRO' ? trim(r.envio_resposta?.motivo) : ''
       }));
 
       if (trim(q.formato).toLowerCase() === 'csv') {
         const head = ['Status', 'Cliente', 'Empresa', 'CPF/CNPJ', 'Pedido', 'NF', 'Produto', 'Faturamento',
           'Telefone', 'E-mail', 'BU', 'Vendedor', 'Enviado em', 'Respondido em', 'E-mail enviado em', 'Destino e-mail',
-          'Classificação', 'Nota', 'Motivo erro', 'Link pesquisa'];
+          'Ocorrência SAC', 'Classificação', 'Nota', 'Motivo erro', 'Link pesquisa'];
         const fmtTs = (t) => t ? new Date(t).toLocaleString('pt-BR') : '';
         const linhas = registros.map(r => [
           r.status, `${r.clienteCod}/${r.clienteLoja} ${r.clienteNome}`.trim(), r.empresa, r.cnpj,
           r.pedido, r.nf, r.produtoDesc, r.dataFaturamento, r.telefone, r.email, r.buNome, r.vendedorNome,
           fmtTs(r.enviadoEm), fmtTs(r.respondidoEm), fmtTs(r.emailEnviadoEm), r.emailDestino,
+          (r.sacOcorrencias || []).map(o => `${o.fase}: ${o.titulo}`).join(' | '),
           r.classificacao, r.notaNps ?? '', r.motivoErro, r.link
         ].map(csvCell).join(';'));
         const csv = '﻿' + [head.join(';'), ...linhas].join('\r\n');
@@ -106,7 +108,8 @@ module.exports = (app) => ({
         enviados: registros.filter(r => r.status === 'ENVIADO' || r.status === 'RESPONDIDO').length,
         respondidos: registros.filter(r => r.status === 'RESPONDIDO').length,
         naoRespondidos: registros.filter(r => r.status === 'ENVIADO').length,
-        erros: registros.filter(r => r.status === 'ERRO').length
+        erros: registros.filter(r => r.status === 'ERRO').length,
+        emRevisao: registros.filter(r => r.status === 'REVISAO').length
       };
       return res.json({ registros, resumo, geradoEm: new Date().toISOString() });
     } catch (err) {
