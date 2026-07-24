@@ -119,7 +119,7 @@ module.exports = (app) => ({
       // Nuvem de ELOGIOS: frequência de palavras nos textos livres dos clientes
       // SATISFEITOS (PROMOTOR). Reclamações já vêm do Pareto de causas; aqui é o
       // lado positivo. Tokeniza em JS (SQL de contagem de palavras é penoso).
-      const STOP = new Set(('a o e é de do da dos das em no na nos nas um uma uns umas que com por para pra pro ao aos à às se sua seu suas seus meu minha muito muita muitos muitas mais menos foi ser sao são está esta estao estão tem ter teve tudo todo toda todos todas isso este esta esse essa isto aquele aquela como mas também tambem já ja sempre nao não sim pela pelo pelos pelas eles elas ele ela você voce vcs nossa nosso nossos nossas la lá aqui ali entao então quando onde qual quais porque pois so só ate até das dos me te lhe nos vos sem sob sobre entre eu tu ele nós vós me minha muito bem').split(/\s+/));
+      const STOP = new Set(('a o e é de do da dos das em no na nos nas um uma uns umas que com por para pra pro ao aos à às se sua seu suas seus meu minha muito muita muitos muitas mais menos foi ser sao são está esta estao estão tem ter teve tudo todo toda todos todas isso este esta esse essa isto aquele aquela como mas também tambem já ja sempre nao não sim pela pelo pelos pelas eles elas ele ela você voce vcs nossa nosso nossos nossas la lá aqui ali entao então quando onde qual quais porque pois so só ate até das dos me te lhe nos vos sem sob sobre entre eu tu ele nós vós me minha muito bem ainda cada pode fazer sendo estou vou aqui assim depois antes agora ficou fica gostei preciso usei sido').split(/\s+/));
       let elogios = [];
       try {
         const txtRows = await Pg.connectAndQuery(`
