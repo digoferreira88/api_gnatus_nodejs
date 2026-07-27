@@ -98,16 +98,21 @@ async function carregarSaldos(Protheus, inicio, fim) {
   // Saldo de uma conta = SUM(CT2_VALOR onde DEBITO=conta) - SUM(CT2_VALOR onde CREDIT=conta)
   // → resultado positivo = conta devedora, negativo = credora.
   // Filtra apenas contas de DRE (prefixo 3/4/5) — 1/2 sao Ativo/Passivo.
+  // ALEM do total, separa a parcela de lancamentos MANUAIS (CT2_MANUAL='1') — sao
+  // os ajustes que a contabilidade posta a mao (ex.: "complemento de custo" p/ bater
+  // com o relatorio de custos). O restante ('2'/vazio) e automatico (faturamento etc).
+  // Serve p/ o DRE mostrar quanto de cada conta veio de ajuste manual (transparencia
+  // p/ a diretoria — decisao de 27/07: DRE segue a razao e destaca o complemento).
   const sql = `
-    SELECT conta, SUM(valor) saldo
+    SELECT conta, SUM(valor) saldo, SUM(CASE WHEN manual = '1' THEN valor ELSE 0 END) manual
       FROM (
-        SELECT RTRIM(CT2_DEBITO) conta, CT2_VALOR valor
+        SELECT RTRIM(CT2_DEBITO) conta, RTRIM(CT2_MANUAL) manual, CT2_VALOR valor
           FROM CT2010 WITH (NOLOCK)
          WHERE D_E_L_E_T_ <> '*'   -- consolida TODAS as filiais (01+02...), igual ao DRE da contadora
            AND CT2_DATA BETWEEN @inicio AND @fim
            AND LEFT(RTRIM(CT2_DEBITO), 1) IN ('3','4','5')
         UNION ALL
-        SELECT RTRIM(CT2_CREDIT) conta, -CT2_VALOR valor
+        SELECT RTRIM(CT2_CREDIT) conta, RTRIM(CT2_MANUAL) manual, -CT2_VALOR valor
           FROM CT2010 WITH (NOLOCK)
          WHERE D_E_L_E_T_ <> '*'   -- consolida TODAS as filiais (01+02...), igual ao DRE da contadora
            AND CT2_DATA BETWEEN @inicio AND @fim
@@ -116,7 +121,7 @@ async function carregarSaldos(Protheus, inicio, fim) {
      GROUP BY conta`;
   const rows = await Protheus.connectAndQuery(sql, { inicio, fim });
   const map = new Map();
-  rows.forEach(r => map.set(trim(r.conta), N(r.saldo)));
+  rows.forEach(r => map.set(trim(r.conta), { saldo: N(r.saldo), manual: N(r.manual) }));
   return map;
 }
 
@@ -141,10 +146,13 @@ async function carregarPlanoContas(Protheus) {
 // Monta o DRE pra um periodo (saldos + plano de contas + blocos totalizadores).
 function montarDre(saldos, plano) {
   // Agrega por bloco + cria array ordenado de folhas dentro de cada bloco.
-  const folhasPorBloco = new Map();   // blocoId -> [{ codigo, codigoFmt, descricao, valor }]
+  const folhasPorBloco = new Map();   // blocoId -> [{ codigo, codigoFmt, descricao, valor, ajusteManual }]
   const totalPorBloco = new Map();    // blocoId -> total
+  const manualPorBloco = new Map();   // blocoId -> soma da parcela manual
+  let ajusteManualTotal = 0;          // total geral de ajustes manuais (DRE 3/4/5)
 
-  saldos.forEach((valor, conta) => {
+  saldos.forEach((sal, conta) => {
+    const valor = sal.saldo, manual = sal.manual;
     const bid = blocoDaConta(conta);
     if (!bid) return;
     const info = plano.get(conta) || { descricao: '(sem descrição)', analitica: true };
@@ -156,9 +164,12 @@ function montarDre(saldos, plano) {
       codigo: conta,
       codigoFmt: formatarCodigo(conta),
       descricao: info.descricao,
-      valor
+      valor,
+      ajusteManual: manual
     });
     totalPorBloco.set(bid, (totalPorBloco.get(bid) || 0) + valor);
+    manualPorBloco.set(bid, (manualPorBloco.get(bid) || 0) + manual);
+    ajusteManualTotal += manual;
   });
 
   // Ordena folhas dentro de cada bloco pelo codigo
@@ -181,12 +192,12 @@ function montarDre(saldos, plano) {
       const folhas = folhasPorBloco.get(b.id) || [];
       folhas.forEach(f => linhas.push({
         tipo: 'folha', bloco: b.id, codigo: f.codigo, codigoFmt: f.codigoFmt,
-        descricao: f.descricao, valor: f.valor
+        descricao: f.descricao, valor: f.valor, ajusteManual: f.ajusteManual || 0
       }));
       // Totalizador depois das folhas
       linhas.push({
         tipo: 'totalizador', bloco: b.id, codigo: '', codigoFmt: '',
-        descricao: b.label, valor: totalPorBloco.get(b.id) || 0
+        descricao: b.label, valor: totalPorBloco.get(b.id) || 0, ajusteManual: manualPorBloco.get(b.id) || 0
       });
     } else if (b.derivado) {
       linhas.push({
@@ -196,7 +207,7 @@ function montarDre(saldos, plano) {
     }
   });
 
-  return { linhas, totaisPorBloco: Object.fromEntries(totalPorBloco), derivados };
+  return { linhas, totaisPorBloco: Object.fromEntries(totalPorBloco), derivados, ajusteManualTotal };
 }
 
 // ============== Endpoint ==============
@@ -286,7 +297,8 @@ module.exports = (app) => ({
           ebitda: dreAtual.derivados.EBITDA || 0,
           resultadoFinanceiro: dreAtual.totaisPorBloco.DESP_FINANC || 0,
           irpjCsll: dreAtual.totaisPorBloco.IRPJ_CSLL || 0,
-          lucroLiquido: dreAtual.derivados.LUCRO_LIQUIDO || 0
+          lucroLiquido: dreAtual.derivados.LUCRO_LIQUIDO || 0,
+          ajusteManual: dreAtual.ajusteManualTotal || 0   // total de lançamentos manuais (complemento de custo etc.)
         },
         resumoAnterior: {
           receitasTotais: dreAnterior.totaisPorBloco.RECEITAS || 0,
