@@ -48,7 +48,11 @@ async function fetchProtheusComRetry(url, opts = {}, { tentativas = 2, timeoutMs
 }
 
 // Protheus respondeu que o documento JÁ está aprovado/liberado (objetivo já
-// atingido). Resposta do AprovaCompras: "... ja esta liberado/liberada." (409).
-const jaLiberadoNoProtheus = (status, txt) => status === 409 && /ja esta liber/i.test(String(txt || ''));
+// atingido). O AprovaCompras devolve 409 em DUAS redações:
+//   "... ja esta liberado/liberada."
+//   "Documento ja foi liberado por outro aprovador (propagacao)." (grupo multi-aprovador)
+// Ambas = objetivo cumprido → tratar como sucesso (senão o aprovador vê "erro" e
+// reenvia várias vezes — caso Ana Carloni / PC 024928, 27/07/2026).
+const jaLiberadoNoProtheus = (status, txt) => status === 409 && /j[aá]\s+(est[aá]|foi)\s+liber/i.test(String(txt || ''));
 
 module.exports = { ehConexao, MSG_INDISPONIVEL, fetchProtheusComRetry, jaLiberadoNoProtheus };
