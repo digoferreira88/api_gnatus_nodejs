@@ -47,9 +47,14 @@ async function buscarNotaServico(Protheus, { serie = 'C', doc, cliente, loja }) 
     { c: h.cliente, l: h.loja });
   const t = sa1[0] || {};
 
+  // Dados fiscais do serviço vêm do CADASTRO do produto (aba Impostos do Protheus):
+  //   B1_CODISS  = Cod.Serv.ISS  → item da lista LC116 (ItemListaServico)
+  //   B1_ALIQISS = Alíq. ISS     → alíquota de ISS
+  //   B1_TRIBMUN = C. Trib. Mun  → CodigoTributacaoMunicipio (se o município exigir)
   const itensRows = await Protheus.connectAndQuery(
     `SELECT RTRIM(d2.D2_ITEM) item, RTRIM(d2.D2_COD) cod, d2.D2_QUANT quant, d2.D2_TOTAL total,
-            RTRIM(sb1.B1_DESC) descricao, RTRIM(sb1.B1_CODISS) codiss, RTRIM(sb1.B1_TIPO) tipo
+            RTRIM(sb1.B1_DESC) descricao, RTRIM(sb1.B1_CODISS) codiss, RTRIM(sb1.B1_TIPO) tipo,
+            sb1.B1_ALIQISS aliqiss, RTRIM(sb1.B1_TRIBMUN) tribmun
        FROM SD2010 d2 WITH (NOLOCK)
        LEFT JOIN SB1010 sb1 WITH (NOLOCK) ON sb1.B1_COD = d2.D2_COD AND sb1.D_E_L_E_T_ <> '*'
       WHERE d2.D_E_L_E_T_ <> '*' AND d2.D2_SERIE = @serie AND RTRIM(d2.D2_DOC) = @doc
@@ -58,8 +63,10 @@ async function buscarNotaServico(Protheus, { serie = 'C', doc, cliente, loja }) 
     { serie, doc: h.doc, c: h.cliente, l: h.loja });
 
   const itens = itensRows.map(r => ({
-    codigo: trim(r.cod), descricao: trim(r.descricao), quantidade: N(r.quant),
-    valorTotal: N(r.total), itemListaServico: trim(r.codiss)   // B1_CODISS (hoje vazio → de-para)
+    codigo: trim(r.cod), descricao: trim(r.descricao), quantidade: N(r.quant), valorTotal: N(r.total),
+    itemListaServico: trim(r.codiss),                 // B1_CODISS (LC116)
+    aliquota: N(r.aliqiss),                            // B1_ALIQISS
+    codigoTributacaoMunicipio: trim(r.tribmun)         // B1_TRIBMUN
   }));
 
   const end = splitEndereco(t.endereco);
@@ -67,8 +74,11 @@ async function buscarNotaServico(Protheus, { serie = 'C', doc, cliente, loja }) 
     `${i.descricao}${i.quantidade > 1 ? ` (${i.quantidade}x)` : ''} - R$ ${N(i.valorTotal).toFixed(2)}`
   ).join(' | ');
 
-  // item LC116 da nota: usa o do 1º item que tiver de-para preenchido (senão vazio → cai no padrão da config)
-  const itemLC116 = itens.map(i => i.itemListaServico).find(Boolean) || '';
+  // ABRASF 2.03: 1 <Servico> por RPS. Se a nota tiver vários serviços, elege o item
+  // "principal" (o 1º com LC116 preenchido; senão o de maior valor) p/ LC116/alíquota/
+  // cód. município. Campos vazios caem no padrão da config (até o cadastro ser preenchido).
+  const itemPrincipal = itens.find(i => i.itemListaServico)
+    || itens.slice().sort((a, b) => b.valorTotal - a.valorTotal)[0] || {};
 
   return {
     origem: { filial: '01', serie: h.serie, doc: h.doc, cliente: h.cliente, loja: h.loja },
@@ -76,7 +86,9 @@ async function buscarNotaServico(Protheus, { serie = 'C', doc, cliente, loja }) 
     dataEmissao: dataIso(h.emissao),
     competencia: dataIso(h.emissao),
     valorServicos: N(h.valbrut),
-    itemListaServico: itemLC116,
+    itemListaServico: trim(itemPrincipal.itemListaServico),
+    aliquota: itemPrincipal.aliquota > 0 ? itemPrincipal.aliquota : null,
+    codigoTributacaoMunicipio: trim(itemPrincipal.codigoTributacaoMunicipio),
     discriminacao,
     itens,
     tomador: {
