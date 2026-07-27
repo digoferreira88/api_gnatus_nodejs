@@ -1,0 +1,100 @@
+// services/nfseAssinatura.js — assinatura XMLDSig (ABRASF 2.03) do RPS com o
+// certificado A1 (e-CNPJ da Gnatus).
+//
+// Lê o .pfx (PKCS#12) com **node-forge** (JS puro) — de propósito, porque o
+// OpenSSL 3 do Node 22 costuma REJEITAR os A1 ICP-Brasil (criptografia legada
+// RC2/3DES) com "unsupported"; o forge não depende do provider do OpenSSL.
+// Assina com **xml-crypto**.
+//
+// Padrão ABRASF 2.03: RSA-SHA1 + DigestSHA1 + C14N, assinatura ENVELOPED sobre o
+// elemento <InfDeclaracaoPrestacaoServico Id="..."> (ver services/nfseXml.js),
+// com <KeyInfo><X509Data><X509Certificate> do titular. O <Signature> entra DENTRO
+// do <Rps>, logo após o InfDeclaracao.
+//
+// Config (.env, na VPS):
+//   NFSE_CERT_PATH = /home/intranet/certs/gnatus.pfx   (arquivo FORA do git, perm 600)
+//   NFSE_CERT_PASS = <senha do .pfx>                    (NUNCA no chat/git)
+
+const fs = require('fs');
+const forge = require('node-forge');
+const { SignedXml } = require('xml-crypto');
+
+const CERT_PATH = () => String(process.env.NFSE_CERT_PATH || '').trim();
+const CERT_PASS = () => String(process.env.NFSE_CERT_PASS || '');
+
+const C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+const RSA_SHA1 = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
+const SHA1 = 'http://www.w3.org/2000/09/xmldsig#sha1';
+const ENVELOPED = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
+const REF_XPATH = "//*[local-name(.)='InfDeclaracaoPrestacaoServico']";
+
+let _cache = null;   // { privateKeyPem, certPem, certDer64, notAfter, subject }
+
+// Escolhe o certificado do TITULAR entre os bags (o .pfx ICP-Brasil traz a cadeia:
+// AC raiz + intermediária + folha). A folha é a que casa com a chave privada.
+function escolherCertTitular(certBags, privateKey) {
+  const nPriv = privateKey.n.toString(16);
+  for (const b of certBags) {
+    try { if (b.cert.publicKey && b.cert.publicKey.n && b.cert.publicKey.n.toString(16) === nPriv) return b.cert; } catch (e) {}
+  }
+  // fallback: a que NÃO é auto-assinada (issuer != subject) — folha, não a AC raiz
+  const folha = certBags.find(b => forge.pki.getPublicKeyFingerprint && b.cert.issuer.hash !== b.cert.subject.hash);
+  return (folha && folha.cert) || certBags[0].cert;
+}
+
+// Carrega o .pfx uma vez (cacheia). Lança erro claro se path/senha errados.
+function carregarCertificado() {
+  if (_cache) return _cache;
+  const path = CERT_PATH();
+  if (!path) throw new Error('NFSE_CERT_PATH não configurado no .env.');
+  if (!fs.existsSync(path)) throw new Error('Certificado não encontrado em ' + path);
+
+  let p12;
+  try {
+    const p12Der = fs.readFileSync(path, 'binary');
+    const p12Asn1 = forge.asn1.fromDer(p12Der);
+    p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, false, CERT_PASS());   // false = lenient (A1 legado)
+  } catch (e) {
+    throw new Error('Falha ao abrir o .pfx (senha incorreta ou arquivo inválido): ' + e.message);
+  }
+
+  const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag]
+    || p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag];
+  if (!keyBags || !keyBags[0]) throw new Error('Chave privada não encontrada no .pfx.');
+  const privateKey = keyBags[0].key;
+
+  const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [];
+  if (!certBags.length) throw new Error('Certificado não encontrado no .pfx.');
+  const cert = escolherCertTitular(certBags, privateKey);
+
+  _cache = {
+    privateKeyPem: forge.pki.privateKeyToPem(privateKey),
+    certPem: forge.pki.certificateToPem(cert),
+    certDer64: forge.util.encode64(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes()),
+    notAfter: cert.validity.notAfter,
+    subject: (cert.subject.getField('CN') || {}).value || ''
+  };
+  return _cache;
+}
+
+// Assina o XML do RPS (ABRASF 2.03). Retorna o XML assinado (string).
+function assinarRps(xml) {
+  const { privateKeyPem, certDer64 } = carregarCertificado();
+  const sig = new SignedXml({
+    privateKey: privateKeyPem,
+    signatureAlgorithm: RSA_SHA1,
+    canonicalizationAlgorithm: C14N
+  });
+  sig.addReference({ xpath: REF_XPATH, digestAlgorithm: SHA1, transforms: [ENVELOPED, C14N] });
+  sig.getKeyInfoContent = () => `<X509Data><X509Certificate>${certDer64}</X509Certificate></X509Data>`;
+  sig.computeSignature(xml, { location: { reference: REF_XPATH, action: 'after' } });
+  return sig.getSignedXml();
+}
+
+// Diagnóstico (sem assinar): confirma que o .pfx abre e mostra titular/validade.
+function infoCertificado() {
+  const c = carregarCertificado();
+  return { subject: c.subject, notAfter: c.notAfter, ok: true };
+}
+
+module.exports = { carregarCertificado, assinarRps, infoCertificado };
