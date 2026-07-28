@@ -251,6 +251,11 @@ const CRON_RESERVAS_VENCIDAS = '15 * * * *';  // todo :15
 // de hora em hora (só roda com o módulo ATIVO + template Suri configurado).
 const CRON_NPS_POSVENDA = '40 8-19 * * 1-5';  // :40, 08h-19h, seg-sex
 
+// SEFAZ DF-e: puxa NF-e recebidas direto da SEFAZ (mTLS A1), por NSU. De hora em
+// hora (a SEFAZ limita a 1 consulta/h sem doc novo — cStat 656). Só roda com o
+// certificado configurado (NFSE_CERT_PATH). Substitui o token do Transmite.
+const CRON_DFE = '25 * * * *';  // todo :25
+
 // Transmite: o alerta por E-MAIL de token expirando foi REMOVIDO (07/2026) a
 // pedido do usuário — o status do token agora é só VISUAL, no badge do topo do
 // Painel Fiscal (GET /fiscal/transmite-token). A coluna alertado_em em
@@ -340,6 +345,23 @@ function start(app) {
     }
   });
   console.log(`[scheduler] nps-posvenda agendado: cron "${CRON_NPS_POSVENDA}"`);
+
+  // SEFAZ DF-e — ingestão de NF-e recebidas (só liga com o A1 configurado).
+  if (jobs.dfe) jobs.dfe.cancel();
+  if (String(process.env.NFSE_CERT_PATH || '').trim()) {
+    jobs.dfe = schedule.scheduleJob(CRON_DFE, async () => {
+      try {
+        const Dfe = require('./sefazDfe');
+        const r = await Dfe.ingerir(app);
+        if (r && (r.novos || (r.cStat && r.cStat !== '137'))) console.log('[scheduler] sefaz-dfe:', JSON.stringify(r));
+      } catch (err) {
+        console.error('[scheduler] erro no sefaz-dfe:', err.message);
+      }
+    });
+    console.log(`[scheduler] sefaz-dfe agendado: cron "${CRON_DFE}"`);
+  } else {
+    console.log('[scheduler] sefaz-dfe: NFSE_CERT_PATH ausente — não agendado');
+  }
 
   // (transmite-token: alerta por e-mail removido em 07/2026 — status é visual
   //  no Painel Fiscal; ver comentário acima de start())

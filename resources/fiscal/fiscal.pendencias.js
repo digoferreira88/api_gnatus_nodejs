@@ -1,24 +1,29 @@
 // GET /fiscal/pendencias?inicio=YYYY-MM-DD&fim=YYYY-MM-DD&situacao=&pendentes=
-// Monitoramento de Pendências (visão 3) — NF-e RECEBIDAS no TOTVS Transmite,
-// cruzadas contra a SF1010 do Protheus pela Chave: a nota cuja chave NÃO está
-// escriturada (não existe em F1_CHVNFE) é "Pendente de escrituração".
-// Fonte de verdade dos recebimentos = Transmite (não o Protheus). Perm 16001.
+// Monitoramento de Pendências (visão 3) — NF-e RECEBIDAS direto da SEFAZ
+// (tab_dfe_recebida, alimentada por services/sefazDfe.js via NFeDistribuicaoDFe),
+// cruzadas contra a SF1010 do Protheus pela chave: a nota cuja chave NÃO está
+// escriturada (não existe em F1_CHVNFE) é "Pendente de escrituração". Perm 16001.
+//
+// (28/07/2026) Fonte migrada de TOTVS Transmite → SEFAZ direto (mTLS A1). Mesmo
+// formato de resposta. Campos sem equivalente no DF-e (manifestação/integraçãoERP)
+// ficam neutros.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([16001, 0]);
-const Transmite = require('../../services/transmite');
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 
-// CStat (status SEFAZ) -> situação amigável
+// situação SEFAZ. resNFe usa cSitNFe (1=Autorizada, 2=Denegada, 3=Cancelada);
+// procNFe/protNFe usam cStat (100/150=Autorizada, 101/151/155=Cancelada...).
 const situacaoPorCStat = (c) => {
   c = trim(c);
-  if (['100', '150'].includes(c)) return 'Autorizada';
-  if (['101', '151', '155'].includes(c)) return 'Cancelada';
-  if (['110', '301', '302', '303'].includes(c)) return 'Denegada';
+  if (['1', '100', '150'].includes(c)) return 'Autorizada';
+  if (['3', '101', '151', '155'].includes(c)) return 'Cancelada';
+  if (['2', '110', '301', '302', '303'].includes(c)) return 'Denegada';
   return c ? `Outros (${c})` : 'Indefinida';
 };
-// IntegracaoERP: 1 = Exportada p/ ERP (conforme painel); demais = não exportada
-const integracaoLabel = (v) => (Number(v) === 1 ? 'Exportada' : 'Não exportada');
+// número/série extraídos da chave de acesso (44 díg): série [22..25), nNF [25..34).
+const serieDaChave = (ch) => ch.length === 44 ? String(Number(ch.slice(22, 25))) : '';
+const numeroDaChave = (ch) => ch.length === 44 ? String(Number(ch.slice(25, 34))) : '';
 
 module.exports = (app) => ({
   verb: 'get',
@@ -26,10 +31,7 @@ module.exports = (app) => ({
   middlewares: [requirePerm(app)],
 
   handler: async (req, res) => {
-    const { Protheus } = app.services;
-    if (!(await Transmite.disponivel())) {
-      return res.status(503).json({ message: 'Integração TOTVS Transmite não configurada — cadastre o token na tela "Token Transmite".' });
-    }
+    const { Protheus, Pg } = app.services;
 
     // período padrão: mês corrente
     const hoje = new Date();
@@ -40,16 +42,22 @@ module.exports = (app) => ({
     const fSituacao = trim(req.query.situacao);                 // Autorizada | Cancelada | Denegada
     const soPendentes = ['1', 'true', 'sim'].includes(trim(req.query.pendentes).toLowerCase());
 
+    // recebidas = NF-e do DF-e (1 linha por chave, o doc mais recente), no período (dh_emi)
     let recebidas;
     try {
-      recebidas = await Transmite.listarRecebidas(inicio, fim);
+      recebidas = await Pg.connectAndQuery(`
+        SELECT DISTINCT ON (chave) chave, cnpj_emit, nome_emit, valor, dh_emi, cstat, criado_em
+          FROM tab_dfe_recebida
+         WHERE chave IS NOT NULL AND chave <> '' AND schema_dfe NOT ILIKE '%evento%'
+           AND dh_emi >= @ini::timestamptz AND dh_emi < ((@fim)::date + 1)
+         ORDER BY chave, nsu DESC`, { ini: inicio, fim });
     } catch (e) {
-      console.error('Erro Transmite:', e.message);
-      return res.status(e.status === 401 ? 401 : 502).json({ message: e.message });
+      console.error('Erro DF-e (tab_dfe_recebida):', e.message);
+      return res.status(500).json({ message: 'Erro ao ler recebidas (DF-e): ' + e.message });
     }
 
     // cruza com SF1010 (escrituradas) pela chave
-    const chaves = [...new Set(recebidas.map((n) => trim(n.Chave).replace(/\D/g, '')).filter((c) => c.length === 44))];
+    const chaves = [...new Set(recebidas.map((n) => trim(n.chave).replace(/\D/g, '')).filter((c) => c.length === 44))];
     const escrituradas = new Set();
     try {
       for (let i = 0; i < chaves.length; i += 500) {
@@ -66,23 +74,23 @@ module.exports = (app) => ({
     }
 
     let docs = recebidas.map((n) => {
-      const chave = trim(n.Chave);
+      const chave = trim(n.chave);
       const escriturada = escrituradas.has(chave.replace(/\D/g, ''));
       return {
         chave,
-        numero: trim(n.Numero),
-        serie: trim(n.Serie),
-        emissor: trim(n.Emissor),
-        cnpjEmi: trim(n.CnpjCpfEmi),
-        valor: N(n.VNf),
-        emissao: trim(n.DhEmi),
-        recebimento: trim(n.DhRecbto),
-        cstat: trim(n.CStat),
-        situacao: situacaoPorCStat(n.CStat),
-        manifestacao: trim(n.SituacaoMDe && n.SituacaoMDe.StatusManifestacao),
-        integracaoERP: integracaoLabel(n.IntegracaoERP),
-        integracaoCod: Number(n.IntegracaoERP),
-        natOp: trim(n.NatOp),
+        numero: numeroDaChave(chave),
+        serie: serieDaChave(chave),
+        emissor: trim(n.nome_emit),
+        cnpjEmi: trim(n.cnpj_emit),
+        valor: N(n.valor),
+        emissao: n.dh_emi ? new Date(n.dh_emi).toISOString() : '',
+        recebimento: n.criado_em ? new Date(n.criado_em).toISOString() : '',
+        cstat: trim(n.cstat),
+        situacao: situacaoPorCStat(n.cstat),
+        manifestacao: '',                 // não disponível no DF-e (era campo do Transmite)
+        integracaoERP: '—',
+        integracaoCod: null,
+        natOp: '',
         escriturada,
         pendente: !escriturada
       };
@@ -105,6 +113,7 @@ module.exports = (app) => ({
     return res.json({
       periodo: { inicio, fim },
       filtros: { situacao: fSituacao, soPendentes },
+      fonte: 'SEFAZ DF-e (NFeDistribuicaoDFe)',
       kpis,
       docs: docs.sort((a, b) => (b.emissao || '').localeCompare(a.emissao || '')),
       geradoEm: new Date().toISOString()
