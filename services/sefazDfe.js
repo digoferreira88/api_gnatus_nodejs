@@ -131,4 +131,40 @@ async function consultar(ultNSU) {
   };
 }
 
-module.exports = { consultar, distDFeInt, resumoDoc, cfg, ENDPOINTS };
+// Ingestão (chamada pelo scheduler): lê o cursor de NSU, consulta lote(s), grava
+// os novos docs e avança o cursor. Trata 656 (consumo indevido → para e tenta
+// depois), 137 (nada novo) e 138 (documentos — segue até alcançar maxNSU).
+// ⚠️ NUNCA reconsulta do 0 — parte sempre do ult_nsu guardado.
+async function ingerir(app, { maxLotes = 8 } = {}) {
+  const { Pg } = app.services;
+  const cnpj = cfg().cnpj;
+  const cur = await Pg.connectAndQuery(`SELECT ult_nsu FROM tab_dfe_nsu WHERE cnpj=@c`, { c: cnpj });
+  let ultNSU = cur.length ? String(cur[0].ult_nsu) : '0';
+  let novos = 0, lotes = 0, cStat = '';
+  for (let i = 0; i < maxLotes; i++) {
+    const r = await consultar(ultNSU);
+    lotes++; cStat = r.cStat;
+    if (r.cStat === '656') break;                    // consumo indevido → para (tenta na próxima rodada)
+    for (const d of r.docs) {
+      const ins = await Pg.connectAndQuery(
+        `INSERT INTO tab_dfe_recebida (nsu, chave, schema_dfe, cnpj_emit, nome_emit, valor, dh_emi, cstat, tp_evento, xml)
+         VALUES (@nsu,@ch,@sc,@ce,@ne,@v,@dh,@cst,@te,@xml) ON CONFLICT (nsu) DO NOTHING RETURNING nsu`,
+        { nsu: d.nsu, ch: d.chave || null, sc: d.schema, ce: d.cnpjEmit || null, ne: d.nomeEmit || null,
+          v: d.valor ? Number(d.valor) : null, dh: d.dhEmi || null, cst: d.cStat || null,
+          te: d.tpEvento || null, xml: d.xml });
+      if (ins.length) novos++;
+    }
+    if (r.ultNSU && r.ultNSU !== ultNSU) {
+      ultNSU = r.ultNSU;
+      await Pg.connectAndQuery(
+        `INSERT INTO tab_dfe_nsu (cnpj, ult_nsu, max_nsu, atualizado_em) VALUES (@c,@u,@m,NOW())
+         ON CONFLICT (cnpj) DO UPDATE SET ult_nsu=@u, max_nsu=COALESCE(@m,tab_dfe_nsu.max_nsu), atualizado_em=NOW()`,
+        { c: cnpj, u: ultNSU, m: r.maxNSU || null });
+    }
+    if (r.cStat === '137') break;                    // nada novo
+    if (r.maxNSU && ultNSU >= r.maxNSU) break;       // alcançou o fim da fila
+  }
+  return { novos, lotes, ultNSU, cStat };
+}
+
+module.exports = { consultar, ingerir, distDFeInt, resumoDoc, cfg, ENDPOINTS };
