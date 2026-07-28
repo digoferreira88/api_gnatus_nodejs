@@ -1,17 +1,17 @@
-// services/nfseXml.js — Gerador do RPS no padrão ABRASF 2.03 (NFS-e Barretos/RLZ).
+// services/nfseXml.js — Gerador do DPS (Declaração de Prestação de Serviço) no
+// PADRÃO NACIONAL da NFS-e (nfse.gov.br), usado por Barretos desde 2025.
+// (O ABRASF 2.03 foi descontinuado — ver docs/proposta-nfse-barretos-hub-intranet.md §9.)
 //
-// PURO: não assina, não faz rede — só monta o XML <GerarNfseEnvio> a partir de uma
-// "nota" normalizada (ver services/nfseProtheus.js) + a config fiscal do prestador.
-// A assinatura XMLDSig (com o certificado A1) é aplicada depois, em
-// services/nfseAssinatura.js, sobre o elemento InfDeclaracaoPrestacaoServico (Id).
+// PURO: não assina, não faz rede — monta o XML <DPS> a partir de uma "nota"
+// normalizada (services/nfseProtheus.js) + a config fiscal do prestador. A
+// assinatura (XMLDSig RSA-SHA256 sobre <infDPS Id=...>) é aplicada depois em
+// services/nfseAssinatura.js; o envio (gzip+base64+REST) em services/nfseBarretos.js.
 //
-// Namespace do conteúdo ABRASF 2.03: http://www.abrasf.org.br/nfse.xsd
-// Envelope SOAP do webservice: nfseCabecMsg + nfseDadosMsg (ver nfseBarretos.js).
-//
-// ⚠️ Campos fiscais (inscrição municipal do prestador, item LC116, alíquota ISS)
-// vêm da CONFIG — hoje são placeholders/env até o fiscal fechar o de-para.
+// Namespace: http://www.sped.fazenda.gov.br/nfse · versao 1.00.
+// ⚠️ Layout construído a partir do MOC do Padrão Nacional; ajustar fino pelas
+// rejeições da Produção Restrita (fluxo recomendado pela RLZ).
 
-const IBGE_UF = {  // prefixo IBGE (2 díg) por UF — IBGE completo = prefixo + A1_COD_MUN(5)
+const IBGE_UF = {
   AC: '12', AL: '27', AP: '16', AM: '13', BA: '29', CE: '23', DF: '53', ES: '32',
   GO: '52', MA: '21', MT: '51', MS: '50', MG: '31', PA: '15', PB: '25', PR: '41',
   PE: '26', PI: '22', RJ: '33', RN: '24', RS: '43', RO: '11', RR: '14', SC: '42',
@@ -19,16 +19,12 @@ const IBGE_UF = {  // prefixo IBGE (2 díg) por UF — IBGE completo = prefixo +
 };
 
 const soDig = (v) => String(v == null ? '' : v).replace(/\D/g, '');
-const money = (v) => Number(v || 0).toFixed(2);            // ABRASF: decimal com ponto, 2 casas
+const money = (v) => Number(v || 0).toFixed(2);
 const trim = (v) => String(v == null ? '' : v).trim();
-
-// escapa texto para conteúdo XML
 const esc = (v) => trim(v)
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
-// código IBGE (7 díg) do município do tomador a partir de UF + A1_COD_MUN (Protheus
-// guarda só os 5 últimos dígitos). Ex.: BA + 27408 = 2927408 (Salvador).
+// IBGE (7 díg) do município a partir de UF + A1_COD_MUN (Protheus guarda 5 díg).
 function ibgeMunicipio(uf, codMun) {
   const pref = IBGE_UF[trim(uf).toUpperCase()];
   const c = soDig(codMun);
@@ -36,97 +32,107 @@ function ibgeMunicipio(uf, codMun) {
   return pref + c.padStart(5, '0').slice(-5);
 }
 
-// Id do RPS usado na assinatura (Reference URI="#<id>"). Só alfanumérico.
-function idRps(numero, serie) {
-  return 'rps' + soDig(numero) + trim(serie).replace(/[^A-Za-z0-9]/g, '');
+// dhEmi no formato ISO com offset -03:00 (horário de Brasília, sem horário de verão).
+function dhEmiAgora() {
+  const d = new Date(Date.now() - 3 * 3600 * 1000);   // desloca p/ -03:00 e formata como UTC
+  return d.toISOString().replace(/\.\d{3}Z$/, '-03:00');
 }
 
-// Monta o bloco <Servico> (ABRASF 2.03). aliquota em % (ex.: 2 => 2.00 e ISS = base*2/100).
-function blocoServico(nota, cfg) {
-  const valorServicos = Number(nota.valorServicos || 0);
-  const aliquota = Number(nota.aliquota != null ? nota.aliquota : cfg.aliquotaPadrao || 0);
-  const issRetido = nota.issRetido ? 1 : 2;                 // 1=Sim, 2=Não
-  const valorIss = +(valorServicos * aliquota / 100).toFixed(2);
-  const item = trim(nota.itemListaServico || cfg.itemListaServicoPadrao);   // LC116 ex.: "01.07"
-  const codTrib = trim(nota.codigoTributacaoMunicipio || cfg.codigoTributacaoPadrao || '');
-  const munIncidencia = trim(cfg.codigoMunicipioPrestador);  // Barretos 3505500 (incidência do ISS)
-
-  return `<Servico>` +
-    `<Valores>` +
-      `<ValorServicos>${money(valorServicos)}</ValorServicos>` +
-      `<ValorDeducoes>0.00</ValorDeducoes>` +
-      `<ValorIss>${money(valorIss)}</ValorIss>` +
-      `<Aliquota>${money(aliquota)}</Aliquota>` +
-      `<DescontoIncondicionado>0.00</DescontoIncondicionado>` +
-      `<DescontoCondicionado>0.00</DescontoCondicionado>` +
-    `</Valores>` +
-    `<IssRetido>${issRetido}</IssRetido>` +
-    `<ItemListaServico>${esc(item)}</ItemListaServico>` +
-    (codTrib ? `<CodigoTributacaoMunicipio>${esc(codTrib)}</CodigoTributacaoMunicipio>` : '') +
-    `<Discriminacao>${esc(nota.discriminacao)}</Discriminacao>` +
-    `<CodigoMunicipio>${esc(munIncidencia)}</CodigoMunicipio>` +
-    `<ExigibilidadeISS>1</ExigibilidadeISS>` +
-    `<MunicipioIncidencia>${esc(munIncidencia)}</MunicipioIncidencia>` +
-  `</Servico>`;
+// Id do infDPS (padrão nacional, 45 chars após "DPS"):
+//   "DPS" + cMunEmi(7) + tpInsc(1) + inscrFederal(14) + serie(5) + nDPS(15)
+function idInfDps(cMunEmi, cnpjPrest, serie, nDps) {
+  const insc = soDig(cnpjPrest);
+  const tpInsc = insc.length === 11 ? '1' : '2';          // 1=CPF, 2=CNPJ
+  return 'DPS' + soDig(cMunEmi).padStart(7, '0')
+    + tpInsc + insc.padStart(14, '0')
+    + soDig(serie).padStart(5, '0')
+    + soDig(nDps).padStart(15, '0');
 }
 
-function blocoPrestador(cfg) {
-  return `<Prestador>` +
-    `<CpfCnpj><Cnpj>${soDig(cfg.cnpjPrestador)}</Cnpj></CpfCnpj>` +
-    `<InscricaoMunicipal>${esc(cfg.inscricaoMunicipalPrestador)}</InscricaoMunicipal>` +
-  `</Prestador>`;
+function blocoPrest(cfg) {
+  return `<prest>` +
+    `<CNPJ>${soDig(cfg.cnpjPrestador)}</CNPJ>` +
+    `<IM>${esc(cfg.inscricaoMunicipalPrestador)}</IM>` +
+    `<regTrib>` +
+      `<opSimpNac>${cfg.opSimpNac || 1}</opSimpNac>` +        // 1=Não optante (Lucro Real), 2=MEI, 3=ME/EPP
+      `<regEspTrib>${cfg.regEspTrib || 0}</regEspTrib>` +     // 0=Nenhum
+    `</regTrib>` +
+  `</prest>`;
 }
 
-function blocoTomador(t) {
+function blocoToma(t) {
   const doc = soDig(t.cpfCnpj);
-  const tagDoc = doc.length === 11 ? `<Cpf>${doc}</Cpf>` : `<Cnpj>${doc}</Cnpj>`;
+  const tagDoc = doc.length === 11 ? `<CPF>${doc}</CPF>` : `<CNPJ>${doc}</CNPJ>`;
   const ibge = t.codMunicipioIbge || ibgeMunicipio(t.uf, t.codMunicipio);
-  const partes = [];
-  partes.push(`<IdentificacaoTomador><CpfCnpj>${tagDoc}</CpfCnpj>` +
-    (trim(t.inscricaoMunicipal) ? `<InscricaoMunicipal>${esc(t.inscricaoMunicipal)}</InscricaoMunicipal>` : '') +
-    `</IdentificacaoTomador>`);
-  partes.push(`<RazaoSocial>${esc(t.razaoSocial)}</RazaoSocial>`);
-  partes.push(`<Endereco>` +
-    `<Endereco>${esc(t.endereco)}</Endereco>` +
-    `<Numero>${esc(t.numero || 'S/N')}</Numero>` +
-    (trim(t.complemento) ? `<Complemento>${esc(t.complemento)}</Complemento>` : '') +
-    `<Bairro>${esc(t.bairro)}</Bairro>` +
-    `<CodigoMunicipio>${esc(ibge)}</CodigoMunicipio>` +
-    `<Uf>${esc(t.uf)}</Uf>` +
-    `<Cep>${soDig(t.cep)}</Cep>` +
-  `</Endereco>`);
-  if (trim(t.email)) partes.push(`<Contato><Email>${esc(t.email)}</Email></Contato>`);
-  return `<Tomador>${partes.join('')}</Tomador>`;
+  return `<toma>` +
+    tagDoc +
+    (trim(t.inscricaoMunicipal) ? `<IM>${esc(t.inscricaoMunicipal)}</IM>` : '') +
+    `<xNome>${esc(t.razaoSocial)}</xNome>` +
+    `<end>` +
+      `<endNac>` +
+        `<cMun>${esc(ibge)}</cMun>` +
+        `<CEP>${soDig(t.cep)}</CEP>` +
+      `</endNac>` +
+      `<xLgr>${esc(t.endereco) || 'NAO INFORMADO'}</xLgr>` +
+      `<nro>${esc(t.numero) || 'S/N'}</nro>` +
+      `<xBairro>${esc(t.bairro) || 'NAO INFORMADO'}</xBairro>` +
+    `</end>` +
+    (trim(t.email) ? `<email>${esc(t.email)}</email>` : '') +
+  `</toma>`;
 }
 
-// Monta o <GerarNfseEnvio> (sem assinatura). Retorna { xml, id }.
-// `id` é o Id do InfDeclaracaoPrestacaoServico p/ a assinatura referenciar.
-function montarGerarNfse(nota, cfg) {
-  const id = idRps(nota.rps.numero, nota.rps.serie);
-  const inf =
-    `<InfDeclaracaoPrestacaoServico Id="${id}">` +
-      `<Rps>` +
-        `<IdentificacaoRps>` +
-          `<Numero>${soDig(nota.rps.numero)}</Numero>` +
-          `<Serie>${esc(nota.rps.serie)}</Serie>` +
-          `<Tipo>${nota.rps.tipo || 1}</Tipo>` +
-        `</IdentificacaoRps>` +
-        `<DataEmissao>${esc(nota.dataEmissao)}</DataEmissao>` +
-        `<Status>1</Status>` +
-      `</Rps>` +
-      `<Competencia>${esc(nota.competencia || nota.dataEmissao)}</Competencia>` +
-      blocoServico(nota, cfg) +
-      blocoPrestador(cfg) +
-      blocoTomador(nota.tomador) +
-      `<OptanteSimplesNacional>${cfg.optanteSimplesNacional || 2}</OptanteSimplesNacional>` +
-      `<IncentivoFiscal>${cfg.incentivoFiscal || 2}</IncentivoFiscal>` +
-    `</InfDeclaracaoPrestacaoServico>`;
+function blocoServValores(nota, cfg) {
+  const cLoc = soDig(cfg.codigoMunicipioPrestador);          // Barretos 3505500 (prestação)
+  const cTribNac = trim(nota.itemListaServico || cfg.cTribNacPadrao);
+  const cTribMun = trim(nota.codigoTributacaoMunicipio || cfg.cTribMunPadrao || '');
+  const aliquota = Number(nota.aliquota != null ? nota.aliquota : (cfg.aliquotaPadrao || 0));
+  const serv = `<serv>` +
+    `<locPrest><cLocPrestacao>${cLoc}</cLocPrestacao></locPrest>` +
+    `<cServ>` +
+      `<cTribNac>${esc(cTribNac)}</cTribNac>` +
+      (cTribMun ? `<cTribMun>${esc(cTribMun)}</cTribMun>` : '') +
+      `<xDescServ>${esc(nota.discriminacao)}</xDescServ>` +
+    `</cServ>` +
+  `</serv>`;
+  const valores = `<valores>` +
+    `<vServPrest><vServ>${money(nota.valorServicos)}</vServ></vServPrest>` +
+    `<trib>` +
+      `<tribMun>` +
+        `<tribISSQN>1</tribISSQN>` +                          // 1=Operação tributável
+        `<tpRetISSQN>${nota.issRetido ? 2 : 1}</tpRetISSQN>` + // 1=Não retido, 2=Retido tomador
+      `</tribMun>` +                                           // alíquota NÃO vai no DPS — a prefeitura calcula
+      `<totTrib><indTotTrib>0</indTotTrib></totTrib>` +        // 0=Não informa (aprox. Lei 12.741)
+    `</trib>` +
+  `</valores>`;
+  return serv + valores;
+}
 
-  const xml =
-    `<GerarNfseEnvio xmlns="http://www.abrasf.org.br/nfse.xsd">` +
-      `<Rps>${inf}</Rps>` +
-    `</GerarNfseEnvio>`;
+// Monta o <DPS> (sem assinatura). Retorna { xml, id }.
+// ⚠️ A série do DPS é NUMÉRICA (datatype TSSerieDPS) — independente da série do
+// Protheus ("C", letra). Usa cfg.serieDps (default "1").
+function montarDps(nota, cfg) {
+  const cMunEmi = soDig(cfg.codigoMunicipioPrestador);
+  const serie = soDig(cfg.serieDps) || '1';                    // série do DPS = numérica
+  const id = idInfDps(cMunEmi, cfg.cnpjPrestador, serie, nota.rps.numero);
+  const tpAmb = cfg.tpAmb || 2;                                // 2=Produção Restrita (homologação)
+
+  const inf =
+    `<infDPS Id="${id}">` +
+      `<tpAmb>${tpAmb}</tpAmb>` +
+      `<dhEmi>${dhEmiAgora()}</dhEmi>` +
+      `<verAplic>${esc(cfg.verAplic || '1.00')}</verAplic>` +
+      `<serie>${esc(serie)}</serie>` +
+      `<nDPS>${soDig(nota.rps.numero).replace(/^0+/, '') || '0'}</nDPS>` +   // sem zeros à esquerda (TSNumDPS)
+      `<dCompet>${esc(nota.competencia || nota.dataEmissao)}</dCompet>` +
+      `<tpEmit>1</tpEmit>` +                                   // 1=Prestador
+      `<cLocEmi>${cMunEmi}</cLocEmi>` +
+      blocoPrest(cfg) +
+      blocoToma(nota.tomador) +
+      blocoServValores(nota, cfg) +
+    `</infDPS>`;
+
+  const xml = `<DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00">${inf}</DPS>`;
   return { xml, id };
 }
 
-module.exports = { montarGerarNfse, ibgeMunicipio, idRps, IBGE_UF };
+module.exports = { montarDps, ibgeMunicipio, idInfDps, IBGE_UF };

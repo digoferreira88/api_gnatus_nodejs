@@ -1,5 +1,5 @@
-// services/nfseAssinatura.js — assinatura XMLDSig (ABRASF 2.03) do RPS com o
-// certificado A1 (e-CNPJ da Gnatus).
+// services/nfseAssinatura.js — assinatura XMLDSig do DPS (Padrão Nacional NFS-e)
+// com o certificado A1 (e-CNPJ da Gnatus). Também expõe a cadeia PEM p/ o TLS mútuo.
 //
 // Lê o .pfx (PKCS#12) com **node-forge** (JS puro) — de propósito, porque o
 // OpenSSL 3 do Node 22 costuma REJEITAR os A1 ICP-Brasil (criptografia legada
@@ -23,10 +23,12 @@ const CERT_PATH = () => String(process.env.NFSE_CERT_PATH || '').trim();
 const CERT_PASS = () => String(process.env.NFSE_CERT_PASS || '');
 
 const C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
-const RSA_SHA1 = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
-const SHA1 = 'http://www.w3.org/2000/09/xmldsig#sha1';
 const ENVELOPED = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
-const REF_XPATH = "//*[local-name(.)='InfDeclaracaoPrestacaoServico']";
+// SHA-1 (ABRASF, legado) e SHA-256 (Padrão Nacional / DPS — o que Barretos usa agora)
+const ALG = {
+  1:   { sig: 'http://www.w3.org/2000/09/xmldsig#rsa-sha1',        dig: 'http://www.w3.org/2000/09/xmldsig#sha1' },
+  256: { sig: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256', dig: 'http://www.w3.org/2001/04/xmlenc#sha256' }
+};
 
 let _cache = null;   // { privateKeyPem, certPem, certDer64, notAfter, subject }
 
@@ -67,9 +69,15 @@ function carregarCertificado() {
   if (!certBags.length) throw new Error('Certificado não encontrado no .pfx.');
   const cert = escolherCertTitular(certBags, privateKey);
 
+  // Cadeia completa p/ o TLS mútuo (leaf + ACs intermediárias + raiz). Sem ela o
+  // servidor ICP-Brasil responde "tlsv1 alert unknown ca" no handshake.
+  const chainPem = [cert, ...certBags.map(b => b.cert).filter(c => c !== cert)]
+    .map(c => forge.pki.certificateToPem(c)).join('\n');
+
   _cache = {
     privateKeyPem: forge.pki.privateKeyToPem(privateKey),
     certPem: forge.pki.certificateToPem(cert),
+    chainPem,
     certDer64: forge.util.encode64(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes()),
     notAfter: cert.validity.notAfter,
     subject: (cert.subject.getField('CN') || {}).value || ''
@@ -77,17 +85,20 @@ function carregarCertificado() {
   return _cache;
 }
 
-// Assina o XML do RPS (ABRASF 2.03). Retorna o XML assinado (string).
-function assinarRps(xml) {
+// Assina um XML no padrão XMLDSig, ENVELOPED sobre o elemento `referencia`
+// (padrão = <infDPS> do DPS Padrão Nacional). RSA-SHA{sha}: DPS usa 256; o ABRASF
+// legado usava 1. Retorna o XML assinado (string).
+function assinarXml(xml, { referencia = "//*[local-name(.)='infDPS']", sha = 256, posicao = 'after' } = {}) {
   const { privateKeyPem, certDer64 } = carregarCertificado();
+  const alg = ALG[sha] || ALG[256];
   const sig = new SignedXml({
     privateKey: privateKeyPem,
-    signatureAlgorithm: RSA_SHA1,
+    signatureAlgorithm: alg.sig,
     canonicalizationAlgorithm: C14N
   });
-  sig.addReference({ xpath: REF_XPATH, digestAlgorithm: SHA1, transforms: [ENVELOPED, C14N] });
+  sig.addReference({ xpath: referencia, digestAlgorithm: alg.dig, transforms: [ENVELOPED, C14N] });
   sig.getKeyInfoContent = () => `<X509Data><X509Certificate>${certDer64}</X509Certificate></X509Data>`;
-  sig.computeSignature(xml, { location: { reference: REF_XPATH, action: 'after' } });
+  sig.computeSignature(xml, { location: { reference: referencia, action: posicao } });
   return sig.getSignedXml();
 }
 
@@ -97,4 +108,4 @@ function infoCertificado() {
   return { subject: c.subject, notAfter: c.notAfter, ok: true };
 }
 
-module.exports = { carregarCertificado, assinarRps, infoCertificado };
+module.exports = { carregarCertificado, assinarXml, infoCertificado };
