@@ -41,7 +41,7 @@ A Intranet GNATUS substitui processos manuais (planilhas, sistemas legados, form
 
 ### Integrações em andamento
 - **Análise de Crédito / Bureau (§3.16, §4.17):** `tab_credito_config.fonte_ativa` escolhe o bureau. Adapters prontos: **Quod** e **Faro**. ⚠️ **Faro em PRODUÇÃO está pendente** — falta publicar o workflow real (serasa/bigdatacorp) + um exemplo de `output_data` p/ o normalizador (`services/bureau/faro.js`). Doc: `docs/pendencia-faro-workflow-producao.md`.
-- **Painel Fiscal / Transmite (§3.17, §4.16):** monitor de NF-e recebidas; token de **sessão** expira (~48h), gerenciável pela tela "Token Transmite". ⚠️ **A TOTVS recusou acesso à API Transmite** (uso exclusivo do Protheus) → decisão de partir p/ **integração SEFAZ direta (DF-e)**, hoje **PAUSADA** aguardando **certificado A1 (.pfx + senha) + CNPJ da matriz + UF**. Pendência menor: obter a chave da NF fora da SF1010.
+- **Painel Fiscal / NF-e recebidas (§3.17, §4.16):** monitor de NF-e recebidas via **SEFAZ direta (DF-e / NFeDistribuicaoDFe)** com o certificado A1 — **NO AR** desde 28/07/2026 (scheduler :25, `tab_dfe_recebida`). ✅ Substituiu o TOTVS Transmite (adapter + tela "Token Transmite" removidos). Pendência menor: obter a chave da NF fora da SF1010.
 - **OP → Pipefy (§3.12, §4.14):** **ATIVO** — roda no scheduler da intranet **de hora em hora, em horário comercial** (`0 7-20 * * 1-5`; era 15min e estourou a cota de API do plano em jun/2026 — corrigido, ver §4.14). Pipe `304059336`. ⚠️ A máquina local que rodava essa automação deve ficar **DESLIGADA** (duplicaria cards).
 - **EyeMobile (§4.15):** **ATIVO** — webhook → e-mail (caixa TI / `vendas.maquininhas@`) a cada venda.
 
@@ -1326,11 +1326,12 @@ Repositório único e permanente das decisões de crédito, acoplado à Liberaç
 - **`.env`**: `EYEMOBILE_BASE_URL` (default `https://api.eyemobile.com.br/v1`), `EYEMOBILE_ACCESS_KEY`, `EYEMOBILE_SECRET_KEY` (auth `X-EYEMOBILE-ACCESS-KEY` / `X-EYEMOBILE-SECRET-KEY`)
 - **ATIVO** — 2 usos: (1) **webhook por venda** → e-mail p/ TI / `vendas.maquininhas@` (dedupe em `tab_eyemobile_wh`, [migration 63](database/postgres/63-eyemobile.sql)); (2) **Atualizar Preços** (§3.18, perm 16100) → importa a planilha do comercial e atualiza os cardápios `49456`/`54643` (⚠️ **escrita em produção** — preview/confirma)
 
-### 4.16 Transmite (TOTVS) — NF-e recebidas p/ o Fiscal
-- **Service**: [services/transmite.js](services/transmite.js)
-- **`.env`**: `TRANSMITE_BASE_URL`, `TRANSMITE_TOKEN` (**token de SESSÃO** do Fluig — gerenciável pela tela "Token Transmite" do Painel Fiscal, `tab_transmite_config`, [migration 64](database/postgres/64-transmite-config.sql); NÃO precisa SSH). Aviso de expiração (~48h de vida) é **só visual**: badge no topo do Painel Fiscal (o alerta por e-mail foi removido em 07/2026)
-- Lista NF-e recebidas por período (OData, filtro `DhEmi`) p/ a visão de NF-e recebidas do Painel Fiscal
-- ⚠️ **A TOTVS recusou acesso à API Transmite** (uso exclusivo do Protheus) → o caminho definitivo é **SEFAZ direto (DF-e)**, hoje **PAUSADO** (ver §1.1 e §9)
+### 4.16 SEFAZ DF-e (NFeDistribuicaoDFe) — NF-e recebidas p/ o Fiscal
+> **Substituiu o TOTVS Transmite (removido em 28/07/2026):** adapter `services/transmite.js`, tela "Token Transmite" e os endpoints `/fiscal/transmite-token` foram retirados. A TOTVS recusou acesso programático à API Transmite (uso exclusivo do Protheus) e o token era de sessão (~48h). Com o certificado A1 no ar, migramos para a consulta DIRETA na SEFAZ. (A `tab_transmite_config`/[migration 64](database/postgres/64-transmite-config.sql) ficou órfã — inofensiva.)
+- **Service**: [services/sefazDfe.js](services/sefazDfe.js) — SOAP 1.2 + mTLS (cadeia do A1), método `nfeDistDFeInteresse`, cursor por NSU (`distNSU`/`ultNSU`). **SOMENTE LEITURA.**
+- **`.env`**: `DFE_TPAMB` (1=prod), `DFE_CUF` (35=SP), `DFE_CNPJ` (matriz), `DFE_VERSAO` (1.35), `DFE_ENDPOINT`. Certificado via `NFSE_CERT_PATH`/`NFSE_CERT_PASS`.
+- **Storage**: `tab_dfe_recebida` + cursor `tab_dfe_nsu` ([migration 82](database/postgres/82-dfe-recebida.sql)). Ingestão pelo scheduler (`CRON_DFE` = `25 * * * *`) via `sefazDfe.ingerir(app)`: consulta lote(s), gunzip dos `docZip` (resNFe/procNFe/eventos), grava (ON CONFLICT nsu) e avança o cursor. ⚠️ NUNCA reconsultar do NSU 0 (a SEFAZ pune com cStat 656)
+- Alimenta a **Visão "Pendências"** do Painel Fiscal (§3.17): compara `tab_dfe_recebida` × `SF1010.F1_CHVNFE` (chave não escriturada = pendente)
 
 ### 4.17 Bureau de Crédito (Quod + Faro)
 - **Orquestrador**: [services/creditoBureau.js](services/creditoBureau.js) · **Adapters**: [services/bureau/quod.js](services/bureau/quod.js), [services/bureau/faro.js](services/bureau/faro.js)
@@ -1563,7 +1564,7 @@ Resumo dos principais:
 - Evoluir o workflow de aprovação (perm 15101) e a gestão de limite (15103)
 
 ### Fiscal / SEFAZ
-- **Integração SEFAZ direta (DF-e)** p/ substituir o Transmite (a TOTVS recusou a API) — **PAUSADO** aguardando **certificado A1 (.pfx + senha) + CNPJ da matriz + UF**. Até lá a visão de NF-e recebidas depende do token de sessão do Transmite (§4.16)
+- ✅ **Integração SEFAZ direta (DF-e)** substituiu o Transmite (§4.16) — **NO AR** (28/07/2026): scheduler :25, `tab_dfe_recebida`, Visão "Pendências" do Painel Fiscal. Transmite/token removidos.
 - Obter a chave da NF recebida fora da SF1010
 
 ### Infra / Protheus (resiliência) — ver §1.1
