@@ -82,12 +82,12 @@ async function finalizar(Pg, id, f) {
       nfse_xml      = COALESCE(@nfsexml, nfse_xml),
       retorno       = COALESCE(@ret::jsonb, retorno),
       erros         = COALESCE(@err::jsonb, erros),
-      emitido_em    = CASE WHEN @st = 'EMITIDA' THEN NOW() ELSE emitido_em END,
+      emitido_em    = CASE WHEN @emitida::boolean THEN NOW() ELSE emitido_em END,
       atualizado_em = NOW()
     WHERE id = @id
     RETURNING id, status, nfse_chave`,
     {
-      id, st: f.status,
+      id, st: f.status, emitida: f.status === 'EMITIDA',
       nome: f.cliente_nome != null ? f.cliente_nome : null,
       val: f.valor != null ? f.valor : null,
       disc: f.discriminacao != null ? f.discriminacao : null,
