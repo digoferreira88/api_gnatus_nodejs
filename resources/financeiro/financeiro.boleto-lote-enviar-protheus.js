@@ -11,6 +11,7 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const Auditoria = require('../../services/auditoria');
 const ProtheusCobranca = require('../../services/protheusCobranca');
+const ProtheusCarteira = require('../../services/protheusCarteira');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
@@ -114,6 +115,21 @@ module.exports = (app) => ({
         }
       );
 
+      // 4.1) Carteira simples: o gerar-bordero do Diego deixa E1_SITUACA='0'; o
+      // padrão da empresa é '1'. Corrige os títulos DESTE borderô (escrita SE1
+      // escopada e transacional — services/protheusCarteira). Não-fatal: o
+      // borderô já foi criado; se falhar, só loga/audita.
+      let carteira = null;
+      if (sucesso && loteProth) {
+        try {
+          carteira = await ProtheusCarteira.marcarCarteiraSimples(app.services.Protheus, [loteProth]);
+          if (!carteira.ok) console.warn(`[boleto-lote ${id}] carteira-simples falhou:`, carteira.msg);
+        } catch (e) {
+          console.warn(`[boleto-lote ${id}] carteira-simples erro:`, e.message);
+          carteira = { ok: false, atualizados: 0, msg: e.message };
+        }
+      }
+
       // 5) Auditoria
       Auditoria.registrar(app, {
         modulo: 'Financeiro', submodulo: 'EnvioBoleto',
@@ -129,6 +145,8 @@ module.exports = (app) => ({
           banco: lote.banco_cod, qt_titulos: titulos.length,
           qt_processados: qtProc, qt_rejeitados: qtRej,
           lote_protheus: loteProth,
+          carteira_simples_ok: carteira ? carteira.ok : null,
+          carteira_simples_atualizados: carteira ? carteira.atualizados : null,
           httpStatus: r.httpStatus, codigo_erro: body.codigo_erro
         }
       });
@@ -143,6 +161,7 @@ module.exports = (app) => ({
         lote_protheus: loteProth || null,
         qt_processados: qtProc,
         qt_rejeitados: qtRej,
+        carteira_simples: carteira,  // { ok, atualizados } — E1_SITUACA 0→1 nos títulos do borderô
         httpStatus: r.httpStatus,
         protheus: body  // inclui detalhes[] com chave de cada titulo + status
       });
