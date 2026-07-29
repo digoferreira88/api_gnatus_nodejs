@@ -24,7 +24,9 @@ const CERT_PASS = () => String(process.env.NFSE_CERT_PASS || '');
 
 const C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
 const ENVELOPED = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
-// SHA-1 (ABRASF, legado) e SHA-256 (Padrão Nacional / DPS — o que Barretos usa agora)
+// ⚠️ Barretos / Padrão Nacional v1.00 exige RSA-SHA1 + SHA-1 (confirmado pela RLZ
+// em 29/07/2026 — a 1ª NFS-e ACEITA usou SHA-1; SHA-256 não bate com o XSD v1.00).
+// SHA-256 fica no mapa caso uma versão futura do leiaute volte a exigir.
 const ALG = {
   1:   { sig: 'http://www.w3.org/2000/09/xmldsig#rsa-sha1',        dig: 'http://www.w3.org/2000/09/xmldsig#sha1' },
   256: { sig: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256', dig: 'http://www.w3.org/2001/04/xmlenc#sha256' }
@@ -86,9 +88,9 @@ function carregarCertificado() {
 }
 
 // Assina um XML no padrão XMLDSig, ENVELOPED sobre o elemento `referencia`
-// (padrão = <infDPS> do DPS Padrão Nacional). RSA-SHA{sha}: DPS usa 256; o ABRASF
-// legado usava 1. Retorna o XML assinado (string).
-function assinarXml(xml, { referencia = "//*[local-name(.)='infDPS']", sha = 256, posicao = 'after' } = {}) {
+// (padrão = <infDPS> do DPS Padrão Nacional). RSA-SHA{sha}: Barretos v1.00 = 1
+// (SHA-1) — é o DEFAULT (foi o que a prefeitura aceitou). Retorna o XML assinado.
+function assinarXml(xml, { referencia = "//*[local-name(.)='infDPS']", sha = 1, posicao = 'after' } = {}) {
   const { privateKeyPem, certDer64 } = carregarCertificado();
   const alg = ALG[sha] || ALG[256];
   const sig = new SignedXml({

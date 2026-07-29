@@ -4,7 +4,7 @@
 //
 // PURO: não assina, não faz rede — monta o XML <DPS> a partir de uma "nota"
 // normalizada (services/nfseProtheus.js) + a config fiscal do prestador. A
-// assinatura (XMLDSig RSA-SHA256 sobre <infDPS Id=...>) é aplicada depois em
+// assinatura (XMLDSig RSA-SHA1 sobre <infDPS Id=...>) é aplicada depois em
 // services/nfseAssinatura.js; o envio (gzip+base64+REST) em services/nfseBarretos.js.
 //
 // Namespace: http://www.sped.fazenda.gov.br/nfse · versao 1.00.
@@ -36,6 +36,15 @@ function ibgeMunicipio(uf, codMun) {
 function dhEmiAgora() {
   const d = new Date(Date.now() - 3 * 3600 * 1000);   // desloca p/ -03:00 e formata como UTC
   return d.toISOString().replace(/\.\d{3}Z$/, '-03:00');
+}
+
+// dCompet precisa ser DATA COMPLETA (YYYY-MM-DD) — a RLZ rejeita YYYY-MM (29/07/2026).
+// Aceita já-completa; YYYY-MM vira dia 01; vazio → hoje.
+function dataCompet(v) {
+  const s = trim(v);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}$/.test(s)) return s + '-01';
+  return dhEmiAgora().slice(0, 10);
 }
 
 // Id do infDPS (padrão nacional, 45 chars após "DPS"):
@@ -83,14 +92,14 @@ function blocoToma(t) {
 
 function blocoServValores(nota, cfg) {
   const cLoc = soDig(cfg.codigoMunicipioPrestador);          // Barretos 3505500 (prestação)
-  const cTribNac = trim(nota.itemListaServico || cfg.cTribNacPadrao);
-  const cTribMun = trim(nota.codigoTributacaoMunicipio || cfg.cTribMunPadrao || '');
-  const aliquota = Number(nota.aliquota != null ? nota.aliquota : (cfg.aliquotaPadrao || 0));
+  // cTribNac = código nacional SEM pontos (ex.: "080201"). Barretos localiza o
+  // serviço por cTribNac + CNPJ + IM do prestador. ⚠️ cTribMun NÃO deve ser
+  // informado nesse cenário (orientação RLZ 29/07/2026 — a 1ª nota aceita foi sem).
+  const cTribNac = soDig(nota.itemListaServico || cfg.cTribNacPadrao);
   const serv = `<serv>` +
     `<locPrest><cLocPrestacao>${cLoc}</cLocPrestacao></locPrest>` +
     `<cServ>` +
       `<cTribNac>${esc(cTribNac)}</cTribNac>` +
-      (cTribMun ? `<cTribMun>${esc(cTribMun)}</cTribMun>` : '') +
       `<xDescServ>${esc(nota.discriminacao)}</xDescServ>` +
     `</cServ>` +
   `</serv>`;
@@ -123,7 +132,7 @@ function montarDps(nota, cfg) {
       `<verAplic>${esc(cfg.verAplic || '1.00')}</verAplic>` +
       `<serie>${esc(serie)}</serie>` +
       `<nDPS>${soDig(nota.rps.numero).replace(/^0+/, '') || '0'}</nDPS>` +   // sem zeros à esquerda (TSNumDPS)
-      `<dCompet>${esc(nota.competencia || nota.dataEmissao)}</dCompet>` +
+      `<dCompet>${dataCompet(nota.competencia || nota.dataEmissao)}</dCompet>` +
       `<tpEmit>1</tpEmit>` +                                   // 1=Prestador
       `<cLocEmi>${cMunEmi}</cLocEmi>` +
       blocoPrest(cfg) +
