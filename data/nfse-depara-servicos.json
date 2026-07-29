@@ -1,0 +1,762 @@
+[
+  {
+    "codigo": "001183",
+    "descricao": "MAO DE OBRA INTERNA",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "001239",
+    "descricao": "MÓDULO SERVIDOR PARA HANDY DENSTISTY",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0106",
+    "cTribNac": "01.06.01",
+    "nbs": "1.1510.00.00"
+  },
+  {
+    "codigo": "008574",
+    "descricao": "TREINAMENTO ONLINE RX PORTATIL PORT-X IV",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0802",
+    "cTribNac": "08.02.01",
+    "nbs": "1.2205.20.00"
+  },
+  {
+    "codigo": "008746",
+    "descricao": "TREINAMENTO E INSTALAÇÃO PAPAYA",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0802",
+    "cTribNac": "08.02.01",
+    "nbs": "1.2205.20.00"
+  },
+  {
+    "codigo": "008747",
+    "descricao": "TREINAMENTO E INSTALAÇÃO PAPAYA PLUS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0802",
+    "cTribNac": "08.02.01",
+    "nbs": "1.2205.20.00"
+  },
+  {
+    "codigo": "008748",
+    "descricao": "TREINAMENTO E INSTALAÇÃO PAPAYA 3D PREMIUM",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0802",
+    "cTribNac": "08.02.01",
+    "nbs": "1.2205.20.00"
+  },
+  {
+    "codigo": "008749",
+    "descricao": "TREINAMENTO E INSTALAÇÃO PAPAYA 3D PREMIUM PLUS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0802",
+    "cTribNac": "08.02.01",
+    "nbs": "1.2205.20.00"
+  },
+  {
+    "codigo": "009127",
+    "descricao": "PROMOÇÃO DE VENDAS PARCERIA ADITEK",
+    "aliqIss": "0.05",
+    "codServPrefeitura": "1706",
+    "cTribNac": "17.06.01",
+    "nbs": "1.1406.00.00"
+  },
+  {
+    "codigo": "009481",
+    "descricao": "CESSÃO DE DIREITO DE USO DE MARCAS E DE SINAIS DE PROPAGANDA – TAXA DE FRANQUIA",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0302",
+    "cTribNac": "03.02.01",
+    "nbs": "1.1104.20.00"
+  },
+  {
+    "codigo": "009634",
+    "descricao": "TREINAMENTO SCANNER HELIOS 500",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0802",
+    "cTribNac": "08.02.01",
+    "nbs": "1.2205.20.00"
+  },
+  {
+    "codigo": "010072",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CONSULTÓRIOS G1 (TODOS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010073",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CONSULTÓRIOS G2 TODOS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010074",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CONSULTÓRIOS G3 (TODOS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010075",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CONSULTÓRIOS G4 (TODOS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010076",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CADEIRA AVULSA",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010077",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT CAIXA DE LIGACAO SYNCRUS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010078",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT MASSAGEADOR CAD SYNCRUS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010079",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT BRACO ESCAMOTEAVEL / KIT BRAÇO LUXO G1 / G2",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010080",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT TERM BORDEN P/ EQ F (TODOS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010081",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT TERM BORDEN P/ EQ H (TODOS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010082",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT FOTO ACOPLADO SUPER DUAL P/UA (TODOS OS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010083",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT FOTO ACOPLADO SUPER DUAL P/EQ H (G2/G3/G4)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010084",
+    "descricao": "SERVIÇO DE INSTALAÇÃO ULTRASSOM N2 LED",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010085",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT F.O.",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010086",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT M.M.E. ELITE COM E SEM PAINEL MOTOR P/ EQUIPO F",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010087",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT M.M.E. ELITE COM E SEM PAINEL MOTOR P/ EQUIPO H",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010088",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT CONTROLE PAD (G1/G2/G3)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010089",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT BIO SYSTEM",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010090",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT AQUECEDOR AGUA SERINGA UNIVERSAL",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010091",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT BV",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010092",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT AQUECEDOR UA",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010093",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT SENSOR UND. AGUA (G1)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010094",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT ALCANCE UNID. AGUA (G1/G2/G3)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010095",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT 2º SUGADOR VENTURI P/UNID.AGUA (G4 / G3 / G2 / G1)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010096",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT 2º SUGADOR BV P/UNID.AGUA (G4 / G3 / G2 / G1)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010097",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT FOTO ACOPLADO SUPER DUAL",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010098",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT SERINGA UNIDADE AGUA (G4 / G3 / G2 / G1)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010099",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CAMERAS 1 E 2 H / SENSOR1 E 2 H",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010100",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT SUPORTE DUPLO ALCANCE GNATUS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010101",
+    "descricao": "SERVIÇO DE INSTALAÇÃO COMPUTADOR ALL IN ONE 24 GNATUS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010102",
+    "descricao": "SERVIÇO DE INSTALAÇÃO TIMEX 70 E (TODOS OS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010103",
+    "descricao": "SERVIÇO DE INSTALAÇÃO  SOMMO (TODOS OS MODELOS)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010104",
+    "descricao": "SERVIÇO DE INSTALAÇÃO EASYSONIC",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010105",
+    "descricao": "SERVIÇO DE INSTALAÇÃO JET SONIC / BP",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010106",
+    "descricao": "SERVIÇO DE INSTALAÇÃO AUTOCLAVE BIOCLEAN 21L / 12L",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010107",
+    "descricao": "SERVIÇO DE INSTALAÇÃO BOMBA DE VACUO - BIO VAC IV / II",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010108",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT II BOMBA DE VACUO BIO VAC IV / II",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010109",
+    "descricao": "SERVIÇO DE INSTALAÇÃO  COMPRESSOR AIR CLEAN - LITRAGEM (24/50/150/250)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010110",
+    "descricao": "SERVIÇO DE INSTALAÇÃO MOCHO PROFESSIONAL / STANDARD / STANDARD FIT",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010111",
+    "descricao": "SERVIÇO DE INSTALAÇÃO  EQUIPO MINI 3",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010112",
+    "descricao": "SERVIÇO DE INSTALAÇÃO  EQUIPO MINI 4",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010113",
+    "descricao": "SERVIÇO DE INSTALAÇÃO  CAB REFL SIRIUS G8 SENSOR 3 LEDS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010114",
+    "descricao": "SERVIÇO DE INSTALAÇÃO  CAB REFL SIRIUS G8 SENSOR 5 LEDS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010115",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CAB REFL SIRIUS G8 SENSOR 5 (3X2) LEDS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010116",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CAB REFL LAMP HALOGENA PERSUS L",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010117",
+    "descricao": "SERVIÇO DE INSTALAÇÃO  CABECOTE REFLETOR PERSUS LED",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010118",
+    "descricao": "SERVIÇO DE INSTALAÇÃO REFLETOR ODONTOLOGICO DE BANCADA (KIT FONTE + BRAÇO + CABEÇOTE)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010119",
+    "descricao": "SERVIÇO DE INSTALAÇÃO KIT BANDEJA AUXILIAR PLASTICA",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010120",
+    "descricao": "VISITA TECNICA (SERVIÇO)",
+    "aliqIss": "0.05",
+    "codServPrefeitura": "1701",
+    "cTribNac": "17.01.01",
+    "nbs": "1.1410.90.00"
+  },
+  {
+    "codigo": "010121",
+    "descricao": "SERVIÇO DE DESLOCAMENTO KM RODADO",
+    "aliqIss": "0.05",
+    "codServPrefeitura": "1701",
+    "cTribNac": "17.01.01",
+    "nbs": "1.1410.90.00"
+  },
+  {
+    "codigo": "010122",
+    "descricao": "SERVIÇO DE INSTALAÇÃO  CART G",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010123",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CART G + TOUCH",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "010124",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA AUTOCLAVE (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010125",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA BOMBA VÁCUO / PORTATIL (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010126",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA JET SONIC (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010127",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA FOTO (TODOS) (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010128",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA SELADORA (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010129",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA DESTILADORA (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010130",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA M.MOTOR ELÉTRICO (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010131",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA COMPRESSOR (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010132",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA MOTOR IMPLANTE AVANTI (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010133",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA PEÇAS DE MÃO (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010134",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA LOCALIZADOR APICAL (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010135",
+    "descricao": "SERVIÇO DE MANUTENÇÃO CORRETIVA CÂMERA / SENSOR (A.T.)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.83.00"
+  },
+  {
+    "codigo": "010675",
+    "descricao": "CESSÃO DE DIREITO DE USO DE MARCAS E DE SINAIS DE PROPAGANDA - TAXA DE ROYALTIES",
+    "aliqIss": "0",
+    "codServPrefeitura": "0302",
+    "cTribNac": "03.02.01",
+    "nbs": "1.1104.20.00"
+  },
+  {
+    "codigo": "010708",
+    "descricao": "SERVIÇO DE ARMAZENAGEM",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1104",
+    "cTribNac": "",
+    "nbs": ""
+  },
+  {
+    "codigo": "010744",
+    "descricao": "SERVIÇO COBRANÇA DE E-MAILS ADICIONAIS",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0106",
+    "cTribNac": "01.06.01",
+    "nbs": "1.1510.00.00"
+  },
+  {
+    "codigo": "010773",
+    "descricao": "CESSÃO DE DIREITO DE USO DE MARCAS E DE SINAIS DE PROPAGANDA - TAXA DE ROYALTIES PRODUTOS",
+    "aliqIss": "0",
+    "codServPrefeitura": "0302",
+    "cTribNac": "03.02.01",
+    "nbs": "1.1104.20.00"
+  },
+  {
+    "codigo": "011589",
+    "descricao": "SERVIÇO DE INSTALAÇÃO REFLETOR ODONTOLÓGICO LED-FSA",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011590",
+    "descricao": "SERVIÇO DE INSTALAÇÃO REFLETOR ODONTOLÓGICO LED-FSO",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011591",
+    "descricao": "SERVIÇO DE INSTALAÇÃO REFLETOR ODONTOLÓGICO LED-FSH",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011592",
+    "descricao": "SERVIÇO DE INSTALAÇÃO REFLETOR ODONTOLÓGICO LED-FSE",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011593",
+    "descricao": "SERVIÇO DE INSTALAÇÃO REFLETOR ODONTOLÓGICO LED-V3",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011594",
+    "descricao": "SERVIÇO DE INSTALAÇÃO REFLETOR ODONTOLÓGICO DE BANCADA",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011595",
+    "descricao": "SERVIÇO DE INSTALAÇÃO AUTOCLAVE BIOMAX 17L/22L",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011596",
+    "descricao": "SERVIÇO DE DESMONTAGEM CONSULTÓRIO ODONTOLÓGICO",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011597",
+    "descricao": "SERVIÇO DE INSTALAÇÃO CONSULTÓRIO GZINHA SAFARI",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "011599",
+    "descricao": "SERVIÇO DE GARANTIA CONTRATUAL COMPLEMENTAR",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "012084",
+    "descricao": "SERVIÇO DE INSTALAÇÃO DE MONITORAMENTO (SAGIL)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0108",
+    "cTribNac": "01.08.01",
+    "nbs": "1.1502.30.00"
+  },
+  {
+    "codigo": "012085",
+    "descricao": "SERVIÇO DE REINSTALAÇÃO DE EQUIPAMENTOS (SAGIL)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "012086",
+    "descricao": "SERVIÇO DE MANUTENÇÃO TÉCNICA (SAGIL)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  },
+  {
+    "codigo": "012087",
+    "descricao": "SERVIÇO DE CALIBRAÇÃO DE SENSOR (SAGIL)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.89.00"
+  },
+  {
+    "codigo": "012088",
+    "descricao": "SERVIÇO DE INCLUSÃO DE USUÁRIO ADICIONAL (SAGIL)",
+    "aliqIss": "0.05",
+    "codServPrefeitura": "1723",
+    "cTribNac": "17.23.01",
+    "nbs": "1.0908.00.00"
+  },
+  {
+    "codigo": "012089",
+    "descricao": "SERVIÇO DE PACOTE ALERTA VOZ (SAGIL)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "0106",
+    "cTribNac": "01.06.01",
+    "nbs": "1.1507.20.00"
+  },
+  {
+    "codigo": "012090",
+    "descricao": "SERVIÇO DE INSTALAÇÃO DE NOVO PONTO MONITORADO (SAGIL)",
+    "aliqIss": "0.03",
+    "codServPrefeitura": "1401",
+    "cTribNac": "14.01.01",
+    "nbs": "1.2001.82.00"
+  }
+]
