@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS tab_pipefy_wh_evento (
 CREATE INDEX IF NOT EXISTS ix_pipefy_wh_evento_em ON tab_pipefy_wh_evento (recebido_em DESC);
 
 -- Fila de WhatsApp (mesma semantica do fila_whatsapp do PHP: dedupe por
--- numero+card+fase+acao; enviado '' pendente / '1' ok / '0' falha)
+-- numero+card+fase+acao; enviado '' pendente / 'P' reivindicada-processando /
+-- '1' ok / '0' falha). 'P' é escrita atomicamente pelo drain (processarFila)
+-- para reivindicar a linha antes de enviar — impede que dois drains sobrepostos
+-- reenviem a mesma mensagem; 'P' órfã (drain morreu) é reprocessada após 2 min.
 CREATE TABLE IF NOT EXISTS tab_pipefy_wh_fila (
   id              SERIAL PRIMARY KEY,
   numero_telefone TEXT NOT NULL,

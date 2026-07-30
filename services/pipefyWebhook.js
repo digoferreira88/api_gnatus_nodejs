@@ -396,8 +396,29 @@ async function enfileirar(Pg, { fone, cardId, faseId, action, templateId, parame
 }
 
 async function processarFila(Pg) {
+  // Reivindicação ATÔMICA da fila: um único UPDATE marca as linhas como 'P'
+  // (processando) e as retorna. Sem isso, dois eventos quase simultâneos do mesmo
+  // card (ex.: card.create + card.move com ~1s de diferença) rodavam dois drains
+  // sobrepostos — o 2º SELECT via as linhas do 1º ainda como enviado='' (a Suri
+  // leva ~1s por envio, e a marcação só acontecia DEPOIS do envio) e reenviava
+  // tudo: cliente, ATA e técnico recebiam a abertura 2×. O flip ''→'P' é atômico
+  // e commitado na hora (autocommit por chamada no pg.js), então o outro drain
+  // não enxerga mais essas linhas. FOR UPDATE SKIP LOCKED impede que dois claims
+  // simultâneos disputem a mesma janela. Linhas 'P' órfãs (o processo morreu
+  // antes de finalizar) voltam à fila após 2 min — o próximo evento as reprocessa
+  // (não há scheduler; o webhook é o único drenador).
   const pend = await Pg.connectAndQuery(
-    `SELECT id, numero_telefone, template_id, parametros FROM tab_pipefy_wh_fila WHERE enviado = '' ORDER BY id LIMIT 50`, {});
+    `UPDATE tab_pipefy_wh_fila
+        SET enviado = 'P', enviado_em = NOW()
+      WHERE id IN (
+        SELECT id FROM tab_pipefy_wh_fila
+         WHERE enviado = ''
+            OR (enviado = 'P' AND enviado_em < NOW() - INTERVAL '2 minutes')
+         ORDER BY id
+         LIMIT 50
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, numero_telefone, template_id, parametros`, {});
   let ok = 0, falha = 0;
   for (const item of pend) {
     let resp;

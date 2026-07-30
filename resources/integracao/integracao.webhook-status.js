@@ -32,6 +32,9 @@ module.exports = (app) => ({
           (SELECT COUNT(*) FROM tab_pipefy_wh_fila WHERE enviado = '1') wa_ok,
           (SELECT COUNT(*) FROM tab_pipefy_wh_fila WHERE enviado = '0') wa_falha,
           (SELECT COUNT(*) FROM tab_pipefy_wh_fila WHERE enviado = '') wa_pendente,
+          -- 'P' = reivindicada por um drain e sendo enviada; transitória (segundos).
+          -- Se ficar presa aqui, o drain morreu no meio — volta à fila após 2 min.
+          (SELECT COUNT(*) FROM tab_pipefy_wh_fila WHERE enviado = 'P') wa_processando,
           (SELECT MAX(recebido_em) FROM tab_pipefy_wh_evento) ultimo_evento`, {}))[0];
 
       // mascara o telefone (LGPD básica na tela): 5516988...90
@@ -41,6 +44,7 @@ module.exports = (app) => ({
         kpis: {
           eventosHoje: Number(kpis.eventos_hoje || 0), eventosTotal: Number(kpis.eventos_total || 0),
           waOk: Number(kpis.wa_ok || 0), waFalha: Number(kpis.wa_falha || 0), waPendente: Number(kpis.wa_pendente || 0),
+          waProcessando: Number(kpis.wa_processando || 0),
           ultimoEvento: kpis.ultimo_evento
         },
         eventos: eventos.map(e => ({
@@ -52,7 +56,7 @@ module.exports = (app) => ({
         fila: fila.map(f => ({
           id: f.id, telefone: mascarar(f.numero_telefone), cardId: trim(f.card_id),
           action: trim(f.card_action), template: trim(f.template_id),
-          status: f.enviado === '1' ? 'OK' : f.enviado === '0' ? 'FALHA' : 'PENDENTE',
+          status: f.enviado === '1' ? 'OK' : f.enviado === '0' ? 'FALHA' : f.enviado === 'P' ? 'ENVIANDO' : 'PENDENTE',
           resposta: trim(f.resposta).slice(0, 220), em: f.criado_em, enviadoEm: f.enviado_em
         }))
       });
