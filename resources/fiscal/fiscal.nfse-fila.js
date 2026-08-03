@@ -61,25 +61,33 @@ module.exports = (app) => ({
     }
     const mapEmit = new Map(emit.map((e) => [`${trim(e.doc)}|${trim(e.cliente)}|${trim(e.loja)}`, e]));
 
+    // Corte de emissão (YYYYMMDD): NF de serviço faturada ANTES desta data e sem
+    // registro de emissão = LEGADA (a NFS-e já foi feita MANUALMENTE no portal antes
+    // da automação). Não são re-emitíveis pela intranet — re-emitir duplicaria a nota
+    // real no Barretos. Sem a env, ninguém vira LEGADA (comportamento original).
+    const corte = trim(process.env.NFSE_EMISSAO_CORTE).replace(/\D/g, '');
     let docs = notas.map((n) => {
       const doc = trim(n.doc), cli = trim(n.cliente), loja = trim(n.loja);
       const e = mapEmit.get(`${doc}|${cli}|${loja}`);
+      const emiRaw = trim(n.emissao).replace(/\D/g, '').slice(0, 8);
+      const status = e ? e.status : (corte && emiRaw && emiRaw < corte ? 'LEGADA' : 'NAO_EMITIDA');
       return {
         doc, serie: trim(n.serie), cliente: cli, loja,
         clienteNome: nomes.get(`${cli}|${loja}`) || '',
         emissao: dataIso(n.emissao), valor: N(n.valbrut),
-        status: e ? e.status : 'NAO_EMITIDA',
+        status,
         chave: e ? trim(e.nfse_chave) : '',
         ctribnac: e ? trim(e.ctribnac) : ''
       };
     });
-    if (soPendentes) docs = docs.filter((d) => d.status !== 'EMITIDA');
+    if (soPendentes) docs = docs.filter((d) => d.status !== 'EMITIDA' && d.status !== 'LEGADA');
 
     const kpis = {
       total: docs.length,
       naoEmitidas: docs.filter((d) => d.status === 'NAO_EMITIDA').length,
       emitidas: docs.filter((d) => d.status === 'EMITIDA').length,
       rejeitadas: docs.filter((d) => d.status === 'REJEITADA' || d.status === 'ERRO').length,
+      legadas: docs.filter((d) => d.status === 'LEGADA').length,
       valorTotal: +docs.reduce((s, d) => s + d.valor, 0).toFixed(2)
     };
 

@@ -101,7 +101,7 @@ async function finalizar(Pg, id, f) {
 }
 
 // Emite (ou devolve a emissão já feita) da nota {serie, doc, cliente, loja}.
-async function emitirNota(app, { serie = 'C', doc, cliente, loja, user }) {
+async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observacao }) {
   const { Pg, Protheus } = app.services;
   const { ambienteRotulo, cfg } = config();
   const k = { filial: '01', serie: trim(serie), doc: trim(doc), cliente: trim(cliente), loja: trim(loja) };
@@ -132,6 +132,11 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user }) {
       await finalizar(Pg, id, { status: 'ERRO', erros: [{ Codigo: 'NAO_ENCONTRADA', Descricao: `Nota ${serie}/${doc} (cliente ${cliente}/${loja}) não encontrada na SF2.` }] });
       return { ok: false, erro: 'NAO_ENCONTRADA', id };
     }
+
+    // Observação do usuário → anexada à discriminação do serviço (xDescServ do DPS).
+    // Campo comprovadamente aceito; evita mexer na estrutura do XML em produção.
+    const obs = trim(observacao).slice(0, 500);
+    if (obs) nota.discriminacao = (trim(nota.discriminacao) + ' | Obs.: ' + obs).slice(0, 4000);
 
     const { ctribnac, produto } = resolverCtribNac(nota);
     const dados = {

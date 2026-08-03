@@ -19,6 +19,7 @@ module.exports = (app) => ({
   handler: async (req, res) => {
     const user = req.user && req.user[0];
     const body = req.body || {};
+    const observacao = trim(body.observacao);   // opcional: sai na descrição do serviço (todas as notas do lote)
     let notas = Array.isArray(body.notas) ? body.notas : [body];
     notas = notas
       .map((n) => ({ serie: trim(n.serie) || 'C', doc: trim(n.doc), cliente: trim(n.cliente), loja: trim(n.loja) }))
@@ -31,7 +32,7 @@ module.exports = (app) => ({
     const resultados = [];
     for (const n of notas) {
       try {
-        const r = await emitirNota(app, { ...n, user });
+        const r = await emitirNota(app, { ...n, user, observacao });
         resultados.push({ ...n, ...r });
       } catch (e) {
         resultados.push({ ...n, ok: false, erro: 'EXCECAO', mensagem: e.message });
