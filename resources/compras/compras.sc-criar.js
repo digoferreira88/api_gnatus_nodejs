@@ -166,6 +166,20 @@ module.exports = (app) => ({
         console.error('sc-criar: falha ao logar', e.message);
       }
 
+      // 2.1) Notifica os aprovadores por e-mail. O Protheus/MATA110 parou de
+      // disparar esse e-mail no caminho da intranet; assumimos o envio (de
+      // nfe@gnatus.com.br). Non-fatal: a SC já foi criada; se falhar, só loga.
+      let notificacao = null;
+      if (r.status === 'SUCESSO' && r.sc_numero) {
+        try {
+          notificacao = await require('../../services/scNotificacao').notificarAprovadoresSC(app, { scNumero: r.sc_numero });
+          if (!notificacao.ok) console.warn(`sc-criar: e-mail da SC ${r.sc_numero} não enviado (${notificacao.motivo || notificacao.erro})`);
+        } catch (e) {
+          console.error('sc-criar: erro ao notificar aprovadores:', e.message);
+          notificacao = { ok: false, motivo: 'ERRO', erro: e.message };
+        }
+      }
+
       // 3) Auditoria
       Auditoria.registrar(app, {
         modulo: 'Compras', submodulo: 'SolicitarCompra',
@@ -184,7 +198,8 @@ module.exports = (app) => ({
           duracao_ms: r.duracao_ms,
           tentativas: r.tentativas,
           motivo: r.motivo,
-          inconsistencias: r.body?.INCONSISTENCIAS?.slice(0, 5)
+          inconsistencias: r.body?.INCONSISTENCIAS?.slice(0, 5),
+          email_aprovadores: notificacao ? { ok: notificacao.ok, destinatarios: notificacao.destinatarios, motivo: notificacao.motivo || null } : null
         }
       });
 
@@ -199,7 +214,8 @@ module.exports = (app) => ({
         log_id: logId,
         duracao_ms: r.duracao_ms,
         tentativas: r.tentativas,
-        motivo: r.motivo
+        motivo: r.motivo,
+        email_aprovadores: notificacao
       });
     } catch (err) {
       console.error('sc-criar:', err);
