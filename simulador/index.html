@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simulador de Margens — Gnatus Franqueado</title>
+<style>
+  :root{
+    --azul:#1a3f82; --azul2:#1e5fb5; --bg:#eef2f8; --card:#fff; --linha:#e3e9f2;
+    --txt:#1a2740; --mut:#6b7a90; --amarelo:#fff7d1; --amareloB:#e6c74a;
+    --ok:#1e7d4f; --warn:#b8860b; --bad:#c0392b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;line-height:1.4}
+  .wrap{max-width:1100px;margin:0 auto;padding:14px}
+  header.top{background:linear-gradient(135deg,var(--azul),var(--azul2));color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:14px;box-shadow:0 6px 20px rgba(26,63,130,.25)}
+  header.top h1{margin:0;font-size:1.35rem;font-weight:800;letter-spacing:.3px}
+  header.top .sub{opacity:.9;font-size:.82rem;margin-top:3px}
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+  .tab{flex:1;min-width:150px;padding:11px 10px;border:2px solid var(--linha);background:#fff;border-radius:10px;font-weight:700;color:var(--mut);cursor:pointer;font-size:.9rem;transition:.15s}
+  .tab.on{background:var(--azul);color:#fff;border-color:var(--azul);box-shadow:0 4px 12px rgba(26,63,130,.2)}
+  .card{background:var(--card);border:1px solid var(--linha);border-radius:12px;padding:14px 16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(26,63,130,.05)}
+  .card h2{margin:0 0 10px;font-size:.92rem;color:var(--azul);font-weight:800;display:flex;align-items:center;gap:8px}
+  .card h2 .n{background:var(--azul);color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.72rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px}
+  .f{display:flex;flex-direction:column;gap:3px}
+  .f label{font-size:.72rem;color:var(--mut);font-weight:600}
+  .f input,.f select{padding:8px 10px;border:1px solid #d1d8e2;border-radius:7px;font-size:.88rem;color:var(--txt);background:#fff;width:100%}
+  .f input.edit,.f select.edit{background:var(--amarelo);border-color:var(--amareloB)}
+  .f .ro{padding:8px 10px;background:#f4f7fc;border:1px solid var(--linha);border-radius:7px;font-weight:600;min-height:36px;display:flex;align-items:center}
+  .checks{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+  .chk{display:flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid #d1d8e2;border-radius:8px;background:#fff;cursor:pointer;font-size:.84rem;font-weight:600}
+  .chk input{width:16px;height:16px;accent-color:var(--azul)}
+  .chk.on{background:var(--amarelo);border-color:var(--amareloB)}
+  .alerta{margin-top:8px;padding:8px 11px;border-radius:8px;font-size:.8rem;font-weight:600;background:#fdecea;color:var(--bad);border:1px solid #f5c6c2;display:none}
+  .infoprod{font-size:.8rem;color:var(--mut);margin-top:8px;display:flex;flex-wrap:wrap;gap:6px 16px}
+  .infoprod b{color:var(--txt)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.7rem;font-weight:700;background:#eef2f8;color:var(--azul)}
+  .badge.imp{background:#fdf0e6;color:#b45309}
+  table.dem{width:100%;border-collapse:collapse;font-size:.86rem}
+  table.dem td{padding:6px 4px;border-bottom:1px solid #f0f4fa}
+  table.dem td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+  table.dem tr.sub td{color:var(--mut);font-size:.8rem;font-style:italic}
+  table.dem tr.receita td{font-weight:800;color:var(--azul)}
+  table.dem tr.total td{font-weight:800;font-size:1.05rem;border-top:2px solid var(--azul);border-bottom:none;padding-top:10px}
+  .neg{color:var(--bad)}.pos{color:var(--ok)}
+  .lucrobox{margin-top:2px;padding:14px 16px;border-radius:12px;text-align:center;color:#fff}
+  .lucrobox.ok{background:linear-gradient(135deg,#1e7d4f,#149c63)}
+  .lucrobox.warn{background:linear-gradient(135deg,#b8860b,#d9a520)}
+  .lucrobox.bad{background:linear-gradient(135deg,#c0392b,#e05545)}
+  .lucrobox.vazio{background:linear-gradient(135deg,#8794a8,#a7b1c0)}
+  .lucrobox .lbl{font-size:.74rem;text-transform:uppercase;opacity:.9;letter-spacing:.5px}
+  .lucrobox .val{font-size:1.9rem;font-weight:800;margin:2px 0}
+  .lucrobox .diag{font-size:.85rem;font-weight:700}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+  .kpi{background:#f4f7fc;border:1px solid var(--linha);border-radius:10px;padding:10px 12px;text-align:center}
+  .kpi .k{font-size:.7rem;color:var(--mut);text-transform:uppercase;font-weight:700}
+  .kpi .v{font-size:1.25rem;font-weight:800;color:var(--azul)}
+  table.cmp{width:100%;border-collapse:collapse;font-size:.85rem}
+  table.cmp th,table.cmp td{padding:8px 10px;border-bottom:1px solid var(--linha);text-align:right;font-variant-numeric:tabular-nums}
+  table.cmp th:first-child,table.cmp td:first-child{text-align:left;font-weight:700}
+  table.cmp thead th{background:#f4f7fc;color:var(--azul);font-size:.78rem;text-transform:uppercase}
+  table.cmp td.on{background:#f6faff;font-weight:800}
+  .dotok{color:var(--ok)}.dotwarn{color:var(--warn)}.dotbad{color:var(--bad)}
+  .acts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .btn{padding:9px 16px;border-radius:9px;border:none;font-weight:700;cursor:pointer;font-size:.86rem;display:inline-flex;align-items:center;gap:6px}
+  .btn.pri{background:var(--azul);color:#fff}.btn.sec{background:#fff;color:var(--azul);border:1px solid var(--linha)}
+  footer{color:var(--mut);font-size:.78rem;text-align:center;padding:16px 8px 24px}
+  .legenda{font-size:.72rem;color:var(--mut);margin-top:6px}
+  @media(max-width:560px){ header.top h1{font-size:1.1rem} .lucrobox .val{font-size:1.5rem} }
+  @media print{
+    body{background:#fff} .tabs,.acts,.chk input,.f input,.f select{}
+    .no-print{display:none!important} .card{box-shadow:none;break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>SIMULADOR DE MARGENS — GNATUS FRANQUEADO</h1>
+    <div class="sub">Tabela Junho/2026 · 320 produtos · três regimes tributários · cálculo em tempo real</div>
+  </header>
+
+  <div class="tabs no-print" id="tabs">
+    <button class="tab on" data-reg="simples">Simples Nacional</button>
+    <button class="tab" data-reg="presumido">Lucro Presumido</button>
+    <button class="tab" data-reg="real">Lucro Real</button>
+  </div>
+
+  <div class="acts no-print">
+    <button class="btn sec" id="btnReset">↺ Resetar</button>
+    <button class="btn pri" id="btnPrint">🖨 Imprimir / Exportar</button>
+  </div>
+
+  <!-- 1. Produto -->
+  <div class="card">
+    <h2><span class="n">1</span> Produto</h2>
+    <div class="grid">
+      <div class="f"><label>Linha / Categoria</label><select id="linha" class="edit"></select></div>
+      <div class="f"><label>Produto</label><select id="produto" class="edit"></select></div>
+    </div>
+    <div class="infoprod" id="infoProd"></div>
+  </div>
+
+  <!-- 2. Condições de compra -->
+  <div class="card">
+    <h2><span class="n">2</span> Condições de Compra (Gnatus → Franqueado)</h2>
+    <div class="grid">
+      <div class="f"><label>Desconto promoção (%)</label><input id="descontoPromo" class="edit" type="number" step="0.5" min="0" max="50"></div>
+      <div class="f"><label>Desconto livre (%)</label><input id="descontoLivre" class="edit" type="number" step="0.5" min="0" max="90"></div>
+    </div>
+    <div class="checks" style="margin-top:8px">
+      <label class="chk" id="cPix"><input type="checkbox" id="pix"> PIX à vista (−7%)</label>
+      <label class="chk" id="cCartao"><input type="checkbox" id="cartao6x"> 6× cartão (−5%)</label>
+      <label class="chk" id="cFranq"><input type="checkbox" id="franqueado"> Franqueado (−8%)</label>
+    </div>
+    <div class="alerta" id="alertaCond">⚠ PIX à vista e 6× cartão são excludentes — a planilha recomenda usar apenas uma condição de pagamento.</div>
+    <div class="grid" style="margin-top:10px">
+      <div class="f"><label>Custo após promoção</label><div class="ro" id="oCustoPromo">—</div></div>
+      <div class="f"><label>Fator combinado</label><div class="ro" id="oFator">—</div></div>
+      <div class="f"><label>Custo efetivo de compra</label><div class="ro" id="oCusto">—</div></div>
+    </div>
+  </div>
+
+  <!-- 3. Estado -->
+  <div class="card">
+    <h2><span class="n">3</span> Estado do Franqueado</h2>
+    <div class="grid">
+      <div class="f"><label>UF</label><select id="uf" class="edit"></select></div>
+      <div class="f"><label>Estado</label><div class="ro" id="oEstado">—</div></div>
+      <div class="f"><label>ICMS interno (débito de saída)</label><div class="ro" id="oIcmsInt">—</div></div>
+      <div class="f"><label>ICMS crédito de entrada</label><div class="ro" id="oIcmsCred">—</div></div>
+    </div>
+  </div>
+
+  <!-- 4. Parâmetros do regime -->
+  <div class="card">
+    <h2><span class="n">4</span> Parâmetros do Regime <span class="badge" id="regBadge">Simples Nacional</span></h2>
+    <div class="grid">
+      <div class="f"><label>Fator DIFAL / crédito</label><input id="fatorDifal" class="edit" type="number" step="0.01" min="0" max="1"></div>
+      <div class="f p-simples"><label>Alíquota efetiva DAS (%)</label><input id="aliquotaDAS" class="edit" type="number" step="0.1" min="0" max="30"></div>
+      <div class="f p-presumido"><label>PIS+COFINS cumulativo (%)</label><input id="pisCofinsPresumido" class="edit" type="number" step="0.01" min="0" max="20"></div>
+      <div class="f p-presumido"><label>Base presumida IRPJ/CSLL (%)</label><input id="basePresumida" class="edit" type="number" step="0.5" min="0" max="50"></div>
+      <div class="f p-presumido"><label>IRPJ+CSLL sobre a base (%)</label><input id="irpjCsllBase" class="edit" type="number" step="0.5" min="0" max="50"></div>
+      <div class="f p-real"><label>PIS+COFINS não-cumulativo (%)</label><input id="pisCofinsReal" class="edit" type="number" step="0.01" min="0" max="20"></div>
+    </div>
+    <div class="legenda p-simples">DAS representa ICMS+PIS/COFINS+IRPJ+CSLL+CPP conforme a faixa real do franqueado. DIFAL só existe no Simples Nacional.</div>
+    <div class="legenda p-real">No Lucro Real, IRPJ/CSLL são apurados sobre o resultado real do período (fora do escopo desta simulação) — considere-os à parte.</div>
+  </div>
+
+  <!-- 5. Preço de venda -->
+  <div class="card">
+    <h2><span class="n">5</span> Preço de Venda ao Dentista</h2>
+    <div class="grid">
+      <div class="f"><label>Tabela</label><select id="tabela" class="edit"></select></div>
+      <div class="f"><label>Preço de tabela sugerido</label><div class="ro" id="oTabela">—</div></div>
+      <div class="f"><label>Preço de venda final (R$)</label><input id="precoVendaFinal" class="edit" type="number" step="1" min="0"></div>
+      <div class="f"><label>Desconto extra sobre tabela (%)</label><input id="descontoExtra" class="edit" type="number" step="0.5" min="0" max="90"></div>
+      <div class="f"><label>Receita líquida</label><div class="ro" id="oReceita">—</div></div>
+    </div>
+    <div class="legenda">T15 = 6× cartão ou 6% desc. PIX · T13 = 10× cartão ou 10% desc. PIX · T11 = 6× cartão · T8 = 10× cartão.</div>
+  </div>
+
+  <!-- 6. Custos adicionais -->
+  <div class="card">
+    <h2><span class="n">6</span> Custos Adicionais</h2>
+    <div class="grid">
+      <div class="f"><label>Comissão do vendedor (%)</label><input id="pctComissao" class="edit" type="number" step="0.5" min="0" max="30"></div>
+      <div class="f"><label>Frete (%)</label><input id="pctFrete" class="edit" type="number" step="0.5" min="0" max="30"></div>
+      <div class="f"><label>Custo financeiro de parcelamento</label><div class="ro" id="oCustoFin">—</div></div>
+    </div>
+    <div class="legenda">Custo financeiro (4%) incide quando a tabela é T13/T8, com 6× cartão marcado e sem PIX à vista.</div>
+  </div>
+
+  <!-- 7. Resultado -->
+  <div class="card">
+    <h2><span class="n">7</span> Resultado <span class="badge" id="regBadge2">Simples Nacional</span></h2>
+    <table class="dem"><tbody id="demo"></tbody></table>
+    <div class="lucrobox" id="lucroBox" style="margin-top:12px">
+      <div class="lbl">Lucro líquido estimado</div>
+      <div class="val" id="lucroVal">—</div>
+      <div class="diag" id="lucroDiag">—</div>
+    </div>
+  </div>
+
+  <!-- 8. Indicadores -->
+  <div class="card">
+    <h2><span class="n">8</span> Indicadores</h2>
+    <div class="kpis">
+      <div class="kpi"><div class="k">Margem líquida</div><div class="v" id="kMargem">—</div></div>
+      <div class="kpi"><div class="k">Markup</div><div class="v" id="kMarkup">—</div></div>
+      <div class="kpi"><div class="k">Carga tributária</div><div class="v" id="kCarga">—</div></div>
+    </div>
+  </div>
+
+  <!-- Comparativo -->
+  <div class="card">
+    <h2><span class="n">≡</span> Comparativo entre Regimes (mesmo cenário)</h2>
+    <table class="cmp">
+      <thead><tr><th>Regime</th><th>Lucro líquido</th><th>Margem</th><th>Carga trib.</th><th>Diagnóstico</th></tr></thead>
+      <tbody id="cmp"></tbody>
+    </table>
+    <div class="legenda" id="notaBrindes"></div>
+  </div>
+
+  <footer>Estimativa para fins comerciais. Consulte o contador do franqueado para confirmação.</footer>
+</div>
+
+<script src="calc.js"></script>
+<script>
+(function(){
+  const $ = (id)=>document.getElementById(id);
+  const { PRODUTOS, ESTADOS, computar, fmtBRL, fmtPct, fmtNum } = window.SIM;
+
+  const DEFAULTS = {
+    linha:'', produtoId:'',
+    descontoPromo:0, descontoLivre:0, pix:false, cartao6x:false, franqueado:false,
+    uf:'', fatorDifal:0.64,
+    aliquotaDAS:0.11, pisCofinsPresumido:0.0365, basePresumida:0.08, irpjCsllBase:0.24, pisCofinsReal:0.0925,
+    tabela:'T15', precoVendaFinal:0, descontoExtra:0, pctComissao:0, pctFrete:0,
+    regime:'simples'
+  };
+  let state = Object.assign({}, DEFAULTS);
+
+  const linhas = [...new Set(PRODUTOS.map(p=>p.linha))];
+  const prodById = (id)=>PRODUTOS.find(p=>String(p.id)===String(id));
+  const prodAtual = ()=>prodById(state.produtoId) || null;
+  const precoTab = (p,t)=>({T15:p.t15,T13:p.t13,T11:p.t11,T8:p.t8})[t];
+
+  // ---- popular selects fixos (com placeholder inicial) ----
+  $('linha').innerHTML = '<option value="">— Selecione a linha —</option>' + linhas.map(l=>`<option value="${l}">${l}</option>`).join('');
+  $('uf').innerHTML = '<option value="">— Selecione a UF —</option>' + ESTADOS.map(e=>`<option value="${e.uf}">${e.uf} — ${e.nome}</option>`).join('');
+
+  function popularProdutos(){
+    const lst = state.linha ? PRODUTOS.filter(p=>p.linha===state.linha) : [];
+    const ph = state.linha ? '— Selecione o produto —' : '— Selecione a linha primeiro —';
+    $('produto').innerHTML = `<option value="">${ph}</option>` + lst.map(p=>`<option value="${p.id}">${p.produto}</option>`).join('');
+    if(!lst.find(p=>String(p.id)===String(state.produtoId))) state.produtoId = '';
+    $('produto').value = state.produtoId!=null ? state.produtoId : '';
+  }
+  function popularTabelas(){
+    const p = prodAtual();
+    if(!p){ $('tabela').innerHTML=''; return; }
+    const opts = [['T15',p.t15],['T13',p.t13],['T11',p.t11],['T8',p.t8]];
+    $('tabela').innerHTML = opts.map(([t,v])=>`<option value="${t}" ${v==null?'disabled':''}>${t}${v==null?' (indisp.)':''}</option>`).join('');
+    if(precoTab(p,state.tabela)==null){ const first=opts.find(([t,v])=>v!=null); state.tabela=first?first[0]:'T15'; }
+    $('tabela').value = state.tabela;
+  }
+
+  // ao trocar produto: puxa promo e ajusta preço de venda p/ tabela vigente
+  function syncProduto(resetPreco){
+    const p = prodAtual();
+    if(!p) return;
+    state.descontoPromo = p.promoPct || 0;
+    popularTabelas();
+    if(resetPreco){ const v=precoTab(p,state.tabela); state.precoVendaFinal = v==null?0:v; }
+    writeInputs();
+  }
+
+  const pF = (id)=> (parseFloat($(id).value)||0)/100;   // % -> fração
+  const nF = (id)=> parseFloat($(id).value)||0;
+
+  function readInputs(){
+    state.descontoPromo = pF('descontoPromo');
+    state.descontoLivre = pF('descontoLivre');
+    state.pix=$('pix').checked; state.cartao6x=$('cartao6x').checked; state.franqueado=$('franqueado').checked;
+    state.uf=$('uf').value;
+    state.fatorDifal=nF('fatorDifal');
+    state.aliquotaDAS=pF('aliquotaDAS');
+    state.pisCofinsPresumido=pF('pisCofinsPresumido');
+    state.basePresumida=pF('basePresumida');
+    state.irpjCsllBase=pF('irpjCsllBase');
+    state.pisCofinsReal=pF('pisCofinsReal');
+    state.tabela=$('tabela').value;
+    state.precoVendaFinal=nF('precoVendaFinal');
+    state.descontoExtra=pF('descontoExtra');
+    state.pctComissao=pF('pctComissao');
+    state.pctFrete=pF('pctFrete');
+  }
+  const P = (f)=> +((Number(f)||0)*100).toFixed(6);   // fração -> % limpo (sem ruído de float)
+  function writeInputs(){
+    $('linha').value=state.linha; $('produto').value=(state.produtoId!=null?state.produtoId:'');
+    $('descontoPromo').value=P(state.descontoPromo);
+    $('descontoLivre').value=P(state.descontoLivre);
+    $('pix').checked=state.pix; $('cartao6x').checked=state.cartao6x; $('franqueado').checked=state.franqueado;
+    $('uf').value=state.uf;
+    $('fatorDifal').value=state.fatorDifal;
+    $('aliquotaDAS').value=P(state.aliquotaDAS);
+    $('pisCofinsPresumido').value=P(state.pisCofinsPresumido);
+    $('basePresumida').value=P(state.basePresumida);
+    $('irpjCsllBase').value=P(state.irpjCsllBase);
+    $('pisCofinsReal').value=P(state.pisCofinsReal);
+    $('tabela').value=state.tabela;
+    $('precoVendaFinal').value=state.precoVendaFinal;
+    $('descontoExtra').value=P(state.descontoExtra);
+    $('pctComissao').value=P(state.pctComissao);
+    $('pctFrete').value=P(state.pctFrete);
+  }
+
+  function stateComProduto(){
+    const p = prodAtual();
+    return Object.assign({}, state, { atacado:p.atacado, origem:p.origem });
+  }
+
+  const REGNOME={simples:'Simples Nacional',presumido:'Lucro Presumido',real:'Lucro Real'};
+
+  function render(){
+    const p = prodAtual();
+    const e = state.uf ? ESTADOS.find(x=>x.uf===state.uf) : null;
+    const pronto = !!p && !!e;
+
+    // sec 4 — bloco do regime + badges (sempre)
+    ['simples','presumido','real'].forEach(reg=>{
+      document.querySelectorAll('.p-'+reg).forEach(el=>el.style.display = state.regime===reg?'':'none');
+    });
+    $('regBadge').textContent = REGNOME[state.regime];
+    $('regBadge2').textContent = REGNOME[state.regime];
+    // condições de pagamento (destaque + alerta) sempre
+    $('cPix').classList.toggle('on',state.pix); $('cCartao').classList.toggle('on',state.cartao6x); $('cFranq').classList.toggle('on',state.franqueado);
+    $('alertaCond').style.display = (state.pix && state.cartao6x)?'block':'none';
+
+    if(!pronto){
+      const falta = (!p && !e) ? 'o produto e a UF' : (!p ? 'o produto' : 'a UF');
+      $('infoProd').innerHTML = p
+        ? `<span class="badge ${p.origem==='Importado'?'imp':''}">${p.origem}</span><span>Atacado base: <b>${fmtBRL(p.atacado)}</b></span>`+(p.brindes?`<span>Brindes: <b>${p.brindes}</b></span>`:'')+(p.promoDesc?`<span>Promoção: <b>${p.promoDesc}</b></span>`:'')
+        : '<span class="badge">Selecione um produto</span>';
+      ['oCustoPromo','oFator','oCusto','oEstado','oIcmsInt','oIcmsCred','oTabela','oReceita','oCustoFin','kMargem','kMarkup','kCarga'].forEach(id=>$(id).textContent='—');
+      $('demo').innerHTML = `<tr><td colspan="2" style="color:var(--mut);padding:14px 4px">Selecione ${falta} para calcular o resultado.</td></tr>`;
+      $('lucroVal').textContent='—';
+      $('lucroDiag').textContent='Selecione '+falta;
+      $('lucroBox').className='lucrobox vazio';
+      $('cmp').innerHTML = `<tr><td colspan="5" style="color:var(--mut)">Selecione ${falta} para comparar os regimes.</td></tr>`;
+      $('notaBrindes').textContent='';
+      return;
+    }
+
+    const st = stateComProduto();
+    const r = computar(state.regime, st);
+
+    // sec 1
+    $('infoProd').innerHTML =
+      `<span class="badge ${p.origem==='Importado'?'imp':''}">${p.origem}</span>`+
+      `<span>Atacado base: <b>${fmtBRL(p.atacado)}</b></span>`+
+      (p.brindes?`<span>Brindes: <b>${p.brindes}</b></span>`:'')+
+      (p.promoDesc?`<span>Promoção: <b>${p.promoDesc}</b></span>`:'');
+
+    // sec 2
+    $('oCustoPromo').textContent = fmtBRL(r.custoAposPromo);
+    $('oFator').textContent = fmtNum(r.fatorCombinado,4);
+    $('oCusto').textContent = fmtBRL(r.custo);
+
+    // sec 3
+    $('oEstado').textContent = e.nome;
+    $('oIcmsInt').textContent = fmtPct(e.interno);
+    $('oIcmsCred').textContent = fmtPct(r.icmsCredito) + (p.origem==='Importado'?' (importado)':'');
+
+    // sec 5
+    const pt = precoTab(p,state.tabela);
+    $('oTabela').textContent = pt==null?'— (indisponível)':fmtBRL(pt);
+    $('oReceita').textContent = fmtBRL(r.receita);
+
+    // sec 6
+    $('oCustoFin').textContent = fmtBRL(r.custoFinanceiro);
+
+    // sec 7 — demonstrativo
+    $('demo').innerHTML = r.linhas.map(l=>{
+      const cls = l.kind;
+      const vcls = l.valor<0?'neg':(l.kind==='sub'&&l.valor>0?'pos':'');
+      const val = (l.valor<0?'− ':(l.kind==='sub'&&l.valor>0?'+ ':'')) + fmtBRL(Math.abs(l.valor));
+      return `<tr class="${cls}"><td>${l.label}</td><td class="v ${vcls}">${val}</td></tr>`;
+    }).join('');
+    $('lucroVal').textContent = fmtBRL(r.lucro);
+    $('lucroDiag').textContent = r.diag.texto;
+    $('lucroBox').className = 'lucrobox '+r.diag.nivel;
+
+    // sec 8
+    $('kMargem').textContent = fmtPct(r.margem,1);
+    $('kMarkup').textContent = fmtPct(r.markup,1);
+    $('kCarga').textContent = fmtPct(r.cargaTributaria,1);
+
+    // comparativo
+    $('cmp').innerHTML = ['simples','presumido','real'].map(reg=>{
+      const rr = computar(reg,st);
+      const on = reg===state.regime?'on':'';
+      const dot = rr.diag.nivel==='ok'?'dotok':rr.diag.nivel==='warn'?'dotwarn':'dotbad';
+      return `<tr><td class="${on}">${REGNOME[reg]}</td><td class="${on}">${fmtBRL(rr.lucro)}</td><td class="${on}">${fmtPct(rr.margem,1)}</td><td class="${on}">${fmtPct(rr.cargaTributaria,1)}</td><td class="${on} ${dot}" style="text-align:left">${rr.diag.texto}</td></tr>`;
+    }).join('');
+    $('notaBrindes').textContent = p.brindes
+      ? 'Nota: produtos brindados (' + p.brindes + ') têm custo zero para o franqueado; a receita da revenda do brinde não é contabilizada.'
+      : 'Nota: produtos brindados têm custo zero para o franqueado; a receita da revenda do brinde não é contabilizada.';
+  }
+
+  // ---- eventos ----
+  $('linha').addEventListener('change',()=>{ state.linha=$('linha').value; state.produtoId=''; popularProdutos(); render(); });
+  $('produto').addEventListener('change',()=>{ state.produtoId=$('produto').value; syncProduto(true); render(); });
+  ['descontoPromo','descontoLivre','fatorDifal','aliquotaDAS','pisCofinsPresumido','basePresumida','irpjCsllBase','pisCofinsReal','precoVendaFinal','descontoExtra','pctComissao','pctFrete','uf']
+    .forEach(id=>$(id).addEventListener('input',()=>{ readInputs(); render(); }));
+  ['pix','cartao6x','franqueado'].forEach(id=>$(id).addEventListener('change',()=>{ readInputs(); render(); }));
+  $('tabela').addEventListener('change',()=>{ state.tabela=$('tabela').value; const p=prodAtual(); const v=p?precoTab(p,state.tabela):null; if(v!=null) state.precoVendaFinal=v; writeInputs(); readInputs(); render(); });
+
+  document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); state.regime=b.dataset.reg; render();
+  }));
+
+  $('btnReset').addEventListener('click',()=>{
+    state = Object.assign({}, DEFAULTS, { regime:state.regime });
+    popularProdutos(); writeInputs(); readInputs(); render();
+  });
+  $('btnPrint').addEventListener('click',()=>window.print());
+
+  // ---- init ---- (linha/produto/uf em branco ao abrir)
+  popularProdutos();
+  writeInputs();
+  readInputs();
+  render();
+})();
+</script>
+</body>
+</html>
