@@ -5,7 +5,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "001239",
@@ -13,7 +14,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0106",
     "cTribNac": "01.06.01",
-    "nbs": "1.1510.00.00"
+    "nbs": "1.1510.00.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "008574",
@@ -21,7 +23,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0802",
     "cTribNac": "08.02.01",
-    "nbs": "1.2205.20.00"
+    "nbs": "1.2205.20.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "008746",
@@ -29,7 +32,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0802",
     "cTribNac": "08.02.01",
-    "nbs": "1.2205.20.00"
+    "nbs": "1.2205.20.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "008747",
@@ -37,7 +41,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0802",
     "cTribNac": "08.02.01",
-    "nbs": "1.2205.20.00"
+    "nbs": "1.2205.20.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "008748",
@@ -45,7 +50,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0802",
     "cTribNac": "08.02.01",
-    "nbs": "1.2205.20.00"
+    "nbs": "1.2205.20.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "008749",
@@ -53,7 +59,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0802",
     "cTribNac": "08.02.01",
-    "nbs": "1.2205.20.00"
+    "nbs": "1.2205.20.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "009127",
@@ -61,7 +68,8 @@
     "aliqIss": "0.05",
     "codServPrefeitura": "1706",
     "cTribNac": "17.06.01",
-    "nbs": "1.1406.00.00"
+    "nbs": "1.1406.11.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "009481",
@@ -69,7 +77,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0302",
     "cTribNac": "03.02.01",
-    "nbs": "1.1104.20.00"
+    "nbs": "1.1104.20.00",
+    "cIndOp": "100501"
   },
   {
     "codigo": "009634",
@@ -77,7 +86,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0802",
     "cTribNac": "08.02.01",
-    "nbs": "1.2205.20.00"
+    "nbs": "1.2205.20.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "010072",
@@ -85,7 +95,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010073",
@@ -93,7 +104,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010074",
@@ -101,7 +113,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010075",
@@ -109,7 +122,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010076",
@@ -117,7 +131,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010077",
@@ -125,7 +140,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010078",
@@ -133,7 +149,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010079",
@@ -141,7 +158,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010080",
@@ -149,7 +167,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010081",
@@ -157,7 +176,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010082",
@@ -165,7 +185,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010083",
@@ -173,7 +194,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010084",
@@ -181,7 +203,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010085",
@@ -189,7 +212,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010086",
@@ -197,7 +221,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010087",
@@ -205,7 +230,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010088",
@@ -213,7 +239,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010089",
@@ -221,7 +248,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010090",
@@ -229,7 +257,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010091",
@@ -237,7 +266,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010092",
@@ -245,7 +275,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010093",
@@ -253,7 +284,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010094",
@@ -261,7 +293,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010095",
@@ -269,7 +302,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010096",
@@ -277,7 +311,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010097",
@@ -285,7 +320,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010098",
@@ -293,7 +329,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010099",
@@ -301,7 +338,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010100",
@@ -309,7 +347,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010101",
@@ -317,7 +356,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010102",
@@ -325,7 +365,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010103",
@@ -333,7 +374,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010104",
@@ -341,7 +383,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010105",
@@ -349,7 +392,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010106",
@@ -357,7 +401,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010107",
@@ -365,7 +410,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010108",
@@ -373,7 +419,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010109",
@@ -381,7 +428,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010110",
@@ -389,7 +437,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010111",
@@ -397,7 +446,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010112",
@@ -405,7 +455,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010113",
@@ -413,7 +464,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010114",
@@ -421,7 +473,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010115",
@@ -429,7 +482,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010116",
@@ -437,7 +491,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010117",
@@ -445,7 +500,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010118",
@@ -453,7 +509,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010119",
@@ -461,7 +518,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010120",
@@ -469,7 +527,8 @@
     "aliqIss": "0.05",
     "codServPrefeitura": "1701",
     "cTribNac": "17.01.01",
-    "nbs": "1.1410.90.00"
+    "nbs": "1.1401.19.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "010121",
@@ -477,7 +536,8 @@
     "aliqIss": "0.05",
     "codServPrefeitura": "1701",
     "cTribNac": "17.01.01",
-    "nbs": "1.1410.90.00"
+    "nbs": "1.1410.90.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "010122",
@@ -485,7 +545,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010123",
@@ -493,7 +554,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010124",
@@ -501,7 +563,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010125",
@@ -509,7 +572,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010126",
@@ -517,7 +581,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010127",
@@ -525,7 +590,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010128",
@@ -533,7 +599,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010129",
@@ -541,7 +608,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010130",
@@ -549,7 +617,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010131",
@@ -557,7 +626,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010132",
@@ -565,7 +635,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010133",
@@ -573,7 +644,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010134",
@@ -581,7 +653,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010135",
@@ -589,15 +662,17 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.83.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "010675",
     "descricao": "CESSÃO DE DIREITO DE USO DE MARCAS E DE SINAIS DE PROPAGANDA - TAXA DE ROYALTIES",
-    "aliqIss": "0",
+    "aliqIss": "0.00",
     "codServPrefeitura": "0302",
     "cTribNac": "03.02.01",
-    "nbs": "1.1104.20.00"
+    "nbs": "1.1104.20.00",
+    "cIndOp": "100501"
   },
   {
     "codigo": "010708",
@@ -605,7 +680,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1104",
     "cTribNac": "",
-    "nbs": ""
+    "nbs": "",
+    "cIndOp": ""
   },
   {
     "codigo": "010744",
@@ -613,15 +689,17 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0106",
     "cTribNac": "01.06.01",
-    "nbs": "1.1510.00.00"
+    "nbs": "1.1510.00.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "010773",
     "descricao": "CESSÃO DE DIREITO DE USO DE MARCAS E DE SINAIS DE PROPAGANDA - TAXA DE ROYALTIES PRODUTOS",
-    "aliqIss": "0",
+    "aliqIss": "0.00",
     "codServPrefeitura": "0302",
     "cTribNac": "03.02.01",
-    "nbs": "1.1104.20.00"
+    "nbs": "1.1104.20.00",
+    "cIndOp": "100501"
   },
   {
     "codigo": "011589",
@@ -629,7 +707,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011590",
@@ -637,7 +716,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011591",
@@ -645,7 +725,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011592",
@@ -653,7 +734,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011593",
@@ -661,7 +743,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011594",
@@ -669,7 +752,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011595",
@@ -677,7 +761,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011596",
@@ -685,7 +770,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011597",
@@ -693,7 +779,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "011599",
@@ -701,7 +788,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "012084",
@@ -709,7 +797,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0108",
     "cTribNac": "01.08.01",
-    "nbs": "1.1502.30.00"
+    "nbs": "1.1502.30.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "012085",
@@ -717,7 +806,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "012086",
@@ -725,7 +815,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   },
   {
     "codigo": "012087",
@@ -733,7 +824,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.89.00"
+    "nbs": "1.2001.89.00",
+    "cIndOp": "030102"
   },
   {
     "codigo": "012088",
@@ -741,7 +833,8 @@
     "aliqIss": "0.05",
     "codServPrefeitura": "1723",
     "cTribNac": "17.23.01",
-    "nbs": "1.0908.00.00"
+    "nbs": "1.0908.00.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "012089",
@@ -749,7 +842,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "0106",
     "cTribNac": "01.06.01",
-    "nbs": "1.1507.20.00"
+    "nbs": "1.1507.20.00",
+    "cIndOp": "100301"
   },
   {
     "codigo": "012090",
@@ -757,6 +851,7 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1401",
     "cTribNac": "14.01.01",
-    "nbs": "1.2001.82.00"
+    "nbs": "1.2001.82.00",
+    "cIndOp": "050102"
   }
 ]

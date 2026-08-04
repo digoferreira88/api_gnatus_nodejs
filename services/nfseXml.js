@@ -90,17 +90,50 @@ function blocoToma(t) {
   `</toma>`;
 }
 
+// 🔶 IBS/CBS (Reforma Tributária, LC 214/2025) — grupos exigidos por Barretos desde
+// 03/08/2026 (NT SE/CGNFS-e nº 004, leiaute AnexoVI-RTC_IBSCBS V1.01.x).
+// Nomes de campos e valores confirmados na NT004 + orientação do fiscal (04/08):
+//   CST=000 (tributação integral), cClassTrib=000001, cIndOp por serviço (de-para),
+//   finNFSe=0 (regular), indFinal=0, indDest=0 (tomador=adquirente=destinatário),
+//   "compra governamental? Não" → grupo tpEnteGov omitido.
+// ⚠️ PROVISÓRIO — a ORDEM exata dos elementos e o bump de versão (1.00→1.01) ainda
+// precisam ser batidos contra o XSD oficial / iterando na Produção Restrita (fluxo
+// recomendado pela RLZ). Tudo aqui só sai quando cfg.ibsCbs=true (env NFSE_IBSCBS).
+const IBSCBS_CST = '000';
+const IBSCBS_CCLASSTRIB = '000001';
+
+// valores/trib/gIBSCBS — destaque tributário do item (CST + cClassTrib, ambos 1-1).
+function grupoGIbsCbs(cfg) {
+  return `<gIBSCBS>` +
+    `<CST>${esc(cfg.cstIbsCbs || IBSCBS_CST)}</CST>` +
+    `<cClassTrib>${esc(cfg.cClassTrib || IBSCBS_CCLASSTRIB)}</cClassTrib>` +
+  `</gIBSCBS>`;
+}
+
+// infDPS/IBSCBS — grupo de operação (finNFSe/indFinal/cIndOp/indDest).
+function blocoIbsCbsOper(cfg) {
+  const cIndOp = soDig(cfg.cIndOp);
+  return `<IBSCBS>` +
+    `<finNFSe>0</finNFSe>` +
+    `<indFinal>0</indFinal>` +
+    (cIndOp ? `<cIndOp>${esc(cIndOp)}</cIndOp>` : '') +
+    `<indDest>0</indDest>` +
+  `</IBSCBS>`;
+}
+
 function blocoServValores(nota, cfg) {
   const cLoc = soDig(cfg.codigoMunicipioPrestador);          // Barretos 3505500 (prestação)
   // cTribNac = código nacional SEM pontos (ex.: "080201"). Barretos localiza o
   // serviço por cTribNac + CNPJ + IM do prestador. ⚠️ cTribMun NÃO deve ser
   // informado nesse cenário (orientação RLZ 29/07/2026 — a 1ª nota aceita foi sem).
   const cTribNac = soDig(nota.itemListaServico || cfg.cTribNacPadrao);
+  const cNBS = soDig(cfg.cNBS);                               // NBS sem pontos (IBS/CBS)
   const serv = `<serv>` +
     `<locPrest><cLocPrestacao>${cLoc}</cLocPrestacao></locPrest>` +
     `<cServ>` +
       `<cTribNac>${esc(cTribNac)}</cTribNac>` +
       `<xDescServ>${esc(nota.discriminacao)}</xDescServ>` +
+      ((cfg.ibsCbs && cNBS) ? `<cNBS>${esc(cNBS)}</cNBS>` : '') +
     `</cServ>` +
   `</serv>`;
   const valores = `<valores>` +
@@ -110,6 +143,7 @@ function blocoServValores(nota, cfg) {
         `<tribISSQN>1</tribISSQN>` +                          // 1=Operação tributável
         `<tpRetISSQN>${nota.issRetido ? 2 : 1}</tpRetISSQN>` + // 1=Não retido, 2=Retido tomador
       `</tribMun>` +                                           // alíquota NÃO vai no DPS — a prefeitura calcula
+      (cfg.ibsCbs ? grupoGIbsCbs(cfg) : '') +
       `<totTrib><indTotTrib>0</indTotTrib></totTrib>` +        // 0=Não informa (aprox. Lei 12.741)
     `</trib>` +
   `</valores>`;
@@ -124,12 +158,15 @@ function montarDps(nota, cfg) {
   const serie = soDig(cfg.serieDps) || '1';                    // série do DPS = numérica
   const id = idInfDps(cMunEmi, cfg.cnpjPrestador, serie, nota.rps.numero);
   const tpAmb = cfg.tpAmb || 2;                                // 2=Produção Restrita (homologação)
+  // Versão do LEIAUTE (atributo do <DPS>). Com IBS/CBS bate no leiaute RTC (1.01).
+  // ⚠️ confirmar a string exata no XSD (pode ser "1.01"); override via cfg.versaoLeiaute.
+  const versao = trim(cfg.versaoLeiaute) || (cfg.ibsCbs ? '1.01' : '1.00');
 
   const inf =
     `<infDPS Id="${id}">` +
       `<tpAmb>${tpAmb}</tpAmb>` +
       `<dhEmi>${dhEmiAgora()}</dhEmi>` +
-      `<verAplic>${esc(cfg.verAplic || '1.00')}</verAplic>` +
+      `<verAplic>${esc(cfg.verAplic || '1.00')}</verAplic>` +  // versão do APLICATIVO emissor (não do leiaute)
       `<serie>${esc(serie)}</serie>` +
       `<nDPS>${soDig(nota.rps.numero).replace(/^0+/, '') || '0'}</nDPS>` +   // sem zeros à esquerda (TSNumDPS)
       `<dCompet>${dataCompet(nota.competencia || nota.dataEmissao)}</dCompet>` +
@@ -138,9 +175,10 @@ function montarDps(nota, cfg) {
       blocoPrest(cfg) +
       blocoToma(nota.tomador) +
       blocoServValores(nota, cfg) +
+      (cfg.ibsCbs ? blocoIbsCbsOper(cfg) : '') +               // infDPS/IBSCBS (⚠️ posição a confirmar no XSD)
     `</infDPS>`;
 
-  const xml = `<DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00">${inf}</DPS>`;
+  const xml = `<DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="${esc(versao)}">${inf}</DPS>`;
   return { xml, id };
 }
 

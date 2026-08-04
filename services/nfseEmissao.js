@@ -19,14 +19,17 @@ const trim = (v) => String(v == null ? '' : v).trim();
 
 // De-para produto → cTribNac (fallback enquanto o B1_CODISS não é preenchido no
 // cadastro do Protheus). Fonte: planilha do fiscal (data/nfse-depara-servicos.json).
+// Map codigo -> { cTribNac, cIndOp, nbs }. cIndOp/nbs entraram com a Reforma
+// Tributária (IBS/CBS) — planilha "serviços atualizados" do fiscal (04/08/2026).
 let _depara = null;
 function depara() {
   if (_depara) return _depara;
   _depara = {};
   try {
     for (const r of require('../data/nfse-depara-servicos.json')) {
-      const cod = trim(r.codigo), ct = soDig(r.cTribNac);
-      if (cod && ct) _depara[cod] = ct;
+      const cod = trim(r.codigo);
+      if (!cod) continue;
+      _depara[cod] = { cTribNac: soDig(r.cTribNac), cIndOp: soDig(r.cIndOp), nbs: trim(r.nbs) };
     }
   } catch (e) { console.warn('nfseEmissao: de-para indisponível:', e.message); }
   return _depara;
@@ -51,20 +54,26 @@ function config() {
       opSimpNac: Number(process.env.NFSE_OPSIMPNAC || 1),
       regEspTrib: Number(process.env.NFSE_REGESPTRIB || 0),
       serieDps: trim(process.env.NFSE_SERIE_DPS || '1'),
-      tpAmb: amb === 'producao' ? 1 : 2
+      tpAmb: amb === 'producao' ? 1 : 2,
+      // 🔶 Reforma Tributária (IBS/CBS) — grupo novo exigido por Barretos desde
+      // 03/08/2026. Gated por env (default OFF) até validar ordem/versão do XSD
+      // na Produção Restrita. Ligar com NFSE_IBSCBS=1 só p/ testar na restrita.
+      ibsCbs: /^(1|true|sim|on)$/i.test(String(process.env.NFSE_IBSCBS || '')),
+      versaoLeiaute: trim(process.env.NFSE_VERSAO_LEIAUTE || '')   // override manual; vazio = auto
     }
   };
 }
 
-// Elege o item principal e resolve o cTribNac (6 díg, sem pontos).
-// Retorna { ctribnac, produto } — ctribnac vazio = não resolvido.
+// Elege o item principal e resolve cTribNac + cIndOp + NBS (todos sem pontos).
+// Retorna { ctribnac, cIndOp, nbs, produto } — ctribnac vazio = não resolvido.
 function resolverCtribNac(nota) {
   const itens = nota.itens || [];
   const principal = itens.find((i) => trim(i.itemListaServico))
     || itens.slice().sort((a, b) => (b.valorTotal || 0) - (a.valorTotal || 0))[0] || {};
   const produto = trim(principal.codigo);
-  const ctribnac = soDig(principal.itemListaServico) || depara()[produto] || '';  // 1) B1_CODISS  2) de-para
-  return { ctribnac, produto };
+  const dp = depara()[produto] || {};
+  const ctribnac = soDig(principal.itemListaServico) || dp.cTribNac || '';  // 1) B1_CODISS  2) de-para
+  return { ctribnac, cIndOp: dp.cIndOp || '', nbs: dp.nbs || '', produto };
 }
 
 // UPDATE de finalização da linha reservada. `f` traz só os campos a gravar.
@@ -138,7 +147,7 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
     const obs = trim(observacao).slice(0, 500);
     if (obs) nota.discriminacao = (trim(nota.discriminacao) + ' | Obs.: ' + obs).slice(0, 4000);
 
-    const { ctribnac, produto } = resolverCtribNac(nota);
+    const { ctribnac, cIndOp, nbs, produto } = resolverCtribNac(nota);
     const dados = {
       cliente_nome: trim(nota.tomador && nota.tomador.razaoSocial).slice(0, 200),
       valor: nota.valorServicos, discriminacao: trim(nota.discriminacao).slice(0, 4000), ctribnac
@@ -149,6 +158,8 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
     }
 
     cfg.cTribNacPadrao = ctribnac;
+    cfg.cIndOp = cIndOp;     // IBS/CBS: indicador da operação (por serviço, de-para)
+    cfg.cNBS = nbs;          // IBS/CBS: item da NBS (por serviço, de-para)
     const { xml, id: dpsId } = montarDps(nota, cfg);
     const signed = assinarXml(xml);                          // RSA-SHA1 (default, exigido por Barretos v1.00)
     const r = await emitirDps(signed);
