@@ -63,6 +63,26 @@ module.exports = (app) => ({
       //      (a) admin (perm 0): vê TODAS pendentes (auditoria)
       //      (b) aprovador normal: onde CR_USER = codProth (nomeado direto)
       //          OU onde o doc é de grupo SAL onde o user é membro (alçada de grupo)
+      //
+      // ⚠️ DEFESA (04/08/2026): exclui documentos JÁ LIBERADOS no cabeçalho mas com
+      // linha SCR010 órfã em '02' (SC1010.C1_APROV='L' / SC7010.C7_CONAPRO='L' em
+      // TODOS os itens). Sem isto, SCs/PCs já aprovadas reaparecem eternamente na fila
+      // (ex.: SC 175962 aprovada, mas 3 linhas SCR '02' nunca reconciliadas). O SCR
+      // fora de sincronia é dado do Protheus (limpeza é do Diego); aqui só não exibimos.
+      const excluiJaAprovados = `
+              AND NOT (
+                ( scr.CR_TIPO = 'SC'
+                  AND EXISTS (SELECT 1 FROM SC1010 h WITH (NOLOCK)
+                               WHERE h.C1_FILIAL = scr.CR_FILIAL AND h.C1_NUM = scr.CR_NUM AND h.D_E_L_E_T_ <> '*')
+                  AND NOT EXISTS (SELECT 1 FROM SC1010 h WITH (NOLOCK)
+                                   WHERE h.C1_FILIAL = scr.CR_FILIAL AND h.C1_NUM = scr.CR_NUM AND h.D_E_L_E_T_ <> '*' AND h.C1_APROV <> 'L') )
+                OR
+                ( scr.CR_TIPO IN ('PC','IP')
+                  AND EXISTS (SELECT 1 FROM SC7010 h WITH (NOLOCK)
+                               WHERE h.C7_FILIAL = scr.CR_FILIAL AND h.C7_NUM = scr.CR_NUM AND h.D_E_L_E_T_ <> '*')
+                  AND NOT EXISTS (SELECT 1 FROM SC7010 h WITH (NOLOCK)
+                                   WHERE h.C7_FILIAL = scr.CR_FILIAL AND h.C7_NUM = scr.CR_NUM AND h.D_E_L_E_T_ <> '*' AND h.C7_CONAPRO <> 'L') )
+              )`;
       const scrPendentes = await Protheus.connectAndQuery(
         isAdmin
         ? // Admin: vê tudo pendente (sem filtro por usuário/grupo)
@@ -84,6 +104,7 @@ module.exports = (app) => ({
               AND scr.CR_STATUS = '02'
               AND RTRIM(ISNULL(scr.CR_LIBAPRO, '')) = ''
               AND scr.CR_TIPO IN ('SC','PC','IP')
+              ${excluiJaAprovados}
             ORDER BY scr.CR_DATALIB DESC, scr.CR_NUM DESC`
         : // Aprovador normal: nomeado direto OU membro do grupo
           `SELECT RTRIM(scr.CR_TIPO)   tipo,
@@ -104,6 +125,7 @@ module.exports = (app) => ({
               AND scr.CR_STATUS = '02'
               AND RTRIM(ISNULL(scr.CR_LIBAPRO, '')) = ''
               AND scr.CR_TIPO IN ('SC','PC','IP')
+              ${excluiJaAprovados}
               AND (
                 -- Caso 1: aprovador NOMEADO direto na SCR — so esse user pode aprovar
                 scr.CR_USER = @cod
