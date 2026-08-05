@@ -110,7 +110,10 @@ function grupoGIbsCbs(cfg) {
   `</gIBSCBS>`;
 }
 
-// infDPS/IBSCBS — grupo de operação (finNFSe/indFinal/cIndOp/indDest).
+// infDPS/IBSCBS — grupo de operação + destaque tributário do IBS/CBS.
+// ✅ Path confirmado pela restrita (04/08 E9999 "Undefined array key
+// DPS.infDPS.IBSCBS.valores.trib.gIBSCBS.CST"): o gIBSCBS (CST/cClassTrib) fica em
+// IBSCBS/valores/trib/gIBSCBS — NÃO no <valores><trib> do ISS.
 function blocoIbsCbsOper(cfg) {
   const cIndOp = soDig(cfg.cIndOp);
   return `<IBSCBS>` +
@@ -118,6 +121,7 @@ function blocoIbsCbsOper(cfg) {
     `<indFinal>0</indFinal>` +
     (cIndOp ? `<cIndOp>${esc(cIndOp)}</cIndOp>` : '') +
     `<indDest>0</indDest>` +
+    `<valores><trib>${grupoGIbsCbs(cfg)}</trib></valores>` +
   `</IBSCBS>`;
 }
 
@@ -143,7 +147,6 @@ function blocoServValores(nota, cfg) {
         `<tribISSQN>1</tribISSQN>` +                          // 1=Operação tributável
         `<tpRetISSQN>${nota.issRetido ? 2 : 1}</tpRetISSQN>` + // 1=Não retido, 2=Retido tomador
       `</tribMun>` +                                           // alíquota NÃO vai no DPS — a prefeitura calcula
-      (cfg.ibsCbs ? grupoGIbsCbs(cfg) : '') +
       `<totTrib><indTotTrib>0</indTotTrib></totTrib>` +        // 0=Não informa (aprox. Lei 12.741)
     `</trib>` +
   `</valores>`;
