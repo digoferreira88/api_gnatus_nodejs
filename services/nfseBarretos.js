@@ -43,7 +43,10 @@ function postJson(url, bodyObj) {
       res.on('end', () => resolve({ status: res.statusCode, body }));
     });
     req.on('error', reject);
-    req.setTimeout(60000, () => req.destroy(new Error('timeout REST Barretos')));
+    // Endpoint de PRODUÇÃO (cidadaoonline.barretos.sp.gov.br, .gov.br) às vezes trava —
+    // um timeout curto gera "emitida na prefeitura mas ERRO do nosso lado" (ambiguidade
+    // de timeout, ver incidente NF 001993 06/08/2026). Default 120s, ajustável por env.
+    req.setTimeout(Number(process.env.NFSE_REST_TIMEOUT_MS) || 120000, () => req.destroy(new Error('timeout REST Barretos')));
     req.write(data);
     req.end();
   });
