@@ -251,6 +251,11 @@ const CRON_RESERVAS_VENCIDAS = '15 * * * *';  // todo :15
 // de hora em hora (só roda com o módulo ATIVO + template Suri configurado).
 const CRON_NPS_POSVENDA = '40 8-19 * * 1-5';  // :40, 08h-19h, seg-sex
 
+// Pré-Expedição: pedidos que entraram na separação de estoque (estatus 50) ->
+// WhatsApp de confirmação de recebimento. De hora em hora no horário comercial
+// (só roda com o módulo ATIVO em tab_expedicao_config + SURI_TPL_EXPEDICAO).
+const CRON_EXPEDICAO_AVISO = '50 7-20 * * 1-5';  // :50, 07h-20h, seg-sex
+
 // SEFAZ DF-e: puxa NF-e recebidas direto da SEFAZ (mTLS A1), por NSU. De hora em
 // hora (a SEFAZ limita a 1 consulta/h sem doc novo — cStat 656). Só roda com o
 // certificado configurado (NFSE_CERT_PATH). SUBSTITUIU de vez o TOTVS Transmite.
@@ -344,6 +349,20 @@ function start(app) {
     }
   });
   console.log(`[scheduler] nps-posvenda agendado: cron "${CRON_NPS_POSVENDA}"`);
+
+  // Pré-Expedição: avisa o cliente que o pedido entrou em separação (estatus 50).
+  // Dormente até ativar (tab_expedicao_config.ativo) + configurar SURI_TPL_EXPEDICAO.
+  if (jobs.expedicaoAviso) jobs.expedicaoAviso.cancel();
+  jobs.expedicaoAviso = schedule.scheduleJob(CRON_EXPEDICAO_AVISO, async () => {
+    try {
+      const ExpAviso = require('./expedicaoAviso');
+      const stats = await ExpAviso.processar(app);
+      if (stats && (stats.criados || stats.enviados)) console.log('[scheduler] expedicao-aviso:', JSON.stringify(stats));
+    } catch (err) {
+      console.error('[scheduler] erro no expedicao-aviso:', err.message);
+    }
+  });
+  console.log(`[scheduler] expedicao-aviso agendado: cron "${CRON_EXPEDICAO_AVISO}"`);
 
   // SEFAZ DF-e — ingestão de NF-e recebidas (só liga com o A1 configurado).
   if (jobs.dfe) jobs.dfe.cancel();
