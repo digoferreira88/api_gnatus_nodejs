@@ -5,9 +5,7 @@
 // pedidos "fora" pra a controladoria conferir contra o que já foi apresentado. Perm 11006.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([11006, 0]);
-
-// Categorias de "Tipo a considerar" que NÃO contam como venda (saem do considerado).
-const FORA = ['Pedido Devolvido', 'Desconsiderar', 'Garantia/Troca', 'Redigitação'];
+const { FORA } = require('../../services/ctrlVendasRegras');
 
 module.exports = (app) => ({
   verb: 'get',
