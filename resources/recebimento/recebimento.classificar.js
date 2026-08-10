@@ -32,6 +32,8 @@ module.exports = (app) => ({
     const b = req.body || {};
     const itensTes = Array.isArray(b.itens) ? b.itens : [];
     const observacao = trim(b.observacao).slice(0, 500);
+    // Dry-run: valida a pré-nota/TES no Protheus SEM efetivar a entrada.
+    const simular = b.simular === true || b.simular === 'true' || b.simular === 1;
 
     try {
       const confRows = await Pg.connectAndQuery(
@@ -73,7 +75,8 @@ module.exports = (app) => ({
           fornecedor: trim(conf.fornece), loja: trim(conf.loja),
           operador: trim(user.EMAIL) || `id_${user.ID}`,
           observacao,
-          itens: itensConf.map(i => ({ item: trim(i.item), tes: tesPorItem.get(trim(i.item)) }))
+          itens: itensConf.map(i => ({ item: trim(i.item), tes: tesPorItem.get(trim(i.item)) })),
+          simular
         });
       } catch (err) {
         const conexao = ehConexao(err);
@@ -98,6 +101,18 @@ module.exports = (app) => ({
           meta: { id, http: r.httpStatus, body: r.body }
         });
         return res.status(502).json({ ok: false, message: msg, status: r.httpStatus, body: r.body });
+      }
+
+      // Simulação (dry-run): validou no Protheus SEM efetivar. NÃO persiste
+      // (não marca CLASSIFICADA, não grava TES) — só devolve o retorno.
+      if (simular) {
+        Auditoria.registrar(app, {
+          modulo: 'Compras', submodulo: 'RecebimentoNF', acao: 'CLASSIFICAR_SIMULACAO', severidade: 'INFO', req,
+          entidade: 'receb_conferencia', entidadeId: String(id),
+          descricao: `Dry-run (simular) da classificação da NF ${trim(conf.doc)}/${trim(conf.serie)} — ${itensConf.length} item(ns), sem efetivar`,
+          meta: { id, simular: true, itens: [...tesPorItem.entries()].map(([i, t]) => ({ item: i, tes: t })), protheus: r.body }
+        });
+        return res.json({ ok: true, id, simulado: true, status: trim(conf.status), protheus: r.body });
       }
 
       // Sucesso: grava TES nos itens + fecha o cabeçalho

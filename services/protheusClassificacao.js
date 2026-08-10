@@ -5,9 +5,13 @@
 // Contrato (spec em docs/spec-protheus-classificacao-prenota.md):
 //   POST {PROTHEUS_API_URL}{PROTHEUS_API_PATH_CLASSIFICAR|/Recebimento/classificar}
 //   Auth Basic (PROTHEUS_API_USER/PROTHEUS_API_PASS)
-//   Body: { filial, doc, serie, fornecedor, loja, operador, observacao, itens:[{item, tes}] }
+//   Body: { filial, doc, serie, fornecedor, loja, operador, observacao, itens:[{item, tes}], simular? }
 //   Response ok: { ok:true, doc, qt_itens, mensagem }
 //   Response erro: { ok:false, codigo_erro, mensagem }
+//
+//   simular:true → o endpoint do Diego VALIDA a pré-nota/TES sem chamar o
+//   ExecAuto (não efetiva a entrada). Usado para dry-run seguro antes da 1ª
+//   entrada real. O caller (resource) NÃO persiste CLASSIFICADA quando simula.
 //
 // ⚠️ Endpoint AINDA NÃO PUBLICADO no Protheus — enquanto o Diego não sobe a
 // rotina, as chamadas retornam 404/erro e o resource devolve 502 com aviso claro.
@@ -29,7 +33,7 @@ function config() {
 
 // Retorna { ok, httpStatus, body } — nunca lança por status HTTP; lança só
 // em falha de conexão esgotada (caller trata com ehConexao).
-async function classificar({ filial = '01', doc, serie, fornecedor, loja, operador, observacao, itens }) {
+async function classificar({ filial = '01', doc, serie, fornecedor, loja, operador, observacao, itens, simular = false }) {
   const cfg = config();
   if (!cfg.configurado) {
     return { ok: false, httpStatus: 503, body: { message: 'API Protheus não configurada (PROTHEUS_API_URL/USER/PASS).' } };
@@ -38,7 +42,7 @@ async function classificar({ filial = '01', doc, serie, fornecedor, loja, operad
   const { ok, status, txt } = await fetchProtheusComRetry(cfg.url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: auth },
-    body: JSON.stringify({ filial, doc, serie, fornecedor, loja, operador, observacao: observacao || '', itens })
+    body: JSON.stringify({ filial, doc, serie, fornecedor, loja, operador, observacao: observacao || '', itens, simular: !!simular })
   }, { tentativas: 2, timeoutMs: 120000 });   // classificação roda ExecAuto — pode demorar
 
   let body;
