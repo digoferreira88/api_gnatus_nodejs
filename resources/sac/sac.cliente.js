@@ -1,7 +1,19 @@
 const trim = (v) => String(v || '').trim();
 const toNumber = (v) => Number(v || 0);
+const Estatus = require('../../services/vendasEstatus');
 
-const calcStatusPedido = (r) => {
+// Status do pedido. Fonte PRIMÁRIA = view `pedidos_estatus` (MENOR estatus_cod
+// entre os itens = gargalo real), a MESMA do espelho e do Planejamento — assim a
+// lista do SAC e o espelho nunca divergem.
+// ⚠️ Antes decidia só por C5_LIBEROK='S' e dizia "Liberado p/ faturar" mesmo com
+// o estoque bloqueado (C9_BLEST) — foi o caso do pedido 093068 (crédito liberado,
+// estoque em '02', estatus 50). O fallback por cabeçalho só vale quando o pedido
+// não está na view (ex.: outra filial / fora do escopo da view).
+const calcStatusPedido = (r, estCod) => {
+  if (estCod != null && String(estCod).trim() !== '') {
+    const inf = Estatus.info(estCod);
+    return { codigo: `E${inf.cod}`, label: inf.label, cor: inf.cor };
+  }
   const quje = toNumber(r.C6_QTDENT);
   const quant = toNumber(r.C6_QTDVEN);
   const blq = trim(r.C6_BLQ);
@@ -150,6 +162,21 @@ module.exports = (app) => ({
       ORDER BY c5.C5_EMISSAO DESC, c5.C5_NUM DESC
     `;
 
+    // --- 3b. Estatus (gargalo) por pedido — MESMA view do espelho/Planejamento.
+    // MIN(estatus_cod) por pedido = etapa travada (ex.: 50 = estoque). Alinha a
+    // lista ao espelho. Falha da view é NÃO-FATAL (cai no status por cabeçalho).
+    const sqlEstatus = `
+      SELECT RTRIM(pe.c6_num) AS numero, MIN(pe.estatus_cod) AS estatusCod
+        FROM pedidos_estatus pe
+       WHERE pe.c6_filial = '01'
+         AND pe.c6_num IN (
+           SELECT c5.C5_NUM FROM SC5010 c5 WITH (NOLOCK)
+            WHERE c5.D_E_L_E_T_ <> '*'
+              AND c5.C5_CLIENTE = @codigo AND c5.C5_LOJACLI = @loja
+              AND c5.C5_EMISSAO >= CONVERT(VARCHAR(8), DATEADD(MONTH, -24, GETDATE()), 112))
+       GROUP BY pe.c6_num
+    `;
+
     // --- 4. Notas Fiscais emitidas (últimos 24 meses) ---
     const sqlNotas = `
       SELECT TOP 200
@@ -258,10 +285,11 @@ module.exports = (app) => ({
     `;
 
     try {
-      const [cadastroRows, resumoRows, pedidos, notas, devolucoes, financeiro] = await Promise.all([
+      const [cadastroRows, resumoRows, pedidos, estatusRows, notas, devolucoes, financeiro] = await Promise.all([
         Protheus.connectAndQuery(sqlCadastro, params),
         Protheus.connectAndQuery(sqlResumo, params),
         Protheus.connectAndQuery(sqlPedidos, params),
+        Protheus.connectAndQuery(sqlEstatus, params).catch((e) => { console.warn('sac/cliente estatus indisponível:', e.message); return []; }),
         Protheus.connectAndQuery(sqlNotas, params),
         Protheus.connectAndQuery(sqlDevolucoes, params),
         Protheus.connectAndQuery(sqlFinanceiro, params)
@@ -273,6 +301,7 @@ module.exports = (app) => ({
 
       const cadastro = cadastroRows[0];
       const resumo = resumoRows[0] || {};
+      const estatusMap = new Map((estatusRows || []).map((e) => [trim(e.numero), e.estatusCod]));
 
       const ticketMedio = toNumber(resumo.qtdNotas12m) > 0
         ? toNumber(resumo.totalFaturado12m) / toNumber(resumo.qtdNotas12m)
@@ -307,7 +336,7 @@ module.exports = (app) => ({
           obs: trim(r.obs),
           valorTotal: toNumber(r.valorTotal),
           qtdItens: toNumber(r.qtdItens),
-          status: calcStatusPedido(r)
+          status: calcStatusPedido(r, estatusMap.get(trim(r.numero)))
         })),
         notas: notas.map((r) => ({
           numero: trim(r.numero),
