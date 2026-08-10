@@ -1,8 +1,10 @@
 // GET /controladoria/vendas/divergencias?snapshot_mes=YYYYMM&mes=YYYYMM
-// Cruza os pedidos de UM mês (emissão) do snapshot com o Protheus (opção C): flaga
-// pedido EXCLUÍDO (sumiu do SC5 ativo) e VALOR DIVERGENTE (total da planilha ≠ total
-// do pedido no ERP). Audita um mês por vez pra limitar a consulta ao ERP. Perm 11006.
-// (BU e devolução detalhada = refinamentos futuros — o C5_ZTIPO do ERP vai no retorno.)
+// Cruza as NF FATURADAS de um mês (emissão) do snapshot com o Protheus (opção C).
+// Só olha linhas com NF preenchida (faturado) — pedido ainda em pipeline (sem NF)
+// não é divergência, é estado normal. Casa por NF (D2_DOC) contra o SD2 (NF de saída):
+//   NF_CANCELADA     — NF sumiu do SD2 (invoice cancelada/apagada no ERP)
+//   VALOR_DIVERGENTE — |total da planilha − total no ERP| > tolerância
+// Audita um mês por vez. Perm 11006. (Devolução/BU detalhados = refinamento futuro.)
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([11006, 0]);
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -20,54 +22,53 @@ module.exports = (app) => ({
     if (!snap || !emis) return res.status(400).json({ message: 'snapshot_mes e mes (YYYYMM) são obrigatórios.' });
 
     try {
-      // 1) pedidos do mês (emissão) no snapshot — total do pedido = valor da seq 01.
-      const peds = await Pg.connectAndQuery(`
-        SELECT pedido, MAX(total_pedido) total_plan, MAX(tipo) tipo,
-               MAX(tipo_considerar) tipo_considerar, MAX(cliente_nome) cliente
+      // 1) por NF faturada do mês: total da planilha (SUM Total Item).
+      const nfs = await Pg.connectAndQuery(`
+        SELECT nf, MAX(pedido) pedido, MAX(cliente_nome) cliente, MAX(tipo_considerar) tipo_considerar,
+               COALESCE(SUM(total_item), 0) total_plan
           FROM tab_ctrl_vendas_snapshot
-         WHERE snapshot_mes = @snap AND to_char(emissao,'YYYYMM') = @emis AND pedido <> ''
-         GROUP BY pedido`, { snap, emis });
+         WHERE snapshot_mes = @snap AND to_char(emissao,'YYYYMM') = @emis
+           AND nf IS NOT NULL AND nf <> ''
+         GROUP BY nf`, { snap, emis });
 
-      // 2) cruza com o Protheus em batches (SC5 ativo + total do pedido).
+      // 2) total faturado no ERP por NF (SD2.D2_DOC, D2_VALBRUT).
       const mapProt = new Map();
       const BATCH = 500;
-      for (let i = 0; i < peds.length; i += BATCH) {
-        const slice = peds.slice(i, i + BATCH);
-        const inl = slice.map((_, k) => `@p${k}`).join(',');
-        const params = {}; slice.forEach((p, k) => { params[`p${k}`] = trim(p.pedido); });
+      for (let i = 0; i < nfs.length; i += BATCH) {
+        const slice = nfs.slice(i, i + BATCH);
+        const inl = slice.map((_, k) => `@n${k}`).join(',');
+        const params = {}; slice.forEach((r, k) => { params[`n${k}`] = trim(r.nf); });
         const rows = await Protheus.connectAndQuery(`
-          SELECT RTRIM(sc5.C5_NUM) pedido, RTRIM(sc5.C5_ZTIPO) bu,
-                 CAST(ISNULL(tp.total, 0) AS NUMERIC(15,2)) total
-            FROM SC5010 sc5 WITH (NOLOCK)
-            LEFT JOIN total_pedido_sc6 tp WITH (NOLOCK) ON tp.c6_num = sc5.C5_NUM
-           WHERE sc5.C5_FILIAL = '01' AND sc5.D_E_L_E_T_ <> '*' AND RTRIM(sc5.C5_NUM) IN (${inl})`, params);
-        rows.forEach(r => mapProt.set(trim(r.pedido), r));
+          SELECT RTRIM(D2_DOC) nf, SUM(D2_VALBRUT) total
+            FROM SD2010 WITH (NOLOCK)
+           WHERE D2_FILIAL = '01' AND D_E_L_E_T_ <> '*' AND RTRIM(D2_DOC) IN (${inl})
+           GROUP BY D2_DOC`, params);
+        rows.forEach(r => mapProt.set(trim(r.nf), r));
       }
 
-      // 3) compara. Tolerância = 0,5% do valor ou R$ 1 (o que for maior).
+      // 3) compara por NF. Tolerância = 1% ou R$ 1 (o maior).
       const divergencias = [];
-      for (const p of peds) {
-        const ped = trim(p.pedido);
-        const pr = mapProt.get(ped);
-        const totalPlan = N(p.total_plan);
+      for (const r of nfs) {
+        const nf = trim(r.nf);
+        const pr = mapProt.get(nf);
+        const totalPlan = N(r.total_plan);
         if (!pr) {
-          divergencias.push({ pedido: ped, tipo: 'EXCLUIDO', cliente: trim(p.cliente), tipo_considerar: trim(p.tipo_considerar),
-            total_plan: totalPlan, total_protheus: null, diff: null, bu_protheus: null });
+          divergencias.push({ nf, pedido: trim(r.pedido), tipo: 'NF_CANCELADA', cliente: trim(r.cliente),
+            tipo_considerar: trim(r.tipo_considerar), total_plan: totalPlan, total_protheus: null, diff: null });
           continue;
         }
         const totalProt = N(pr.total);
-        const tol = Math.max(1, totalPlan * 0.005);
-        if (Math.abs(totalPlan - totalProt) > tol) {
-          divergencias.push({ pedido: ped, tipo: 'VALOR_DIVERGENTE', cliente: trim(p.cliente), tipo_considerar: trim(p.tipo_considerar),
-            total_plan: totalPlan, total_protheus: totalProt, diff: totalProt - totalPlan, bu_protheus: trim(pr.bu) });
+        if (Math.abs(totalPlan - totalProt) > Math.max(1, totalPlan * 0.01)) {
+          divergencias.push({ nf, pedido: trim(r.pedido), tipo: 'VALOR_DIVERGENTE', cliente: trim(r.cliente),
+            tipo_considerar: trim(r.tipo_considerar), total_plan: totalPlan, total_protheus: totalProt, diff: totalProt - totalPlan });
         }
       }
-      divergencias.sort((a, b) => Math.abs(N(b.diff)) - Math.abs(N(a.diff)));
+      divergencias.sort((a, b) => (a.tipo === b.tipo ? Math.abs(N(b.diff)) - Math.abs(N(a.diff)) : (a.tipo === 'NF_CANCELADA' ? -1 : 1)));
 
       return res.json({
-        snapshotMes: snap, mes: emis, pedidosAuditados: peds.length,
+        snapshotMes: snap, mes: emis, nfsFaturadasAuditadas: nfs.length,
         resumo: {
-          excluidos: divergencias.filter(d => d.tipo === 'EXCLUIDO').length,
+          nfCancelada: divergencias.filter(d => d.tipo === 'NF_CANCELADA').length,
           valorDivergente: divergencias.filter(d => d.tipo === 'VALOR_DIVERGENTE').length
         },
         divergencias: divergencias.slice(0, 500),
