@@ -29,7 +29,10 @@ function depara() {
     for (const r of require('../data/nfse-depara-servicos.json')) {
       const cod = trim(r.codigo);
       if (!cod) continue;
-      _depara[cod] = { cTribNac: soDig(r.cTribNac), cIndOp: soDig(r.cIndOp), nbs: trim(r.nbs) };
+      _depara[cod] = {
+        cTribNac: soDig(r.cTribNac), cIndOp: soDig(r.cIndOp), nbs: trim(r.nbs),
+        aliqIss: (r.aliqIss == null || r.aliqIss === '') ? undefined : Number(r.aliqIss)  // 0 = não incidência de ISS
+      };
     }
   } catch (e) { console.warn('nfseEmissao: de-para indisponível:', e.message); }
   return _depara;
@@ -73,7 +76,7 @@ function resolverCtribNac(nota) {
   const produto = trim(principal.codigo);
   const dp = depara()[produto] || {};
   const ctribnac = soDig(principal.itemListaServico) || dp.cTribNac || '';  // 1) B1_CODISS  2) de-para
-  return { ctribnac, cIndOp: dp.cIndOp || '', nbs: dp.nbs || '', produto };
+  return { ctribnac, cIndOp: dp.cIndOp || '', nbs: dp.nbs || '', aliqIss: dp.aliqIss, produto };
 }
 
 // UPDATE de finalização da linha reservada. `f` traz só os campos a gravar.
@@ -147,7 +150,7 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
     const obs = trim(observacao).slice(0, 500);
     if (obs) nota.discriminacao = (trim(nota.discriminacao) + ' | Obs.: ' + obs).slice(0, 4000);
 
-    const { ctribnac, cIndOp, nbs, produto } = resolverCtribNac(nota);
+    const { ctribnac, cIndOp, nbs, aliqIss, produto } = resolverCtribNac(nota);
     const dados = {
       cliente_nome: trim(nota.tomador && nota.tomador.razaoSocial).slice(0, 200),
       valor: nota.valorServicos, discriminacao: trim(nota.discriminacao).slice(0, 4000), ctribnac
@@ -160,6 +163,7 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
     cfg.cTribNacPadrao = ctribnac;
     cfg.cIndOp = cIndOp;     // IBS/CBS: indicador da operação (por serviço, de-para)
     cfg.cNBS = nbs;          // IBS/CBS: item da NBS (por serviço, de-para)
+    cfg.aliqIss = aliqIss;   // ISS: alíquota do de-para (0 = NÃO INCIDÊNCIA → tribISSQN=4)
     const { xml, id: dpsId } = montarDps(nota, cfg);
     const signed = assinarXml(xml);                          // RSA-SHA1 (default, exigido por Barretos v1.00)
     const r = await emitirDps(signed);

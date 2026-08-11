@@ -140,11 +140,17 @@ function blocoServValores(nota, cfg) {
       ((cfg.ibsCbs && cNBS) ? `<cNBS>${esc(cNBS)}</cNBS>` : '') +
     `</cServ>` +
   `</serv>`;
+  // tribISSQN: 1=Operação tributável · 4=Não Incidência. Serviço com alíquota de ISS = 0
+  // no de-para = NÃO INCIDÊNCIA (ex.: cessão de uso de marca / royalties 03.02.01,
+  // reconhecida por decisão judicial p/ a Gnatus — MS 1004813-25.2018.8.26.0066/Barretos:
+  // obrigação de dar, não serviço). Confirmado 201 na Produção Restrita. Só dispara com
+  // alíquota EXPLICITAMENTE 0 no de-para; produto sem alíquota (undefined) = tributável (1).
+  const tribISSQN = Number(cfg.aliqIss) === 0 ? '4' : '1';
   const valores = `<valores>` +
     `<vServPrest><vServ>${money(nota.valorServicos)}</vServ></vServPrest>` +
     `<trib>` +
       `<tribMun>` +
-        `<tribISSQN>1</tribISSQN>` +                          // 1=Operação tributável
+        `<tribISSQN>${tribISSQN}</tribISSQN>` +                // 1=Tributável · 4=Não Incidência
         `<tpRetISSQN>${nota.issRetido ? 2 : 1}</tpRetISSQN>` + // 1=Não retido, 2=Retido tomador
       `</tribMun>` +                                           // alíquota NÃO vai no DPS — a prefeitura calcula
       `<totTrib><indTotTrib>0</indTotTrib></totTrib>` +        // 0=Não informa (aprox. Lei 12.741)
