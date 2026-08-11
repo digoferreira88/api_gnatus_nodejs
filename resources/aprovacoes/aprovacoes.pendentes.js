@@ -83,6 +83,26 @@ module.exports = (app) => ({
                   AND NOT EXISTS (SELECT 1 FROM SC7010 h WITH (NOLOCK)
                                    WHERE h.C7_FILIAL = scr.CR_FILIAL AND h.C7_NUM = scr.CR_NUM AND h.D_E_L_E_T_ <> '*' AND h.C7_CONAPRO <> 'L') )
               )`;
+      // Limite de alçada de QUEM está olhando, pra esta linha do SCR (11/08/2026).
+      // O teto fica em SAK010.AK_LIMITE (cadastro de aprovadores) e o SCR já aponta
+      // o código do aprovador em CR_APROV — a SAL010 não guarda valor nenhum.
+      // Sem isto a fila oferecia "Aprovar" em documento acima do teto e o Protheus
+      // só recusava depois, com 403 (caso Ana Carloni / PC 025100: 5 tentativas).
+      // Só calcula pras linhas do próprio usuário; linha de terceiro (visão admin)
+      // fica NULL e não é sinalizada. Fallback pelo AK_USER cobre a linha de grupo
+      // (CR_USER/CR_APROV vazios) — otimista de propósito: sinalizar de menos é
+      // melhor que travar quem podia aprovar. A palavra final continua sendo do Protheus.
+      const limiteAprovSql = `
+              CASE WHEN scr.CR_USER = @cod OR RTRIM(ISNULL(scr.CR_USER, '')) = '' THEN
+                COALESCE(
+                  (SELECT TOP 1 ak.AK_LIMITE FROM SAK010 ak WITH (NOLOCK)
+                    WHERE ak.D_E_L_E_T_ <> '*' AND ak.AK_FILIAL = scr.CR_FILIAL
+                      AND ak.AK_COD = scr.CR_APROV),
+                  (SELECT MAX(ak2.AK_LIMITE) FROM SAK010 ak2 WITH (NOLOCK)
+                    WHERE ak2.D_E_L_E_T_ <> '*' AND ak2.AK_FILIAL = scr.CR_FILIAL
+                      AND ak2.AK_USER = @cod)
+                )
+              END limiteAprov`;
       const scrPendentes = await Protheus.connectAndQuery(
         isAdmin
         ? // Admin: vê tudo pendente (sem filtro por usuário/grupo)
@@ -97,7 +117,8 @@ module.exports = (app) => ({
                   CASE
                     WHEN scr.CR_USER = @cod THEN 'DIRETO'
                     ELSE 'ADMIN'
-                  END origem
+                  END origem,
+                  ${limiteAprovSql}
              FROM SCR010 scr WITH (NOLOCK)
             WHERE scr.D_E_L_E_T_ <> '*'
               AND scr.CR_FILIAL = '01'
@@ -118,7 +139,8 @@ module.exports = (app) => ({
                   CASE
                     WHEN scr.CR_USER = @cod THEN 'DIRETO'
                     ELSE 'GRUPO'
-                  END origem
+                  END origem,
+                  ${limiteAprovSql}
              FROM SCR010 scr WITH (NOLOCK)
             WHERE scr.D_E_L_E_T_ <> '*'
               AND scr.CR_FILIAL = '01'
@@ -353,18 +375,72 @@ module.exports = (app) => ({
             // mostrava valor em dolar como se fosse real (ex.: PC 024795).
             moeda: toN(info?.moeda) || 1,
             taxa: toN(info?.taxa) || 0,
+            limiteAprovador: 0,   // preenchido abaixo (maior limite entre os níveis do user)
             itens,
             anexos: anexos.get(key) || []
           });
         }
         // Se tem ao menos um nível DIRETO, prevalece (relevância maior)
         if (trim(s.origem) === 'DIRETO') map.get(key).origem = 'DIRETO';
+        // Maior limite entre as linhas que são do próprio usuário
+        const lim = toN(s.limiteAprov);
+        if (lim > map.get(key).limiteAprovador) map.get(key).limiteAprovador = lim;
         map.get(key).niveis.push({
           nivel: trim(s.nivel),
           status: trim(s.status),
           dataLib: trim(s.dataLib)
         });
       });
+
+      // Sinaliza o que está ACIMA da alçada de quem está olhando. Compara em REAIS:
+      // documento em dólar (moeda 2) vira R$ pela taxa, que é como o Protheus afere.
+      // limite 0/NULL = não cadastrado -> não sinaliza (não temos como afirmar).
+      map.forEach(d => {
+        const valorRS = (d.moeda === 2 && d.taxa > 0) ? d.totalDoc * d.taxa : d.totalDoc;
+        d.valorReais = +valorRS.toFixed(2);
+        d.acimaLimite = d.limiteAprovador > 0 && valorRS > d.limiteAprovador;
+        d.podemAprovar = [];
+      });
+
+      // Nos documentos acima da alçada, diz PRA QUEM encaminhar: colegas do mesmo
+      // grupo de aprovação (SAL010) cujo teto (SAK010.AK_LIMITE) cobre o valor.
+      const acima = [...map.values()].filter(d => d.acimaLimite && d.grupo);
+      if (acima.length) {
+        const gruposAcima = [...new Set(acima.map(d => d.grupo))];
+        const porGrupo = new Map();
+        for (let i = 0; i < gruposAcima.length; i += BATCH) {
+          const slice = gruposAcima.slice(i, i + BATCH);
+          const inG = slice.map((_, k) => `@g${k}`).join(',');
+          const p = { cod: codProth };
+          slice.forEach((g, k) => { p[`g${k}`] = g; });
+          try {
+            const r = await Protheus.connectAndQuery(
+              `SELECT RTRIM(sal.AL_COD) grupo, RTRIM(ak.AK_NOME) nomeAprov,
+                      RTRIM(ISNULL(usr.USR_NOME, '')) nomeUsr, ak.AK_LIMITE limite
+                 FROM SAL010 sal WITH (NOLOCK)
+                 INNER JOIN SAK010 ak WITH (NOLOCK)
+                   ON ak.D_E_L_E_T_ <> '*' AND ak.AK_FILIAL = sal.AL_FILIAL
+                  AND ak.AK_COD = sal.AL_APROV
+                 LEFT JOIN SYS_USR usr ON usr.USR_ID = ak.AK_USER
+                WHERE sal.D_E_L_E_T_ <> '*' AND sal.AL_FILIAL = '01'
+                  AND sal.AL_COD IN (${inG})
+                  AND RTRIM(ISNULL(sal.AL_USER, '')) <> @cod`,
+              p
+            );
+            r.forEach(x => {
+              const g = trim(x.grupo);
+              if (!porGrupo.has(g)) porGrupo.set(g, []);
+              porGrupo.get(g).push({ nome: trim(x.nomeUsr) || trim(x.nomeAprov), limite: toN(x.limite) });
+            });
+          } catch (e) { console.warn('Alcada colegas batch err:', e.message); }
+        }
+        acima.forEach(d => {
+          const cobrem = (porGrupo.get(d.grupo) || [])
+            .filter(a => a.limite >= d.valorReais && a.nome)
+            .sort((a, b) => a.limite - b.limite);   // o menor teto que cobre primeiro
+          d.podemAprovar = [...new Set(cobrem.map(a => a.nome))].slice(0, 5);
+        });
+      }
 
       const pendentes = Array.from(map.values()).sort((a, b) => (b.emissao || '').localeCompare(a.emissao || ''));
       const totalSC = pendentes.filter(p => p.tipo === 'SC').length;

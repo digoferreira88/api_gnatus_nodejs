@@ -55,4 +55,21 @@ async function fetchProtheusComRetry(url, opts = {}, { tentativas = 2, timeoutMs
 // reenvia várias vezes — caso Ana Carloni / PC 024928, 27/07/2026).
 const jaLiberadoNoProtheus = (status, txt) => status === 409 && /j[aá]\s+(est[aá]|foi)\s+liber/i.test(String(txt || ''));
 
-module.exports = { ehConexao, MSG_INDISPONIVEL, fetchProtheusComRetry, jaLiberadoNoProtheus };
+// Extrai a mensagem de NEGÓCIO que o Protheus devolveu, pra mostrar ao usuário no
+// lugar de um "Protheus retornou erro." genérico. O AprovaCompras responde
+// {"errorCode":403,"errorMessage":"..."}; outros endpoints usam message/msg/errorMsg.
+// Sem isso o aprovador não descobre o motivo e reenvia várias vezes (caso Ana
+// Carloni / PC 025100, 11/08/2026: 5 tentativas contra um 403 de limite de alçada).
+function mensagemProtheus(txt, fallback = 'Protheus retornou erro.') {
+  const bruto = String(txt || '').trim();
+  if (!bruto) return fallback;
+  try {
+    const j = JSON.parse(bruto);
+    const m = j && (j.errorMessage || j.message || j.msg || j.errorMsg || j.Mensagem);
+    if (m && String(m).trim()) return String(m).trim().slice(0, 300);
+  } catch { /* não é JSON — cai no texto puro abaixo */ }
+  // texto puro: só devolve se for curto o bastante pra ser mensagem (não um HTML de erro)
+  return (bruto.length <= 300 && !/^\s*</.test(bruto)) ? bruto : fallback;
+}
+
+module.exports = { ehConexao, MSG_INDISPONIVEL, fetchProtheusComRetry, jaLiberadoNoProtheus, mensagemProtheus };

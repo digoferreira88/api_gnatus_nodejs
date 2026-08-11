@@ -4,7 +4,7 @@
 const trim = (v) => String(v || '').trim();
 const tiposValidos = new Set(['SC', 'PC']);
 const Auditoria = require('../../services/auditoria');
-const { ehConexao, MSG_INDISPONIVEL, fetchProtheusComRetry } = require('../../services/protheusErro');
+const { ehConexao, MSG_INDISPONIVEL, fetchProtheusComRetry, mensagemProtheus } = require('../../services/protheusErro');
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([13001]);
 
@@ -135,13 +135,14 @@ module.exports = (app) => ({
       });
       await logar(ok, `[${status}] ${txt.slice(0, 1000)}`);
       if (!ok) {
+        const motivo = mensagemProtheus(txt);   // motivo real em vez de erro genérico
         Auditoria.registrar(app, {
           modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'REJECT_FAIL', severidade: 'ALERTA',
           req, entidade: tipoIntranet === 'SC' ? 'sc_aprovacao' : 'pc_aprovacao', entidadeId: numero,
-          descricao: `Falha ao rejeitar ${tipoIntranet} ${numero} (Protheus ${status})`,
-          meta: { tipo: tipoIntranet, numero, justificativa, http: status }
+          descricao: `Falha ao rejeitar ${tipoIntranet} ${numero} (Protheus ${status}): ${motivo}`,
+          meta: { tipo: tipoIntranet, numero, justificativa, http: status, motivo }
         });
-        return res.status(502).json({ ok: false, message: 'Protheus retornou erro.', status, body: txt.slice(0, 500) });
+        return res.status(502).json({ ok: false, message: motivo, status, body: txt.slice(0, 500) });
       }
       Auditoria.registrar(app, {
         modulo: 'Compras', submodulo: 'Aprovacoes', acao: 'REJECT', severidade: 'CRITICO',
