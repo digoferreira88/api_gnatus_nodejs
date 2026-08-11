@@ -58,6 +58,36 @@ module.exports = (app) => ({
         distribuicao = Array.from({ length: 11 }, (_, i) => ({ rotulo: String(i), nota: i, qtd: distMap.get(i) || 0 }));
       }
 
+      // Detalhe da distribuição DENTRO de cada categoria: quantas pessoas deram
+      // cada nota/opção. Alimenta a legenda granular do donut ("4 deram nota 8").
+      // Agrupa pela classificacao gravada no convite, então os subtotais sempre
+      // fecham com Promotores/Neutros/Detratores do KPI.
+      const detalhe = { PROMOTOR: [], NEUTRO: [], DETRATOR: [] };
+      if (pNps && trim(pNps.tipo) === 'opcao') {
+        const rows = await Pg.connectAndQuery(`
+          SELECT COALESCE(c.classificacao,'') cls, r.opcao rotulo, COUNT(*) qtd
+            FROM tab_nps_resposta r JOIN tab_nps_convite c ON c.id = r.convite_id
+           WHERE r.pergunta_id = @pid AND COALESCE(r.opcao,'') <> '' ${conds.length ? 'AND ' + conds.join(' AND ') : ''}
+           GROUP BY 1, 2`, { ...p, pid: pNps.id });
+        const opts = Array.isArray(pNps.opcoes) ? pNps.opcoes : [];
+        const ord = (r) => { const i = opts.indexOf(trim(r.rotulo)); return i < 0 ? 999 : i; };   // ordem do formulário
+        rows.sort((a, b) => ord(a) - ord(b));
+        rows.forEach((r) => {
+          const c = trim(r.cls).toUpperCase();
+          if (detalhe[c]) detalhe[c].push({ rotulo: trim(r.rotulo), qtd: N(r.qtd) });
+        });
+      } else {
+        const rows = await Pg.connectAndQuery(`
+          SELECT COALESCE(classificacao,'') cls, nota_nps nota, COUNT(*) qtd
+            FROM tab_nps_convite c
+          ${where ? where + ' AND' : 'WHERE'} nota_nps IS NOT NULL
+           GROUP BY 1, 2 ORDER BY nota_nps DESC`, p);
+        rows.forEach((r) => {
+          const c = trim(r.cls).toUpperCase();
+          if (detalhe[c]) detalhe[c].push({ rotulo: `Nota ${N(r.nota)}`, nota: N(r.nota), qtd: N(r.qtd) });
+        });
+      }
+
       // Pareto de causas (regra CX: classificar a causa do detrator + Pareto mensal).
       const causaRows = await Pg.connectAndQuery(`
         SELECT a.causa rotulo, COUNT(*) qtd
@@ -159,9 +189,9 @@ module.exports = (app) => ({
         elogios,
         pareto,
         classificacao: [
-          { nome: 'Promotores', valor: promotores, cor: '#1e7d4f' },
-          { nome: 'Neutros', valor: neutros, cor: '#f5a500' },
-          { nome: 'Detratores', valor: detratores, cor: '#c0392b' }
+          { nome: 'Promotores', valor: promotores, cor: '#1e7d4f', detalhe: detalhe.PROMOTOR },
+          { nome: 'Neutros', valor: neutros, cor: '#f5a500', detalhe: detalhe.NEUTRO },
+          { nome: 'Detratores', valor: detratores, cor: '#c0392b', detalhe: detalhe.DETRATOR }
         ],
         evolucao,
         geradoEm: new Date().toISOString()
