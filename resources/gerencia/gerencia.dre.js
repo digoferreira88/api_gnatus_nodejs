@@ -87,6 +87,10 @@ const buildInClause = (list, prefix) => {
 module.exports = (app) => ({
   verb: 'get',
   route: '/dre',
+  // Perm 10001 (12/08/2026): estava sem requirePerm — qualquer logado puxava o DRE
+  // inteiro via API. Ficou critico com a perm 10003 (gestor restrito): ele NAO pode
+  // ter acesso a esta visao completa, so ao /dre/centro-custo com escopo.
+  middlewares: [require('../../middlewares/requirePerm')(app)([10001])],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;

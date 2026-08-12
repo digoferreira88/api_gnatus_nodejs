@@ -13,12 +13,83 @@
 // Inclui evolucao mensal e indicadores de orcamento quando ha valor cadastrado
 // em tab_centro_custo_orcamento. Distribuicao linear (anual/12) pra YTD.
 //
-// Perm 10001 (mesma do DRE Gerencial).
+// FONTE POR MES (12/08/2026): mes ja CONTABILIZADO passa a sair do RAZAO (CT2010
+// por CT2_CCD/CT2_CCC), nao mais de pedidos/titulos. Motivo: no fechamento a
+// contabilidade reclassifica conta, rateia e lanca ajuste manual — o pedido de
+// compra nao reflete nada disso, entao o gerencial divergia do contabil. Mes ainda
+// EM ABERTO continua saindo de pedidos+titulos (indicador antecedente, chega antes
+// da contabilizacao). Medicao que embasou: 202606 pelo razao = R$ 3,68 mi em 31 CCs
+// contra R$ 3,26 mi em 23 CCs pelos pedidos; 202607 tinha 1% de cobertura de CC
+// (mes nao fechado). Cada mes devolve sua `fonte` pro frontend deixar isso explicito.
+//
+// Perms: 10001 (visao completa, mesma do DRE Gerencial) OU 10003 (gestor restrito,
+// enxerga so os CCs vinculados a ele e sem as contas de tab_dre_conta_oculta).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10001]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10001, 10003]);
 
 const trim = (v) => String(v || '').trim();
 const toN = (v) => Number(v || 0);
+
+// Abaixo disso o mes e considerado NAO contabilizado (razao ainda nao lancado) e a
+// fonte segue sendo pedidos/titulos. Mes fechado tem milhares de linhas com CC; mes
+// aberto tem dezenas (202607 tinha 16). O limiar so precisa separar essas ordens de
+// grandeza — nao e um numero fino.
+const MIN_LINHAS_RAZAO = 50;
+
+// Descobre, por mes do range, quantas linhas de despesa COM centro de custo ja
+// existem no razao. Vazio/baixo = mes ainda nao contabilizado.
+async function linhasRazaoPorMes(Protheus, inicio, fim) {
+  const rows = await Protheus.connectAndQuery(`
+    SELECT ymes, COUNT(*) linhas FROM (
+      SELECT LEFT(CT2_DATA, 6) ymes
+        FROM CT2010 WITH (NOLOCK)
+       WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
+         AND LEFT(RTRIM(CT2_DEBITO), 1) IN ('4','5')
+         AND RTRIM(ISNULL(CT2_CCD, '')) <> ''
+      UNION ALL
+      SELECT LEFT(CT2_DATA, 6) ymes
+        FROM CT2010 WITH (NOLOCK)
+       WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
+         AND LEFT(RTRIM(CT2_CREDIT), 1) IN ('4','5')
+         AND RTRIM(ISNULL(CT2_CCC, '')) <> ''
+    ) t GROUP BY ymes`, { inicio, fim });
+  const m = new Map();
+  rows.forEach(r => m.set(trim(r.ymes), toN(r.linhas)));
+  return m;
+}
+
+// Escopo do usuario logado. Visao completa (perm 0 ou 10001) => sem restricao.
+// So 10003 => restrito aos CCs vinculados, sem as contas ocultas.
+// FALHA FECHADO: se as tabelas da migration 88 nao existirem, o restrito fica com
+// escopo vazio (nao ve nada) em vez de vazar o DRE inteiro.
+async function resolverEscopo(Pg, user) {
+  const idUser = user && user.ID;
+  const aberto = { restrito: false, ccs: null, contasOcultas: new Set() };
+  if (!idUser) return aberto;
+
+  const perms = await Pg.connectAndQuery(
+    `SELECT id_permissao FROM tab_intranet_usr_permissoes
+      WHERE id_user = @id AND id_permissao IN (0, 10001, 10003)`, { id: idUser });
+  const tem = new Set(perms.map(p => Number(p.id_permissao)));
+  if (tem.has(0) || tem.has(10001)) return aberto;
+
+  const escopo = { restrito: true, ccs: new Set(), contasOcultas: new Set() };
+  try {
+    const ccRows = await Pg.connectAndQuery(
+      `SELECT cc_codigo FROM tab_dre_cc_usuario WHERE id_user = @id`, { id: idUser });
+    ccRows.forEach(r => escopo.ccs.add(trim(r.cc_codigo)));
+  } catch (e) {
+    console.warn('dre-centro-custo: tab_dre_cc_usuario indisponivel (migration 88?):', e.message);
+  }
+  try {
+    const ctRows = await Pg.connectAndQuery(
+      `SELECT conta FROM tab_dre_conta_oculta WHERE ativo`, {});
+    ctRows.forEach(r => escopo.contasOcultas.add(trim(r.conta)));
+  } catch (e) {
+    console.warn('dre-centro-custo: tab_dre_conta_oculta indisponivel (migration 88?):', e.message);
+  }
+  return escopo;
+}
 
 // '202601' -> 'jan/26'
 const MESES_PT = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
@@ -56,6 +127,81 @@ module.exports = (app) => ({
     }
 
     try {
+      // 0) Escopo do usuario + fonte de cada mes do range.
+      const escopo = await resolverEscopo(Pg, req.user && req.user[0]);
+      const ccPermitido = (cc) => !escopo.restrito || escopo.ccs.has(trim(cc));
+      const contaOculta = (conta) => escopo.restrito && escopo.contasOcultas.has(trim(conta));
+
+      // Gestor restrito sem nenhum CC vinculado: devolve vazio com aviso, em vez de
+      // cair no caminho normal (que mostraria tudo).
+      if (escopo.restrito && escopo.ccs.size === 0) {
+        return res.json({
+          periodo: { inicio, fim },
+          geradoEm: new Date().toISOString(),
+          aviso: 'Seu usuario ainda nao tem centro de custo vinculado. Peca a TI para vincular na Gestao de Usuarios.',
+          escopo: { restrito: true, centrosCusto: [], qtdContasOcultas: 0 },
+          totais: { valorTotal: 0, qtdPedidos: 0, qtdItens: 0, qtdCentros: 0 },
+          porCentroCusto: [], evolucaoMensal: [], fontePorMes: [],
+          excluidos: { rejeitadosPC: 0, rejeitadosSC: 0 }
+        });
+      }
+
+      const linhasRazao = await linhasRazaoPorMes(Protheus, inicio, fim);
+
+      // Carrega o razao ANTES de montar a arvore. A ordem importa: um mes so e
+      // declarado "fechado" (e portanto tem pedidos/titulos descartados) se o razao
+      // dele realmente chegou. Se a consulta falhar, nenhum mes fecha e a visao
+      // inteira cai de volta em pedidos+titulos — degrada, nao esvazia.
+      const mesesFechadosOk = new Set();
+      let razaoRows = [];
+      const nomeForRazao = new Map();
+      const candidatos = [...linhasRazao.entries()].filter(([, n]) => toN(n) >= MIN_LINHAS_RAZAO);
+      if (candidatos.length) {
+        try {
+          razaoRows = await Protheus.connectAndQuery(`
+            SELECT LEFT(CT2_DATA, 6) ymes, CT2_DATA data, RTRIM(CT2_CCD) cc,
+                   RTRIM(CT2_DEBITO) conta, RTRIM(ISNULL(CT2_DOC, '')) doc,
+                   RTRIM(ISNULL(CT2_LOTE, '')) lote, RTRIM(ISNULL(CT2_HIST, '')) hist,
+                   RTRIM(ISNULL(CT2_CODFOR, '')) fornece, RTRIM(ISNULL(CT2_MANUAL, '')) manual,
+                   CT2_VALOR valor
+              FROM CT2010 WITH (NOLOCK)
+             WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
+               AND LEFT(RTRIM(CT2_DEBITO), 1) IN ('4','5')
+               AND RTRIM(ISNULL(CT2_CCD, '')) <> ''
+            UNION ALL
+            SELECT LEFT(CT2_DATA, 6) ymes, CT2_DATA data, RTRIM(CT2_CCC) cc,
+                   RTRIM(CT2_CREDIT) conta, RTRIM(ISNULL(CT2_DOC, '')) doc,
+                   RTRIM(ISNULL(CT2_LOTE, '')) lote, RTRIM(ISNULL(CT2_HIST, '')) hist,
+                   RTRIM(ISNULL(CT2_CODFOR, '')) fornece, RTRIM(ISNULL(CT2_MANUAL, '')) manual,
+                   -CT2_VALOR valor
+              FROM CT2010 WITH (NOLOCK)
+             WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
+               AND LEFT(RTRIM(CT2_CREDIT), 1) IN ('4','5')
+               AND RTRIM(ISNULL(CT2_CCC, '')) <> ''`, { inicio, fim });
+          candidatos.forEach(([ymes]) => mesesFechadosOk.add(ymes));
+
+          // Nome do fornecedor do lancamento (CT2_CODFOR), quando houver.
+          const codsFor = [...new Set(razaoRows.map(r => trim(r.fornece)).filter(Boolean))];
+          for (let i = 0; i < codsFor.length; i += 300) {
+            const slice = codsFor.slice(i, i + 300);
+            const p = {}; const inF = slice.map((c, k) => { p[`f${k}`] = c; return `@f${k}`; }).join(',');
+            try {
+              const rows = await Protheus.connectAndQuery(`
+                SELECT RTRIM(A2_COD) cod, RTRIM(COALESCE(A2_NREDUZ, A2_NOME)) nome
+                  FROM SA2010 WITH (NOLOCK)
+                 WHERE D_E_L_E_T_ <> '*' AND A2_COD IN (${inF})`, p);
+              rows.forEach(x => { if (!nomeForRazao.has(trim(x.cod))) nomeForRazao.set(trim(x.cod), trim(x.nome)); });
+            } catch (e) { console.warn('dre-centro-custo: nome fornecedor do razao:', e.message); }
+          }
+        } catch (e) {
+          console.warn('dre-centro-custo: razao indisponivel — visao segue por pedidos/titulos:', e.message);
+          razaoRows = []; mesesFechadosOk.clear();
+        }
+      }
+      // Mes contabilizado -> a fonte e o razao; pedidos/titulos desse mes sao
+      // ignorados (senao o mesmo gasto entraria duas vezes).
+      const mesFechado = (ymes) => mesesFechadosOk.has(trim(ymes));
+
       // 1) Pedidos de compra do periodo (detalhe por item)
       const sc7 = await Protheus.connectAndQuery(`
         SELECT
@@ -135,6 +281,10 @@ module.exports = (app) => ({
         const produto = trim(r.produto);
         const descProduto = trim(r.descProduto);
         const ymes = String(r.emissao || '').slice(0, 6);
+        // Mes ja contabilizado: quem manda e o razao (bloco 3c).
+        if (mesFechado(ymes)) continue;
+        if (!ccPermitido(cc)) continue;
+        if (contaOculta(conta)) continue;
         // Moeda do pedido: 1=Real, 2=Dolar (C7_MOEDA). C7_TOTAL vem na moeda do
         // documento -> converte p/ R$ pela taxa (C7_TXMOEDA) quando estrangeira,
         // pra o realizado do CC ficar todo em reais.
@@ -207,6 +357,7 @@ module.exports = (app) => ({
           SELECT RTRIM(e2.E2_PREFIXO) prefixo, RTRIM(e2.E2_NUM) numero, RTRIM(e2.E2_PARCELA) parcela,
                  RTRIM(e2.E2_TIPO) tipo, RTRIM(e2.E2_FORNECE) fornece, RTRIM(e2.E2_LOJA) loja,
                  RTRIM(e2.E2_NATUREZ) natureza, RTRIM(ISNULL(e2.E2_CCD, '')) ccd,
+                 RTRIM(ISNULL(e2.E2_CONTAD, '')) contaDebito,
                  e2.E2_EMISSAO emissao, e2.E2_VALOR valor,
                  RTRIM(COALESCE(sa2.A2_NREDUZ, sa2.A2_NOME, e2.E2_NOMFOR, '')) fornecedorNome
             FROM SE2010 e2 WITH (NOLOCK)
@@ -251,6 +402,11 @@ module.exports = (app) => ({
         // grupo pode ser grande; quando o de-para for populado, ele esvazia.
         const addTitulo = (cc, r, valor) => {
           const kCC = cc || '(SEM CC)';
+          // O corte por CC fica aqui (e nao no laco) porque o rateio SEZ pode
+          // dividir um mesmo titulo entre varios CCs — o gestor restrito leva so
+          // a parcela do CC dele. Os cortes por mes/conta sao do titulo inteiro e
+          // ficam no laco abaixo, pra nao inflar os contadores.
+          if (!ccPermitido(kCC)) return;
           if (!cc) qtdTitulosSemCC++;
           const natureza = trim(r.natureza) || '(sem natureza)';
           const kConta = `NAT ${natureza}`;
@@ -286,6 +442,10 @@ module.exports = (app) => ({
         };
 
         for (const r of se2) {
+          // Mes contabilizado sai pelo razao (bloco 3c); conta oculta some pro
+          // gestor restrito. Ambos valem pro titulo inteiro.
+          if (mesFechado(String(r.emissao || '').slice(0, 6))) continue;
+          if (contaOculta(r.contaDebito)) continue;
           qtdTitulosDiretos++;
           valorTitulosDiretos += toN(r.valor);
           const kTit = [trim(r.prefixo), trim(r.numero), trim(r.parcela), trim(r.fornece), trim(r.loja)].join('|');
@@ -302,6 +462,59 @@ module.exports = (app) => ({
         }
       } catch (e) {
         console.warn('dre-centro-custo: bloco de títulos diretos falhou (segue só pedidos):', e.message);
+      }
+
+      // 3c) RAZAO (CT2010) — fonte dos meses JA CONTABILIZADOS.
+      // Substitui pedidos+titulos nesses meses (eles foram pulados acima), entao o
+      // valor do CC passa a ser exatamente o que a contabilidade fechou, incluindo
+      // reclassificacao e ajuste manual. Contas 4*/5* (despesa/custo) com CC
+      // preenchido; o lado CREDITO entra negativo, que e como estorno reduz a
+      // despesa. Arvore: CC -> conta contabil -> historico -> lancamento.
+      let qtdLancRazao = 0, valorRazao = 0, valorAjusteManual = 0;
+      for (const r of razaoRows) {
+        const ymes = trim(r.ymes);
+        if (!mesFechado(ymes)) continue;          // mes aberto ja saiu por pedidos
+        const cc = trim(r.cc);
+        const conta = trim(r.conta);
+        if (!ccPermitido(cc)) continue;
+        if (contaOculta(conta)) continue;
+
+        const valor = toN(r.valor);
+        const hist = trim(r.hist);
+        const forn = trim(r.fornece);
+        const manual = trim(r.manual) === '1';
+        const kItem = nomeForRazao.get(forn) || hist || '(sem historico)';
+        const docId = `RAZ ${trim(r.lote)}-${trim(r.doc)}`;
+
+        qtdLancRazao++; valorRazao += valor;
+        if (manual) valorAjusteManual += valor;
+
+        if (!porCC.has(cc)) porCC.set(cc, { valor: 0, qtdItens: 0, pedidos: new Set(), porMes: new Map(), porConta: new Map() });
+        const agCc = porCC.get(cc);
+        agCc.valor += valor; agCc.qtdItens += 1; agCc.pedidos.add(docId);
+        agCc.porMes.set(ymes, toN(agCc.porMes.get(ymes)) + valor);
+
+        if (!agCc.porConta.has(conta)) agCc.porConta.set(conta, { valor: 0, qtdItens: 0, porItem: new Map() });
+        const aCt = agCc.porConta.get(conta);
+        aCt.valor += valor; aCt.qtdItens += 1;
+
+        if (!aCt.porItem.has(kItem)) aCt.porItem.set(kItem, { descricao: 'Lançamento contábil (razão)', valor: 0, qtdItens: 0, docs: [] });
+        const aIt = aCt.porItem.get(kItem);
+        aIt.valor += valor; aIt.qtdItens += 1;
+        aIt.docs.push({
+          pedido: `${trim(r.lote)}-${trim(r.doc)}`,
+          itemPed: '',
+          emissao: String(r.data || ''),
+          fornece: forn, forneceLoja: '',
+          moeda: 1, taxa: 0, valorMoeda: valor, valor,
+          razao: true,
+          historico: hist,
+          ajusteManual: manual   // lancado a mao pela contabilidade no fechamento
+        });
+
+        if (!porMes.has(ymes)) porMes.set(ymes, { valor: 0, qtdItens: 0 });
+        const agMes = porMes.get(ymes);
+        agMes.valor += valor; agMes.qtdItens += 1;
       }
 
       // 4) Descricoes dos CCs (CTT010)
@@ -336,20 +549,26 @@ module.exports = (app) => ({
       }
       const descContas = new Map();
       if (contasUnicas.size) {
-        const arr = [...contasUnicas];
-        const inClause = arr.map((_, i) => `@k${i}`).join(',');
-        const p = {};
-        arr.forEach((c, i) => { p[`k${i}`] = c; });
-        try {
-          const rows = await Protheus.connectAndQuery(`
-            SELECT RTRIM(CT1_CONTA) conta, RTRIM(CT1_DESC01) descricao
-              FROM CT1010 WITH (NOLOCK)
-             WHERE D_E_L_E_T_ <> '*'
-               AND RTRIM(CT1_CONTA) IN (${inClause})
-          `, p);
-          rows.forEach(r => { if (!descContas.has(trim(r.conta))) descContas.set(trim(r.conta), trim(r.descricao)); });
-        } catch (e) {
-          console.warn('dre-centro-custo: CT1010 err:', e.message);
+        // Chaves "NAT xxx" sao naturezas (titulos diretos), resolvidas mais abaixo
+        // pela SED010 — nao sao conta contabil e nao vao pra CT1010.
+        const arr = [...contasUnicas].filter(c => !/^NAT /.test(c));
+        // Em lotes de 500: com o razao o numero de contas distintas cresce e o
+        // MSSQL corta em 2100 parametros por comando.
+        for (let i = 0; i < arr.length; i += 500) {
+          const slice = arr.slice(i, i + 500);
+          const p = {};
+          const inClause = slice.map((c, k) => { p[`k${k}`] = c; return `@k${k}`; }).join(',');
+          try {
+            const rows = await Protheus.connectAndQuery(`
+              SELECT RTRIM(CT1_CONTA) conta, RTRIM(CT1_DESC01) descricao
+                FROM CT1010 WITH (NOLOCK)
+               WHERE D_E_L_E_T_ <> '*'
+                 AND RTRIM(CT1_CONTA) IN (${inClause})
+            `, p);
+            rows.forEach(r => { if (!descContas.has(trim(r.conta))) descContas.set(trim(r.conta), trim(r.descricao)); });
+          } catch (e) {
+            console.warn('dre-centro-custo: CT1010 err:', e.message);
+          }
         }
       }
 
@@ -580,22 +799,37 @@ module.exports = (app) => ({
         evolucao.push({ ymes, label: ymesLabel(ymes), valor: ag.valor, qtdItens: ag.qtdItens });
       });
 
-      // 8) Totais agregados
+      // 8) Totais agregados. Conta os documentos que REALMENTE entraram na arvore
+      // (respeitando escopo do usuario, conta oculta e mes que saiu pelo razao) —
+      // reprocessar o sc7 cru aqui inflaria o numero pro gestor restrito.
       const qtdPedidosUnicos = new Set();
-      sc7.forEach(r => {
-        const num = trim(r.numero);
-        const sc  = trim(r.origemSC) || trim(r.origemProcesso);
-        if (rejeitadosPC.has(num)) return;
-        if (sc && rejeitadosSC.has(sc)) return;
-        qtdPedidosUnicos.add(num);
-      });
+      porCC.forEach(ag => ag.pedidos.forEach(d => qtdPedidosUnicos.add(d)));
 
       const orcadoAnualTotal = [...orcamentoPorCC.values()].reduce((s, o) => s + o.valorOrcado, 0);
       const orcadoYTDTotal   = orcadoAnualTotal * fatorYTD;
 
+      // Fonte de cada mes do range — o frontend precisa dizer ao gestor se o numero
+      // ja e o contabil fechado ou ainda e provisorio (pedidos/titulos).
+      const fontePorMes = mesesNoRange.map(ymes => ({
+        ymes,
+        label: ymesLabel(ymes),
+        fonte: mesFechado(ymes) ? 'RAZAO' : 'PROVISORIO',
+        linhasRazao: toN(linhasRazao.get(ymes))
+      }));
+
       return res.json({
         periodo: { inicio, fim, ano: anoFim, mesFim },
         geradoEm: new Date().toISOString(),
+        // Escopo aplicado. restrito=true => o usuario so enxerga os CCs listados e
+        // as contas ocultas nao entram em NENHUM total desta resposta. Devolve so a
+        // CONTAGEM de contas ocultas — listar os codigos entregaria justamente o que
+        // se quer esconder.
+        escopo: {
+          restrito: escopo.restrito,
+          centrosCusto: escopo.restrito ? [...escopo.ccs] : null,
+          qtdContasOcultas: escopo.restrito ? escopo.contasOcultas.size : 0
+        },
+        fontePorMes,
         totais: {
           valorTotal,
           qtdPedidos: qtdPedidosUnicos.size,
@@ -608,6 +842,13 @@ module.exports = (app) => ({
           qtdTitulosDiretos,
           valorTitulosDiretos,
           qtdTitulosSemCC,
+          // Parcela vinda do razao (meses ja contabilizados) e quanto dela foi
+          // ajuste manual da contabilidade no fechamento.
+          qtdLancamentosRazao: qtdLancRazao,
+          valorRazao,
+          valorAjusteManual,
+          mesesPeloRazao: fontePorMes.filter(f => f.fonte === 'RAZAO').length,
+          mesesProvisorios: fontePorMes.filter(f => f.fonte === 'PROVISORIO').length,
           valorOrcadoAnual: orcadoAnualTotal || null,
           valorOrcadoYTD: orcadoYTDTotal || null,
           pctExecutadoYTD: orcadoYTDTotal > 0 ? (valorTotal / orcadoYTDTotal) * 100 : null

@@ -8,6 +8,9 @@ const toN  = (v) => Number(v || 0);
 module.exports = (app) => ({
   verb: 'get',
   route: '/dre/lancamentos',
+  // Perm 10001 (12/08/2026): estava sem requirePerm — drill titulo a titulo aberto
+  // a qualquer logado. O gestor restrito (10003) nao acessa esta visao.
+  middlewares: [require('../../middlewares/requirePerm')(app)([10001])],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;

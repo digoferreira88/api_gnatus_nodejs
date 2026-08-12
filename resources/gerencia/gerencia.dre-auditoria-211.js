@@ -18,6 +18,8 @@ const classificar = (h) => {
 module.exports = (app) => ({
   verb: 'get',
   route: '/dre/auditoria-211',
+  // Perm 10001 (12/08/2026): estava sem requirePerm (mesmo caso do /dre).
+  middlewares: [require('../../middlewares/requirePerm')(app)([10001])],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;
