@@ -7,7 +7,8 @@
 // estava devolvendo NN deslocado e carteira errada (descoberto 2026-05-29
 // comparando contra PDFs oficiais do Santander e Itau).
 //
-// Bancos suportados: 033 Santander (carteira 104) + 341 Itau (carteira 109).
+// Bancos suportados: 033 Santander (carteira 104) + 341 Itau (carteira 109)
+// + 237 Bradesco (carteira 09 — usado na cessao ao Acreditar FIDC).
 // Outros bancos: lancar erro (`BANCO_NAO_SUPORTADO`) — operador continua
 // usando Diego ate adicionarmos a carteira aqui.
 //
@@ -101,6 +102,19 @@ function campoLivreItau({ agencia, conta, nossoNumero, carteira }) {
   return cart + nn + dacNN + ag + cc + dacConta + '000';
 }
 
+// Campo livre Bradesco 237 — layout cobranca registrada:
+//   1-4    Agencia (4 digitos, sem DV)
+//   5-6    Carteira (2 digitos: 09 cobranca simples com registro, 06, 19...)
+//   7-17   Nosso Numero (11 digitos, SEM o DV)
+//   18-24  Conta (7 digitos, sem DV)
+//   25     Zero fixo
+// ✅ Validado digito a digito contra o boleto OFICIAL do Acreditar FIDC
+//    (docs/FIDIC/*.pdf): ag 2372 + cart 09 + NN 00000015765 + cc 0039947 + 0
+//    => linha 23792.37205 90000.001579 65003.994707 3 17120000015459.
+function campoLivreBradesco({ agencia, conta, nossoNumero, carteira }) {
+  return pad(agencia, 4) + pad(carteira || '09', 2) + pad(nossoNumero, 11) + pad(conta, 7) + '0';
+}
+
 // Monta o codigo de barras (44) a partir do "sem DV" (43) e DV geral.
 // Pos 1-4 = ID+Moeda, pos 5 = DV, pos 6-19 = fator+valor, pos 20-44 = livre.
 function montarCodigoBarras({ banco, fator, valor, campoLivre }) {
@@ -150,6 +164,9 @@ function calcular(opts) {
       break;
     case '341':
       campoLivre = campoLivreItau(opts);
+      break;
+    case '237':
+      campoLivre = campoLivreBradesco(opts);
       break;
     default:
       const err = new Error(`Banco ${banco} ainda nao suportado (BANCO_NAO_SUPORTADO).`);

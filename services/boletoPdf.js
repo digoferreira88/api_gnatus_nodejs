@@ -117,7 +117,7 @@ function renderBloco(doc, opts, kind) {
     banco, beneficiario, pagador, valor, vencimento,
     numeroDocumento, dataDocumento, nossoNumero,
     agencia, conta, carteira, especieDoc, linhaDigitavel,
-    codigoBarrasPng, instrucoes
+    codigoBarrasPng, instrucoes, beneficiarioFinal
   } = opts;
   const meta = BANCOS[trim(banco)] || BANCOS['033'];
 
@@ -215,9 +215,12 @@ function renderBloco(doc, opts, kind) {
   doc.font('Helvetica').fontSize(6).fillColor('#000').text(kind === 'recibo' ? 'Mensagem / Instrucoes' : 'Instrucoes', x0 + 2, y + 1);
   doc.font('Helvetica').fontSize(8).fillColor('#000');
   let yIns = y + 10;
-  (instrucoes || []).slice(0, 6).forEach(line => {
-    if (!line) return;
-    doc.text(trim(line), x0 + 3, yIns, { width: wLocal - 6, lineBreak: false });
+  // Limita as linhas ao que CABE na caixa (recibo=52pt -> 4 linhas; ficha=76pt -> 6).
+  // Sem isso o texto invade o bloco do Pagador logo abaixo (visto com boleto de
+  // cessao/FIDC, que traz 3 instrucoes fixas + juros/multa).
+  const maxLinhas = Math.max(1, Math.floor((instH - 12) / 10));
+  (instrucoes || []).filter(Boolean).slice(0, maxLinhas).forEach(line => {
+    doc.text(trim(line), x0 + 3, yIns, { width: wLocal - 6, lineBreak: false, ellipsis: true });
     yIns += 10;
   });
 
@@ -248,9 +251,16 @@ function renderBloco(doc, opts, kind) {
   doc.font('Helvetica').fontSize(8).text(endPag, x0 + 3, y + 20, { width: W - 6, lineBreak: false });
   y += pagH;
 
-  // Linha 7: Beneficiario Final (so label) + Autenticacao Mecanica a direita
+  // Linha 7: Beneficiario Final + Autenticacao Mecanica a direita.
+  // Em CESSAO (FIDC) o beneficiario do boleto e' o FUNDO e o "beneficiario final"
+  // (sacador/avalista) e' a Gnatus — preenchido via opts.beneficiarioFinal.
   doc.rect(x0, y, W, 16).lineWidth(0.5).strokeColor('#000').stroke();
   doc.font('Helvetica').fontSize(6).fillColor('#000').text('Beneficiario Final', x0 + 2, y + 1);
+  if (beneficiarioFinal && trim(beneficiarioFinal.nome)) {
+    doc.font('Helvetica-Bold').fontSize(7).fillColor('#000').text(
+      trim(beneficiarioFinal.nome) + (trim(beneficiarioFinal.cnpj) ? '  CNPJ ' + fmtCgc(beneficiarioFinal.cnpj) : ''),
+      x0 + 3, y + 7, { width: W - 120, lineBreak: false, ellipsis: true });
+  }
   doc.font('Helvetica').fontSize(7).text('Autenticacao Mecanica', x0 + W - 110, y + 6, { width: 105, align: 'right' });
   y += 16;
 

@@ -5,6 +5,7 @@
 // cartoes ficam de fora porque nao recebem boleto.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
+const PortadorCessao = require('../../services/portadorCessao');
 const trim = (v) => String(v || '').trim();
 
 // codigo de banco -> rotulo curto. Bancos que nao estiverem aqui sao
@@ -48,6 +49,28 @@ module.exports = (app) => ({
           rotulo: `${BANCOS_COBRANCA[trim(r.cod)]} · ag ${trim(r.agencia)} · cc ${trim(r.cc)}`
         }))
         .sort((a, b) => a.rotulo.localeCompare(b.rotulo));
+
+      // Portadores de CESSÃO (FIDC) — não passam no filtro acima porque o SA6010
+      // deles vem zerado (ag '00000'), mas fazem cobrança registrada. A agência/
+      // conta enviadas são as do PROTHEUS (SA6010/SEE010, zeradas) — é o que o
+      // gerar-borderô usa pra achar a carteira. Os dados bancários REAIS do boleto
+      // (banco liquidante/ag/conta do fundo) vêm de services/portadorCessao.
+      for (const p of PortadorCessao.listar()) {
+        const sa6 = rows.find((r) => trim(r.cod) === p.portador);
+        if (!sa6) continue;                        // portador não cadastrado no Protheus — não oferece
+        bancos.push({
+          cod: p.portador,
+          nome: trim(sa6.nome) || p.nome,
+          agencia: trim(sa6.agencia),               // p/ gerar-borderô (Protheus)
+          conta: trim(sa6.cc),
+          contaDv: trim(sa6.dv),
+          cc: trim(sa6.cc) + (trim(sa6.dv) ? `-${trim(sa6.dv)}` : ''),
+          cessao: true,                             // front pode sinalizar "cessão"
+          bancoBoleto: p.bancoBoleto,               // 237 — banco do boleto/barcode
+          rotulo: `${p.nome} · cessão (boleto ${p.bancoBoleto} ag ${p.agencia} cc ${p.conta})`
+        });
+      }
+
       return res.json({ bancos });
     } catch (err) {
       console.error('boleto-bancos:', err);

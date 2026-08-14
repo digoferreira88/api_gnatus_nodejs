@@ -14,6 +14,7 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const ProtheusBoleto = require('../../services/protheusBoleto');
 const BoletoPdf = require('../../services/boletoPdf');
+const PortadorCessao = require('../../services/portadorCessao');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
@@ -126,12 +127,20 @@ module.exports = (app) => ({
       // Vencimento usado pra calcular linha + mostrar no PDF (precisam bater).
       const venctoCalc = se1.venctoOriginal || trim(r.vencimento);
 
+      // Dados bancarios EFETIVOS do boleto. Em portador de CESSAO (FIDC) o lote
+      // guarda a ag/conta ZERADA do Protheus (serve pro borderô); o boleto sai
+      // no banco liquidante, na conta do fundo (ex.: 044 -> Bradesco 237).
+      const bko = PortadorCessao.dadosBoleto({
+        banco: trim(r.banco_cod), agencia: trim(r.banco_agencia), conta: trim(r.banco_conta)
+      });
+
       // 4) Linha digitavel — calculada localmente a partir dos dados base
-      //    (NN do PG, ag/conta do lote, valor do titulo, E1_VENCTO original).
+      //    (NN do PG, ag/conta efetivas, valor do titulo, E1_VENCTO original).
       const lin = await ProtheusBoleto.linhaDigitavel({
-        banco: trim(r.banco_cod),
-        agencia: trim(r.banco_agencia),
-        conta: trim(r.banco_conta),
+        banco: bko.banco,
+        agencia: bko.agencia,
+        conta: bko.conta,
+        carteira: bko.carteira,
         nossoNumero: trim(r.nosso_numero),
         valor: N(r.valor),
         vencimento: venctoCalc
@@ -145,28 +154,35 @@ module.exports = (app) => ({
         });
       }
 
-      // 5) Monta instrucoes (juros R$/dia + multa apos venc)
-      const instrucoes = BoletoPdf.montarInstrucoes({
-        jurosDia: se1.jurosDia,
-        multaPct: se1.multaPct,
-        valor: r.valor,
-        vencimento: venctoCalc
-      });
+      // 5) Monta instrucoes (juros R$/dia + multa apos venc). Em cessao, as
+      //    instrucoes do FUNDO vem primeiro (obrigatorias no boleto cedido).
+      const instrucoes = [
+        ...(bko.instrucoes || []),
+        ...BoletoPdf.montarInstrucoes({
+          jurosDia: se1.jurosDia,
+          multaPct: se1.multaPct,
+          valor: r.valor,
+          vencimento: venctoCalc
+        })
+      ];
 
       // 6) Gera o PDF
       const pdfBuffer = await BoletoPdf.gerarBoletoPdf({
-        banco: trim(r.banco_cod),
-        beneficiario: BENEFICIARIO_GNATUS,
+        banco: bko.banco,
+        beneficiario: bko.cessao && bko.beneficiarioFinal
+          ? { ...bko.beneficiarioFinal, endereco: BENEFICIARIO_GNATUS.endereco }   // cedido: quem cobra e' o FUNDO
+          : BENEFICIARIO_GNATUS,
+        beneficiarioFinal: bko.cessao ? BENEFICIARIO_GNATUS : null,                // sacador/avalista = Gnatus
         pagador,
         valor: N(r.valor),
         vencimento: venctoCalc,
         numeroDocumento: trim(r.numero),
         dataDocumento: se1.emissao || venctoCalc,
         nossoNumero: trim(r.nosso_numero) || trim(lin.body?.nosso_numero),
-        agencia: trim(r.banco_agencia),
-        conta: trim(r.banco_conta),
-        carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (trim(r.banco_cod) === '033' ? 'PENH. ELETR' : '109'),
-        especieDoc: ESPECIE_POR_BANCO[trim(r.banco_cod)] || 'DM',
+        agencia: bko.agencia,
+        conta: bko.conta,
+        carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (bko.banco === '033' ? 'PENH. ELETR' : '109'),
+        especieDoc: bko.especie || ESPECIE_POR_BANCO[bko.banco] || 'DM',
         linhaDigitavel,
         codigoBarras,
         instrucoes

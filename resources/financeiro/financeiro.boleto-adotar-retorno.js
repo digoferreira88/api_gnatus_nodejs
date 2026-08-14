@@ -23,8 +23,20 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const Auditoria = require('../../services/auditoria');
 const Cnab = require('../../services/cnabRetornoFiltro');
+const PortadorCessao = require('../../services/portadorCessao');
 
 const trim = (v) => String(v || '').trim();
+
+// Borderôs de TESTE — títulos que existem na SE1 mas cujos boletos NÃO serão
+// honrados (homologação com o FIDC). São IGNORADOS aqui pra que um retorno de
+// teste importado por engano não os torne "registrados" e, pior, disparáveis ao
+// cliente real. Ex.: borderô 001514 (teste Acreditar FIDC, 11/08/2026 — os 6
+// títulos serão zerados no Protheus antes da produção).
+// Configurável: BOLETO_BORDEROS_TESTE=001514,001520
+const BORDEROS_TESTE = () => new Set(
+  String(process.env.BOLETO_BORDEROS_TESTE || '001514')
+    .split(',').map((s) => s.trim()).filter(Boolean)
+);
 
 module.exports = (app) => ({
   verb: 'post',
@@ -39,13 +51,22 @@ module.exports = (app) => ({
     const simular = req.body?.simular !== false;
 
     if (!conteudoBase64) return res.status(400).json({ message: 'Envie o conteudo do arquivo (.RET) em conteudo_base64.' });
-    if (banco !== '033') return res.status(400).json({ message: 'Por enquanto so Santander (033) e suportado neste fluxo.' });
+
+    // Portador de CESSÃO (FIDC): o layout do .RET é o do BANCO LIQUIDANTE
+    // (ex.: portador 044 Acreditar -> retorno Bradesco 237), não o do portador.
+    const cessao = PortadorCessao.get(banco);
+    const bancoLayout = cessao ? cessao.bancoBoleto : banco;
+    if (banco !== '033' && !cessao) {
+      return res.status(400).json({ message: `Banco ${banco} não suportado neste fluxo (hoje: 033 Santander e portadores de cessão ${PortadorCessao.codigos().join('/')}).` });
+    }
 
     try {
       const texto = Buffer.from(conteudoBase64, 'base64').toString('latin1');
-      const detalhes = Cnab.parseDetalhes(texto);
-      // Entrada confirmada (02) com nosso numero atribuido
-      const confirmados = detalhes.filter(d => d.ocorrencia === '02' && d.nossoNumero && d.nossoNumero !== '00000000');
+      const detalhes = Cnab.parseDetalhesPorBanco(texto, bancoLayout);
+      // Entrada confirmada (02) com nosso numero atribuido. O NN tem largura
+      // diferente por banco (8 Santander, 11 Bradesco) — testa "só zeros".
+      const confirmados = detalhes.filter(d =>
+        d.ocorrencia === '02' && d.nossoNumero && !/^0+$/.test(d.nossoNumero));
       if (!confirmados.length) {
         return res.json({ ok: true, atualizados: 0, candidatos: 0, mensagem: 'Nenhuma entrada confirmada (02) com nosso numero no arquivo.' });
       }
@@ -97,10 +118,14 @@ module.exports = (app) => ({
       // Classifica. Atualiza se: PENDENTE, ou sem nosso numero, ou sem borderô
       // (este ultimo permite backfill do borderô em titulos ja registrados).
       const aAtualizar = [];   // {id, id_lote, nosso, numbor}
-      let jaOk = 0, baixadoSkip = 0;
+      let jaOk = 0, baixadoSkip = 0, testeSkip = 0;
+      const testes = BORDEROS_TESTE();
       const orfaos = [];
       for (const [k, nosso] of nossoPorChave.entries()) {
         if (baixados.has(k)) { baixadoSkip++; continue; }
+        // Borderô de TESTE (boleto não será honrado) -> nunca registrar, senão
+        // vira disparável e o cliente REAL recebe um boleto de homologação.
+        if (testes.has(numborPorChave.get(k) || '')) { testeSkip++; continue; }
         const rows = existentesPorChave.get(k);
         if (!rows || !rows.length) { orfaos.push(k); continue; }
         const numbor = numborPorChave.get(k) || '';
@@ -112,10 +137,12 @@ module.exports = (app) => ({
       }
 
       const resumo = {
+        banco, banco_layout: bancoLayout, cessao: !!cessao,
         candidatos: confirmados.length,
         a_atualizar: aAtualizar.length,
         ja_registrados: jaOk,
         ja_baixados: baixadoSkip,
+        ignorados_teste: testeSkip,     // borderô de homologação — não vira disparável
         orfaos: orfaos.length
       };
 

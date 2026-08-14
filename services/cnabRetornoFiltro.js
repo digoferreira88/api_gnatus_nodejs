@@ -52,6 +52,57 @@ function parseDetalhes(conteudo) {
   return out;
 }
 
+// ===================== BRADESCO 237 (CNAB400 retorno) =====================
+// Layout POSICIONAL (mais robusto que regex). Posicoes 0-indexed, validadas
+// digito a digito contra o retorno REAL do Acreditar FIDC (docs/FIDIC/
+// RETORNO_FIDC.RET) usando os nossos numeros do .REM como gabarito:
+//
+//   [37..62)  Uso da empresa (25) = prefixo(3) + numero(9) + parcela(2) + especie(2)
+//             ex.: "PED090988   12DP" -> PED / 090988 / 12 / DP  (bate com a SE1)
+//   [70..81)  Nosso Numero (11, SEM DV)   ex.: "00000015761"
+//   [81]      DV do Nosso Numero          ex.: "1"  (pode ser 'P' no Bradesco)
+//   [108..110) Codigo de ocorrencia (2)   ex.: "02" = entrada confirmada
+//   [110..116) Data da ocorrencia DDMMAA
+//   [152..165) Valor do titulo (13, 2 decimais implicitas)
+//
+// ⚠️ O DV do Bradesco pode ser a letra 'P' (quando o resto do mod11 da 10), por
+// isso `dvNossoNumero` e' string e o NN cru NAO deve ser tratado como numero.
+const BR = { USO: [37, 62], NN: [70, 81], DV: 81, OCOR: [108, 110], DATA: [110, 116], VALOR: [152, 165] };
+
+function parseDetalhesBradesco(conteudo) {
+  const linhas = String(conteudo || '').split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i < linhas.length; i++) {
+    const l = linhas[i];
+    if (!l || l[0] !== '1' || l.length < 170) continue;      // so detalhe de largura plausivel
+    const uso = l.slice(BR.USO[0], BR.USO[1]);
+    const nn = l.slice(BR.NN[0], BR.NN[1]).trim();
+    const ocor = l.slice(BR.OCOR[0], BR.OCOR[1]).trim();
+    if (!/^\d+$/.test(nn) || !/^\d{2}$/.test(ocor)) continue;  // linha fora do layout -> ignora
+    out.push({
+      linha: i + 1,
+      prefixo: uso.slice(0, 3).trim(),
+      numero: uso.slice(3, 12).trim(),
+      parcela: uso.slice(12, 14).trim(),
+      especie: uso.slice(14, 16).trim(),
+      nossoNumero: nn,                                        // 11 digitos, sem DV
+      dvNossoNumero: l[BR.DV],                                // pode ser digito ou 'P'
+      ocorrencia: ocor,                                       // 02=entrada confirmada, 06=liquidado...
+      dataOcorrencia: l.slice(BR.DATA[0], BR.DATA[1]),        // DDMMAA
+      valor: Number(l.slice(BR.VALOR[0], BR.VALOR[1])) / 100
+    });
+  }
+  return out;
+}
+
+// Despacha o parser certo pelo banco. '237' = posicional Bradesco; demais
+// (033 Santander) seguem no parser por regex.
+function parseDetalhesPorBanco(conteudo, banco) {
+  return String(banco || '').trim() === '237'
+    ? parseDetalhesBradesco(conteudo)
+    : parseDetalhes(conteudo);
+}
+
 // Lista as chaves de todas as linhas-detalhe (tipo '1') de um conteudo CNAB.
 function extrairChaves(conteudo) {
   const linhas = String(conteudo || '').split(/\r?\n/);
@@ -104,4 +155,4 @@ function filtrarBaixados(conteudo, baixadosSet) {
   return { conteudo: out.join(eol) + eol, removidos, mantidos: mantidos.length, total: detalhes.length };
 }
 
-module.exports = { filtrarBaixados, extrairChaves, chaveLinha, parseDetalhes };
+module.exports = { filtrarBaixados, extrairChaves, chaveLinha, parseDetalhes, parseDetalhesBradesco, parseDetalhesPorBanco };

@@ -18,6 +18,7 @@ const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005
 const Auditoria = require('../../services/auditoria');
 const ProtheusBoleto = require('../../services/protheusBoleto');
 const BoletoPdf = require('../../services/boletoPdf');
+const PortadorCessao = require('../../services/portadorCessao');
 const Email = require('../../services/emailService');
 const Suri = require('../../services/suri');
 
@@ -295,10 +296,16 @@ module.exports = (app) => ({
         const seKeyL = `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}|${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`;
         const se1L = se1Map.get(seKeyL) || {};
         const venctoCalc = trim(se1L.venctoOriginal) || trim(r.vencimento);
+        // Portador de CESSAO (FIDC) -> boleto sai no banco liquidante/conta do
+        // fundo (o lote guarda a ag/conta zerada do Protheus). Ver portadorCessao.
+        const bko = PortadorCessao.dadosBoleto({
+          banco: trim(r.banco_cod), agencia: trim(r.banco_agencia), conta: trim(r.banco_conta)
+        });
         const lin = await ProtheusBoleto.linhaDigitavel({
-          banco: trim(r.banco_cod),
-          agencia: trim(r.banco_agencia),
-          conta: trim(r.banco_conta),
+          banco: bko.banco,
+          agencia: bko.agencia,
+          conta: bko.conta,
+          carteira: bko.carteira,
           nossoNumero: trim(r.nosso_numero),
           valor: N(r.valor),
           vencimento: venctoCalc
@@ -327,13 +334,19 @@ module.exports = (app) => ({
             // linha (senao a ficha visualmente diverge do codigo de barras).
             // Usamos venctoCalc = E1_VENCTO original (ja calculado acima).
             const se1 = se1L || { emissao: '', jurosDia: 0, multaPct: 0 };
-            const instrucoes = BoletoPdf.montarInstrucoes({
-              jurosDia: se1.jurosDia, multaPct: se1.multaPct,
-              valor: r.valor, vencimento: venctoCalc
-            });
+            const instrucoes = [
+              ...(bko.instrucoes || []),                       // cessao: avisos do fundo
+              ...BoletoPdf.montarInstrucoes({
+                jurosDia: se1.jurosDia, multaPct: se1.multaPct,
+                valor: r.valor, vencimento: venctoCalc
+              })
+            ];
             const pdfBuf = await BoletoPdf.gerarBoletoPdf({
-              banco: trim(r.banco_cod),
-              beneficiario: BENEFICIARIO_GNATUS,
+              banco: bko.banco,
+              beneficiario: bko.cessao && bko.beneficiarioFinal
+                ? { ...bko.beneficiarioFinal, endereco: BENEFICIARIO_GNATUS.endereco }
+                : BENEFICIARIO_GNATUS,
+              beneficiarioFinal: bko.cessao ? BENEFICIARIO_GNATUS : null,
               pagador: {
                 nome: contato.nome || trim(r.cliente_nome), cgc: contato.cgc || '',
                 endereco: contato.endereco || '', bairro: contato.bairro || '',
@@ -343,9 +356,9 @@ module.exports = (app) => ({
               numeroDocumento: trim(r.numero),
               dataDocumento: se1.emissao || venctoCalc,
               nossoNumero: trim(r.nosso_numero) || trim(lin.body?.nosso_numero),
-              agencia: trim(r.banco_agencia), conta: trim(r.banco_conta),
-              carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (trim(r.banco_cod) === '033' ? 'PENH. ELETR' : '109'),
-              especieDoc: ESPECIE_POR_BANCO[trim(r.banco_cod)] || 'DM',
+              agencia: bko.agencia, conta: bko.conta,
+              carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (bko.banco === '033' ? 'PENH. ELETR' : '109'),
+              especieDoc: bko.especie || ESPECIE_POR_BANCO[bko.banco] || 'DM',
               linhaDigitavel: linha, codigoBarras, instrucoes
             });
             const fname = `boleto_${trim(r.numero)}${trim(r.parcela) ? '-' + trim(r.parcela) : ''}.pdf`;

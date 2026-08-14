@@ -19,8 +19,10 @@ const N = (v) => Number(v || 0);
 // Convenio + carteira padrao por banco (cobranca registrada Gnatus).
 // 033 Santander: cedente 3418790, carteira 104 (Penhor Eletronico com registro).
 // 341 Itau: cedente vem da conta corrente (sem DV), carteira 109.
+// 237 Bradesco: cedente = agencia+conta (vao direto no campo livre), carteira 09
+// — usado na cessao ao Acreditar FIDC (ver services/portadorCessao.js).
 const CONVENIO_POR_BANCO = { '033': '3418790' };
-const CARTEIRA_POR_BANCO = { '033': '104', '341': '109' };
+const CARTEIRA_POR_BANCO = { '033': '104', '341': '109', '237': '09' };
 
 /**
  * Calcula a linha digitavel + codigo de barras de um titulo registrado.
