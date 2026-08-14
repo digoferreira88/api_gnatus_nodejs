@@ -103,14 +103,17 @@ module.exports = (app) => ({
       // custom 'Z2' da SX5 (é o que o X3_VALID do campo valida). 1=CHEQUE,
       // 2=DINHEIRO, 3=CARTAO, 4=BOLETO, 6=FINANCIAMENTO... Carrega a cada request
       // (10 linhas); se falhar, segue só com o código.
+      // Idem pro TIPO do título (E1_TIPO): descrição na SX5 tabela '05' padrão
+      // (DP=Duplicata, NF=Nota Fiscal, RA=Recebimento Antecipado, BOL=Boleto...).
       const formaLabel = new Map();
+      const tipoLabel = new Map();
       try {
-        const z2 = await Protheus.connectAndQuery(
-          `SELECT RTRIM(X5_CHAVE) chave, RTRIM(X5_DESCRI) descr
+        const x5 = await Protheus.connectAndQuery(
+          `SELECT RTRIM(X5_TABELA) tab, RTRIM(X5_CHAVE) chave, RTRIM(X5_DESCRI) descr
              FROM SX5010 WITH (NOLOCK)
-            WHERE D_E_L_E_T_ <> '*' AND RTRIM(X5_TABELA) = 'Z2'`, {});
-        z2.forEach(x => formaLabel.set(trim(x.chave), trim(x.descr)));
-      } catch (e) { console.warn('contas-receber: SX5 Z2 indisponivel:', e.message); }
+            WHERE D_E_L_E_T_ <> '*' AND RTRIM(X5_TABELA) IN ('Z2', '05')`, {});
+        x5.forEach(x => (trim(x.tab) === 'Z2' ? formaLabel : tipoLabel).set(trim(x.chave), trim(x.descr)));
+      } catch (e) { console.warn('contas-receber: SX5 Z2/05 indisponivel:', e.message); }
 
       // Observações da equipe (Postgres, migration 89) — merge por chave da SE1.
       const obsMap = new Map();
@@ -129,6 +132,7 @@ module.exports = (app) => ({
           filial: trim(r.filial),
           formaPagCod: trim(r.formaPagCod),
           formaPag: formaLabel.get(trim(r.formaPagCod)) || (trim(r.formaPagCod) ? `Cód. ${trim(r.formaPagCod)}` : ''),
+          tipoDescr: tipoLabel.get(trim(r.tipo)) || '',
           prefixo: trim(r.prefixo),
           numero: trim(r.numero),
           parcela: trim(r.parcela),
