@@ -34,9 +34,12 @@ const hojeProtheus = () => {
 module.exports = (app) => ({
   verb: 'get',
   route: '/contas-receber',
+  // Perm 8002 (14/08/2026): estava sem requirePerm — qualquer logado listava a
+  // carteira inteira via API (a tela sempre exigiu 8002; único consumidor).
+  middlewares: [require('../../middlewares/requirePerm')(app)([8002])],
 
   handler: async (req, res) => {
-    const { Protheus } = app.services;
+    const { Protheus, Pg } = app.services;
     const { inicio, fim, status, cliente, tipoData } = req.query;
 
     const dtInicio = toProtheusDate(inicio);
@@ -56,6 +59,8 @@ module.exports = (app) => ({
 
     const sql = `
       SELECT
+        RTRIM(se1.E1_FILIAL)  AS filial,
+        RTRIM(se1.E1_FORMAPG) AS formaPagCod,
         RTRIM(se1.E1_PREFIXO) AS prefixo,
         RTRIM(se1.E1_NUM)     AS numero,
         RTRIM(se1.E1_PARCELA) AS parcela,
@@ -94,8 +99,36 @@ module.exports = (app) => ({
       const hoje = hojeProtheus();
       const statusList = status ? String(status).split(',').map(s => s.trim()).filter(Boolean) : null;
 
+      // Forma de pagamento (E1_FORMAPG): o de-para código -> rótulo é a tabela
+      // custom 'Z2' da SX5 (é o que o X3_VALID do campo valida). 1=CHEQUE,
+      // 2=DINHEIRO, 3=CARTAO, 4=BOLETO, 6=FINANCIAMENTO... Carrega a cada request
+      // (10 linhas); se falhar, segue só com o código.
+      const formaLabel = new Map();
+      try {
+        const z2 = await Protheus.connectAndQuery(
+          `SELECT RTRIM(X5_CHAVE) chave, RTRIM(X5_DESCRI) descr
+             FROM SX5010 WITH (NOLOCK)
+            WHERE D_E_L_E_T_ <> '*' AND RTRIM(X5_TABELA) = 'Z2'`, {});
+        z2.forEach(x => formaLabel.set(trim(x.chave), trim(x.descr)));
+      } catch (e) { console.warn('contas-receber: SX5 Z2 indisponivel:', e.message); }
+
+      // Observações da equipe (Postgres, migration 89) — merge por chave da SE1.
+      const obsMap = new Map();
+      try {
+        const obsRows = await Pg.connectAndQuery(
+          `SELECT filial, prefixo, numero, parcela, tipo, obs, atualizado_por, atualizado_em
+             FROM tab_fin_receber_obs`, {});
+        obsRows.forEach(o => obsMap.set(
+          [trim(o.filial), trim(o.prefixo), trim(o.numero), trim(o.parcela), trim(o.tipo)].join('|'),
+          { obs: o.obs, por: trim(o.atualizado_por), em: o.atualizado_em }
+        ));
+      } catch (e) { console.warn('contas-receber: tab_fin_receber_obs indisponivel (migration 89?):', e.message); }
+
       const dados = rows
         .map((r) => ({
+          filial: trim(r.filial),
+          formaPagCod: trim(r.formaPagCod),
+          formaPag: formaLabel.get(trim(r.formaPagCod)) || (trim(r.formaPagCod) ? `Cód. ${trim(r.formaPagCod)}` : ''),
           prefixo: trim(r.prefixo),
           numero: trim(r.numero),
           parcela: trim(r.parcela),
@@ -124,6 +157,10 @@ module.exports = (app) => ({
             E1_BAIXA: r.dataBaixa
           }, hoje)
         }))
+        .map((d) => {
+          const o = obsMap.get([d.filial, d.prefixo, d.numero, d.parcela, d.tipo].join('|'));
+          return { ...d, obs: o ? o.obs : null, obsPor: o ? o.por : null, obsEm: o ? o.em : null };
+        })
         .filter((d) => !statusList || statusList.includes(d.status.codigo));
 
       return res.json({
