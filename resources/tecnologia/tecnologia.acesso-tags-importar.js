@@ -25,14 +25,18 @@ module.exports = (app) => ({
     const posVistas = new Map();
     const tagVistas = new Map();
     const norm = [];
+    let puladas = 0;
     linhas.forEach((l, i) => {
       const n = i + 1;
       const posicao = Number(trim(l.posicao).replace(/^0+/, '') || NaN);
       const colaborador = trim(l.colaborador).slice(0, 120);
       const setor = trim(l.setor).slice(0, 80);
       const tag = trim(l.tag).slice(0, 40);
+      // Posição livre na planilha (sem colaborador e sem tag) NÃO é erro — a
+      // planilha real tem as 1000 linhas e a maioria vazia; pula em silêncio.
+      if (!colaborador && !tag) { puladas++; return; }
       if (!Number.isInteger(posicao) || posicao < 1 || posicao > 1000) { erros.push(`linha ${n}: posição inválida ("${trim(l.posicao)}")`); return; }
-      if (!colaborador) { erros.push(`linha ${n}: colaborador vazio (posição ${posicao})`); return; }
+      if (!colaborador) { erros.push(`linha ${n}: tag ${tag} sem colaborador (posição ${posicao})`); return; }
       if (posVistas.has(posicao)) { erros.push(`linha ${n}: posição ${posicao} repetida (linha ${posVistas.get(posicao)})`); return; }
       posVistas.set(posicao, n);
       if (tag) {
@@ -42,7 +46,12 @@ module.exports = (app) => ({
       norm.push({ posicao, colaborador, setor, tag });
     });
     if (erros.length) {
+      // Log server-side pra diagnóstico (o 400 não passa pelo console de outro jeito)
+      console.warn(`acesso-tags-importar: recusado p/ user ${trim(user?.NOME)} — ${erros.length} erro(s):`, erros.slice(0, 5).join(' | '));
       return res.status(400).json({ message: 'Importação recusada — corrija e reenvie.', erros: erros.slice(0, 30), totalErros: erros.length });
+    }
+    if (!norm.length) {
+      return res.status(400).json({ message: `Nenhuma linha com dados (${puladas} posição(ões) livre(s) puladas).` });
     }
 
     // Sem limparAntes, tag do lote não pode colidir com posição que fica no banco
@@ -59,6 +68,7 @@ module.exports = (app) => ({
         });
       }
       if (erros.length) {
+        console.warn(`acesso-tags-importar: colisão de tags p/ user ${trim(user?.NOME)}:`, erros.slice(0, 5).join(' | '));
         return res.status(409).json({ message: 'Tags do lote colidem com o cadastro atual.', erros: erros.slice(0, 30), totalErros: erros.length });
       }
     }
@@ -84,7 +94,7 @@ module.exports = (app) => ({
         descricao: `Importou ${norm.length} posição(ões) da planilha${limparAntes ? ' (limpou o cadastro antes)' : ''}`,
         meta: { total: norm.length, limparAntes }
       });
-      return res.json({ ok: true, importadas: norm.length, limparAntes });
+      return res.json({ ok: true, importadas: norm.length, puladas, limparAntes });
     } catch (err) {
       console.error('tecnologia/acesso-tags-importar:', err);
       return res.status(500).json({ message: 'Erro: ' + err.message });
