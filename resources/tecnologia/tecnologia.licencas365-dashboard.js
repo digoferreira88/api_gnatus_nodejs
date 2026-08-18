@@ -32,11 +32,17 @@ module.exports = (app) => ({
         }));
       } catch (e) { console.warn('licencas365: tab_m365_licenca_custo indisponivel (migration 93?):', e.message); }
 
+      // SKUs gratuitos/trial vêm do Graph com prepaidUnits gigantes (Flow Free =
+      // 1.000.000 etc.) e explodiriam os totais ("1 milhão de licenças contratadas").
+      // >= 10000 unidades = tratamos como ILIMITADA: aparece na tabela, fica fora
+      // dos somatórios.
+      const ILIMITADA = 10000;
       const licencas = skus.map(s => {
         const c = custos.get(trim(s.partNumber));
         const valorMensal = c ? c.valorMensal : null;
         return {
           ...s,
+          ilimitada: s.total >= ILIMITADA,
           pctUso: s.total > 0 ? +(s.atribuidas / s.total * 100).toFixed(1) : 0,
           valorMensal,
           custoContratado: valorMensal != null ? +(s.total * valorMensal).toFixed(2) : null,
@@ -48,16 +54,19 @@ module.exports = (app) => ({
         };
       }).sort((a, b) => b.atribuidas - a.atribuidas);
 
-      const soma = (f) => licencas.reduce((s, l) => s + (f(l) || 0), 0);
+      // Totais só com SKUs pagos/limitados (ilimitados distorceriam tudo)
+      const pagas = licencas.filter(l => !l.ilimitada);
+      const soma = (f) => pagas.reduce((s, l) => s + (f(l) || 0), 0);
       return res.json({
         geradoEm: new Date().toISOString(),
         totais: {
           skus: licencas.length,
+          skusIlimitadas: licencas.length - pagas.length,
           licencasTotal: soma(l => l.total),
           licencasAtribuidas: soma(l => l.atribuidas),
           licencasDisponiveis: soma(l => l.disponiveis),
-          // Custos consideram só SKUs com valor cadastrado
-          skusComValor: licencas.filter(l => l.valorMensal != null).length,
+          // Custos consideram só SKUs pagos com valor cadastrado
+          skusComValor: pagas.filter(l => l.valorMensal != null).length,
           custoContratado: +soma(l => l.custoContratado).toFixed(2),
           custoEmUso: +soma(l => l.custoEmUso).toFixed(2),
           custoOcioso: +soma(l => l.custoOcioso).toFixed(2)
