@@ -1,5 +1,5 @@
-// GET /tecnologia/acesso-tags — lista as posições ocupadas do controle de acesso
-// Intelbras (tab_acesso_tag). Perm 1034. A tela completa as 1000 posições vazias.
+// GET /tecnologia/acesso-tags — dispositivos (controladores Intelbras) + posições
+// ocupadas de cada um. Perm 1034. A tela monta uma aba por dispositivo.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1034]);
 
@@ -11,14 +11,19 @@ module.exports = (app) => ({
   handler: async (req, res) => {
     const { Pg } = app.services;
     try {
-      const rows = await Pg.connectAndQuery(`
-        SELECT posicao, colaborador, setor, tag, obs, atualizado_por, atualizado_em
-          FROM tab_acesso_tag ORDER BY posicao`, {});
+      const dispositivos = await Pg.connectAndQuery(`
+        SELECT d.id, d.nome, d.local, d.capacidade, d.ordem,
+               COUNT(t.posicao)::int ocupadas
+          FROM tab_acesso_dispositivo d
+          LEFT JOIN tab_acesso_tag t ON t.dispositivo_id = d.id
+         GROUP BY d.id ORDER BY d.ordem, d.id`, {});
+      const posicoes = await Pg.connectAndQuery(`
+        SELECT dispositivo_id, posicao, colaborador, setor, tag, obs, atualizado_por, atualizado_em
+          FROM tab_acesso_tag ORDER BY dispositivo_id, posicao`, {});
       return res.json({
-        total: rows.length,
-        capacidade: 1000,
         geradoEm: new Date().toISOString(),
-        posicoes: rows
+        dispositivos,
+        posicoes
       });
     } catch (err) {
       console.error('tecnologia/acesso-tags-list:', err);

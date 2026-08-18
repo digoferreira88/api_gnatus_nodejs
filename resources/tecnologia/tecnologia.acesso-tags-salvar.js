@@ -1,6 +1,8 @@
-// POST /tecnologia/acesso-tags — grava UMA posição do controle de acesso.
-// Body: { posicao (1..1000), colaborador, setor, tag, obs }.
+// POST /tecnologia/acesso-tags — grava UMA posição de UM controlador.
+// Body: { dispositivoId, posicao (1..1000), colaborador, setor, tag, obs }.
 // colaborador vazio = LIBERA a posição (delete). Perm 1034. Auditado.
+// Tag duplicada é bloqueada POR DISPOSITIVO — a mesma tag física pode existir
+// em controladores diferentes (o crachá abre várias portas).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1034]);
 const Auditoria = require('../../services/auditoria');
@@ -15,7 +17,11 @@ module.exports = (app) => ({
     const { Pg } = app.services;
     const user = req.user && req.user[0];
     const b = req.body || {};
+    const dispositivoId = Number(b.dispositivoId);
     const posicao = Number(b.posicao);
+    if (!Number.isInteger(dispositivoId) || dispositivoId < 1) {
+      return res.status(400).json({ message: 'dispositivoId é obrigatório.' });
+    }
     if (!Number.isInteger(posicao) || posicao < 1 || posicao > 1000) {
       return res.status(400).json({ message: 'posicao deve ser um inteiro entre 1 e 1000.' });
     }
@@ -26,44 +32,50 @@ module.exports = (app) => ({
     const por = trim(user?.NOME) || null;
 
     try {
+      const disp = await Pg.connectAndQuery(
+        `SELECT nome FROM tab_acesso_dispositivo WHERE id = @d`, { d: dispositivoId });
+      if (!disp.length) return res.status(404).json({ message: 'Controlador não encontrado.' });
+      const nomeDisp = trim(disp[0].nome);
+
       if (!colaborador) {
         const del = await Pg.connectAndQuery(
-          `DELETE FROM tab_acesso_tag WHERE posicao = @p RETURNING colaborador`, { p: posicao });
+          `DELETE FROM tab_acesso_tag WHERE dispositivo_id = @d AND posicao = @p RETURNING colaborador`,
+          { d: dispositivoId, p: posicao });
         Auditoria.registrar(app, {
           modulo: 'Tecnologia', submodulo: 'AcessoTags', acao: 'TAG_LIBERAR', severidade: 'INFO', req,
-          entidade: 'acesso_tag', entidadeId: String(posicao),
-          descricao: `Liberou a posição ${posicao}${del.length ? ` (era ${trim(del[0].colaborador)})` : ''}`
+          entidade: 'acesso_tag', entidadeId: `${dispositivoId}:${posicao}`,
+          descricao: `[${nomeDisp}] Liberou a posição ${posicao}${del.length ? ` (era ${trim(del[0].colaborador)})` : ''}`
         });
         return res.json({ ok: true, liberada: true });
       }
 
-      // Tag duplicada em outra posição é quase sempre erro de digitação — avisa
-      // e bloqueia (o aparelho recusaria/confundiria o acesso).
+      // Duplicata NO MESMO controlador é erro de digitação; em outro é normal.
       if (tag) {
         const dup = await Pg.connectAndQuery(
-          `SELECT posicao, colaborador FROM tab_acesso_tag WHERE tag = @tag AND posicao <> @p LIMIT 1`,
-          { tag, p: posicao });
+          `SELECT posicao, colaborador FROM tab_acesso_tag
+            WHERE dispositivo_id = @d AND tag = @tag AND posicao <> @p LIMIT 1`,
+          { d: dispositivoId, tag, p: posicao });
         if (dup.length) {
           return res.status(409).json({
-            message: `Tag ${tag} já está na posição ${dup[0].posicao} (${trim(dup[0].colaborador)}).`
+            message: `Tag ${tag} já está na posição ${dup[0].posicao} (${trim(dup[0].colaborador)}) deste controlador.`
           });
         }
       }
 
       await Pg.connectAndQuery(`
-        INSERT INTO tab_acesso_tag (posicao, colaborador, setor, tag, obs, atualizado_por, atualizado_em)
-        VALUES (@p, @colab, @setor, @tag, @obs, @por, NOW())
-        ON CONFLICT (posicao)
+        INSERT INTO tab_acesso_tag (dispositivo_id, posicao, colaborador, setor, tag, obs, atualizado_por, atualizado_em)
+        VALUES (@d, @p, @colab, @setor, @tag, @obs, @por, NOW())
+        ON CONFLICT (dispositivo_id, posicao)
         DO UPDATE SET colaborador = EXCLUDED.colaborador, setor = EXCLUDED.setor,
                       tag = EXCLUDED.tag, obs = EXCLUDED.obs,
                       atualizado_por = EXCLUDED.atualizado_por, atualizado_em = NOW()`,
-        { p: posicao, colab: colaborador, setor, tag, obs, por });
+        { d: dispositivoId, p: posicao, colab: colaborador, setor, tag, obs, por });
 
       Auditoria.registrar(app, {
         modulo: 'Tecnologia', submodulo: 'AcessoTags', acao: 'TAG_SALVAR', severidade: 'INFO', req,
-        entidade: 'acesso_tag', entidadeId: String(posicao),
-        descricao: `Posição ${posicao}: ${colaborador}${setor ? ` (${setor})` : ''} tag ${tag || '—'}`,
-        meta: { posicao, colaborador, setor, tag }
+        entidade: 'acesso_tag', entidadeId: `${dispositivoId}:${posicao}`,
+        descricao: `[${nomeDisp}] Posição ${posicao}: ${colaborador}${setor ? ` (${setor})` : ''} tag ${tag || '—'}`,
+        meta: { dispositivoId, posicao, colaborador, setor, tag }
       });
       return res.json({ ok: true, por, em: new Date().toISOString() });
     } catch (err) {
