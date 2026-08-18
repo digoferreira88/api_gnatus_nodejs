@@ -95,10 +95,22 @@ module.exports = (app) => ({
         -- Estágio ATUAL do pedido = menor estatus entre os itens (o gargalo),
         -- mesma regra do espelho de pedidos. NULL = pedido sem classificação na
         -- view (órfão) — aparece só no modo "Todos".
-        (SELECT MIN(pe3.estatus_cod)
+        -- ⚠️ CORREÇÃO DA VIEW: pedidos_estatus só mapeia C9_BLCRED='01' como
+        -- estágio 20. O código '04' TAMBÉM é bloqueio de crédito (ex.: cliente
+        -- com título vencido) e cai no ELSE da view = "Desconhecido" (0), fazendo
+        -- o pedido SUMIR da fila do financeiro — caso 094607/OUT e 095625/POS em
+        -- 18/08/2026. Aqui reclassificamos '04' -> 20 até a view ser corrigida
+        -- no Protheus (pedido aberto com o Diego).
+        (SELECT MIN(CASE WHEN RTRIM(ISNULL(pe3.c9_blcred, '')) = '04'
+                         THEN 20 ELSE pe3.estatus_cod END)
            FROM pedidos_estatus pe3
           WHERE pe3.c6_filial = sc5.C5_FILIAL
-            AND pe3.c6_num    = sc5.C5_NUM) AS estatusCod
+            AND pe3.c6_num    = sc5.C5_NUM) AS estatusCod,
+        -- 1 = o pedido só está no estágio certo por causa da correção acima.
+        (SELECT MAX(CASE WHEN RTRIM(ISNULL(pe4.c9_blcred, '')) = '04' THEN 1 ELSE 0 END)
+           FROM pedidos_estatus pe4
+          WHERE pe4.c6_filial = sc5.C5_FILIAL
+            AND pe4.c6_num    = sc5.C5_NUM) AS reclassificado
       FROM SC5010 sc5 WITH (NOLOCK)
       LEFT JOIN SA1010 sa1 WITH (NOLOCK)
         ON sa1.A1_COD = sc5.C5_CLIENTE AND sa1.A1_LOJA = sc5.C5_LOJACLI AND sa1.D_E_L_E_T_ <> '*'
@@ -131,7 +143,10 @@ module.exports = (app) => ({
             AND c6f.C6_ITEM = pe.c6_item AND c6f.D_E_L_E_T_ <> '*'
            WHERE pe.c6_filial = sc5.C5_FILIAL
              AND pe.c6_num    = sc5.C5_NUM
-             AND pe.estatus_cod = @est
+             -- estágio pedido, JÁ com a correção do C9_BLCRED='04' (ver comentário
+             -- do estatusCod acima): '04' é bloqueio de crédito que a view não mapeia.
+             AND (pe.estatus_cod = @est
+                  OR (@est = 20 AND RTRIM(ISNULL(pe.c9_blcred, '')) = '04'))
              -- Ignora itens JA totalmente faturados. A view pedidos_estatus
              -- classifica cada item pelo ULTIMO SC9 (max RECNO), e o Protheus as
              -- vezes cria liberacoes SC9 "fantasma" DEPOIS do faturamento (ex.:
@@ -191,6 +206,8 @@ module.exports = (app) => ({
           estatusNome: infoEst ? infoEst.label : 'Sem classificação (órfão)',
           estatusCor: infoEst ? infoEst.cor : '#c0392b',
           orfao: !temEstatus,
+          // true = só aparece porque corrigimos o C9_BLCRED='04' que a view não mapeia
+          reclassificado: Number(r.reclassificado) === 1,
           tipoCod: trim(r.tipoCod),
           tipoNome: trim(r.tipoNome) || trim(r.tipoCod) || '(sem tipo)',
           emissao: trim(r.emissao),
@@ -245,9 +262,10 @@ module.exports = (app) => ({
       const qtdVerificar = pedidos.filter(p => p.verificarFinanceiro).length;
       const qtdRestricao = pedidos.filter(p => p.restricaoPagto).length;
 
-      // Estágios disponíveis pro filtro. Fixo (não depende do que veio), pra a
-      // operadora conseguir sair do 20 e enxergar as BUs que nunca passam pelo
-      // financeiro (OUT, GSV, GAR, TRC...). 'TODOS' inclui os órfãos.
+      // Estágios disponíveis pro filtro. Fixo (não depende do que veio). Serve pra
+      // acompanhar o pedido nos demais estágios do fluxo e, no modo 'TODOS', pegar
+      // o que a view classifica como "Desconhecido" (ver as lacunas em
+      // docs/levantamento-bus-fora-liberacao-financeira.md).
       const estatusDisponiveis = [
         { cod: '20', nome: '20 · Aguardando liberação do Financeiro (padrão)' },
         { cod: '10', nome: '10 · Aguardando liberação do Comercial' },
