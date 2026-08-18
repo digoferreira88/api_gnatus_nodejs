@@ -69,7 +69,9 @@ module.exports = (app) => ({
           skusComValor: pagas.filter(l => l.valorMensal != null).length,
           custoContratado: +soma(l => l.custoContratado).toFixed(2),
           custoEmUso: +soma(l => l.custoEmUso).toFixed(2),
-          custoOcioso: +soma(l => l.custoOcioso).toFixed(2)
+          custoOcioso: +soma(l => l.custoOcioso).toFixed(2),
+          // Projeção anual do contratado (mensal × 12) — visão de orçamento
+          custoAnual: +(soma(l => l.custoContratado) * 12).toFixed(2)
         },
         licencas
       });
