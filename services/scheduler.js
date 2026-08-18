@@ -244,6 +244,11 @@ const CRON_ESTOQUE_SNAPSHOT = '0 3 * * *';  // 03:00 todo dia
 // (~14 runs/dia vs 96 antes). Antes era '*/15 * * * *' e amplificava qualquer churn.
 const CRON_PIPEFY_OP = '0 7-20 * * 1-5';    // 07:00..20:00, de hora em hora, seg-sex
 
+// Garantia × Datafrete: entrega confirmada -> card p/ CONCLUÍDO. Dormente sem
+// GARANTIA_ENTREGA_ATIVO=1 (+ PIPEFY_TOKEN e DATAFRETE_SERVICES_KEY). Meia em
+// meia hora em horário comercial — entrega não muda mais rápido que isso.
+const CRON_GARANTIA_ENTREGA = '10,40 7-20 * * 1-5';
+
 // Reservas de estoque vencidas (SC0010) -> libera B2_RESERVA. De hora em hora.
 const CRON_RESERVAS_VENCIDAS = '15 * * * *';  // todo :15
 
@@ -317,6 +322,20 @@ function start(app) {
     }
   });
   console.log(`[scheduler] pipefy-op agendado: cron "${CRON_PIPEFY_OP}"`);
+
+  // Garantia × Datafrete (entrega -> CONCLUÍDO). Dormente sem os gates do .env.
+  if (jobs.garantiaEntrega) jobs.garantiaEntrega.cancel();
+  jobs.garantiaEntrega = schedule.scheduleJob(CRON_GARANTIA_ENTREGA, async () => {
+    try {
+      const PipefyGarantia = require('./pipefyGarantia');
+      if (!PipefyGarantia.disponivel()) return;   // inativo/sem credenciais: silêncio
+      const r = await PipefyGarantia.executar(app, 'CRON');
+      if (r.cards > 0 || r.erros > 0) console.log('[scheduler] garantia-entrega:', JSON.stringify(r));
+    } catch (err) {
+      console.error('[scheduler] erro no garantia-entrega:', err.message);
+    }
+  });
+  console.log(`[scheduler] garantia-entrega agendado: cron "${CRON_GARANTIA_ENTREGA}"`);
 
   // Reservas de estoque VENCIDAS -> devolve o saldo a B2_RESERVA e remove da
   // SC0010 (regra do sistema antigo: 2 dias apos a validade). A intranet antiga
