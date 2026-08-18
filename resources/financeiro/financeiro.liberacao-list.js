@@ -16,6 +16,7 @@
 // Permissão 8006 (edição) ou 8007 (somente visualização).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
+const Estatus = require('../../services/vendasEstatus');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
@@ -41,8 +42,14 @@ module.exports = (app) => ({
     const tipo      = trim(req.query.tipo);
     const formaPgto = trim(req.query.formaPgto);
     const busca     = trim(req.query.busca).toUpperCase();
+    // estatus: '' (default) = 20 (aguardando financeiro, comportamento original).
+    // 'TODOS' = qualquer estágio ainda NÃO faturado — inclui BUs que nunca passam
+    // pelo financeiro (OUT/GSV/GAR/TRC...) e os "órfãos" sem classificação na view.
+    const estatusReq = trim(req.query.estatus).toUpperCase();
+    const verTodos   = estatusReq === 'TODOS';
+    const estatusNum = /^\d+$/.test(estatusReq) ? Number(estatusReq) : ESTATUS_FINANCEIRO;
 
-    const params = { est: ESTATUS_FINANCEIRO };
+    const params = { est: estatusNum };
     const conds = [];
     if (tipo)      { conds.push(`AND RTRIM(sc5.C5_ZTIPO) = @tipo`);    params.tipo = tipo; }
     if (formaPgto) { conds.push(`AND RTRIM(sc5.C5_FORMAPG) = @forma`); params.forma = formaPgto; }
@@ -84,7 +91,14 @@ module.exports = (app) => ({
            FROM pedidos_estatus pe2
           WHERE pe2.c6_filial = sc5.C5_FILIAL
             AND pe2.c6_num    = sc5.C5_NUM
-            AND pe2.estatus_cod = @est) AS dataLibComercial
+            AND pe2.estatus_cod = @est) AS dataLibComercial,
+        -- Estágio ATUAL do pedido = menor estatus entre os itens (o gargalo),
+        -- mesma regra do espelho de pedidos. NULL = pedido sem classificação na
+        -- view (órfão) — aparece só no modo "Todos".
+        (SELECT MIN(pe3.estatus_cod)
+           FROM pedidos_estatus pe3
+          WHERE pe3.c6_filial = sc5.C5_FILIAL
+            AND pe3.c6_num    = sc5.C5_NUM) AS estatusCod
       FROM SC5010 sc5 WITH (NOLOCK)
       LEFT JOIN SA1010 sa1 WITH (NOLOCK)
         ON sa1.A1_COD = sc5.C5_CLIENTE AND sa1.A1_LOJA = sc5.C5_LOJACLI AND sa1.D_E_L_E_T_ <> '*'
@@ -100,6 +114,16 @@ module.exports = (app) => ({
       LEFT JOIN pedidos_rf prf WITH (NOLOCK) ON prf.pedido = sc5.C5_NUM
       WHERE sc5.C5_FILIAL = '01'
         AND sc5.D_E_L_E_T_ <> '*'
+        ${verTodos ? `
+        -- Modo "Todos os estágios": qualquer pedido ainda NÃO faturado e com item
+        -- a faturar, independente do estatus (e mesmo SEM linha na view — os
+        -- "órfãos", que de outra forma não apareceriam em tela nenhuma).
+        AND RTRIM(ISNULL(sc5.C5_NOTA, '')) = ''
+        AND EXISTS (
+          SELECT 1 FROM SC6010 c6f WITH (NOLOCK)
+           WHERE c6f.C6_FILIAL = sc5.C5_FILIAL AND c6f.C6_NUM = sc5.C5_NUM
+             AND c6f.D_E_L_E_T_ <> '*' AND c6f.C6_QTDENT < c6f.C6_QTDVEN
+        )` : `
         AND EXISTS (
           SELECT 1 FROM pedidos_estatus pe
            JOIN SC6010 c6f WITH (NOLOCK)
@@ -114,7 +138,7 @@ module.exports = (app) => ({
              -- pedido 093273 — re-liberacao pos-NF em 05/06), que reabririam o
              -- pedido na lista. So conta como pendente quando ainda falta faturar.
              AND c6f.C6_QTDENT < c6f.C6_QTDVEN
-        )
+        )`}
         ${conds.join(' ')}
       ORDER BY sc5.C5_EMISSAO, sc5.C5_NUM`;
 
@@ -156,8 +180,17 @@ module.exports = (app) => ({
 
         const anot = anotMap.get(trim(r.pedido)) || null;
 
+        // Estágio atual. r.estatusCod NULL = pedido sem classificação na view
+        // (órfão) — sinalizado explicitamente pra não passar despercebido.
+        const temEstatus = r.estatusCod !== null && r.estatusCod !== undefined;
+        const infoEst = temEstatus ? Estatus.info(r.estatusCod) : null;
+
         return {
           pedido: trim(r.pedido),
+          estatusCod: temEstatus ? Number(r.estatusCod) : null,
+          estatusNome: infoEst ? infoEst.label : 'Sem classificação (órfão)',
+          estatusCor: infoEst ? infoEst.cor : '#c0392b',
+          orfao: !temEstatus,
           tipoCod: trim(r.tipoCod),
           tipoNome: trim(r.tipoNome) || trim(r.tipoCod) || '(sem tipo)',
           emissao: trim(r.emissao),
@@ -212,14 +245,30 @@ module.exports = (app) => ({
       const qtdVerificar = pedidos.filter(p => p.verificarFinanceiro).length;
       const qtdRestricao = pedidos.filter(p => p.restricaoPagto).length;
 
+      // Estágios disponíveis pro filtro. Fixo (não depende do que veio), pra a
+      // operadora conseguir sair do 20 e enxergar as BUs que nunca passam pelo
+      // financeiro (OUT, GSV, GAR, TRC...). 'TODOS' inclui os órfãos.
+      const estatusDisponiveis = [
+        { cod: '20', nome: '20 · Aguardando liberação do Financeiro (padrão)' },
+        { cod: '10', nome: '10 · Aguardando liberação do Comercial' },
+        { cod: '30', nome: '30 · Aguardando Liberação de Planejamento' },
+        { cod: '40', nome: '40 · Aguardando Formulação Financeira' },
+        { cod: '50', nome: '50 · Aguardando Liberação de Estoque' },
+        { cod: '60', nome: '60 · Aguardando Faturamento' },
+        { cod: 'TODOS', nome: 'Todos os estágios (não faturados) — inclui órfãos' }
+      ];
+      const qtdOrfaos = pedidos.filter((p) => p.orfao).length;
+
       return res.json({
-        filtros: { tipo, formaPgto, busca },
+        filtros: { tipo, formaPgto, busca, estatus: verTodos ? 'TODOS' : String(estatusNum) },
         qtdPedidos: pedidos.length,
         totalGeral,
         qtdVerificar,
         qtdRestricao,
+        qtdOrfaos,
         tiposDisponiveis,
         formasDisponiveis,
+        estatusDisponiveis,
         pedidos,
         geradoEm: new Date().toISOString()
       });
