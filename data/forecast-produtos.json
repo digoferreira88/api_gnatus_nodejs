@@ -1,0 +1,1032 @@
+[
+  {
+    "ordem": 1,
+    "codigo": "994",
+    "descricao": "MOTOR IMPLANTE AVANTI - COM MALETA"
+  },
+  {
+    "ordem": 2,
+    "codigo": "4497",
+    "descricao": "MOTOR IMPLANTE E ENDO AVANTI S LED - COM MALETA"
+  },
+  {
+    "ordem": 3,
+    "codigo": "5954",
+    "descricao": "MOTOR IMPLANTE AVANTI - SEM MALETA"
+  },
+  {
+    "ordem": 4,
+    "codigo": "5955",
+    "descricao": "MOTOR IMPLANTE E ENDO AVANTI S LED - SEM MALETA"
+  },
+  {
+    "ordem": 5,
+    "codigo": "1106",
+    "descricao": "MALETA DO AVANTI"
+  },
+  {
+    "ordem": 6,
+    "codigo": "6292",
+    "descricao": "KIT MOTOR DE IMPL AVANTI F-AVT-01 + CONTRA ANGULAR X20 S"
+  },
+  {
+    "ordem": 7,
+    "codigo": "6293",
+    "descricao": "KIT MOTOR DE IMPL AVANTI F-AVT-01 SEM MALETA + CONTRA ANGULAR X20 S"
+  },
+  {
+    "ordem": 8,
+    "codigo": "6288",
+    "descricao": "KIT MOTO DE IMPL AVANTI S LED + CONTRA ANGULAR X20 S LED"
+  },
+  {
+    "ordem": 9,
+    "codigo": "6289",
+    "descricao": "KIT MOTO DE IMPL AVANTI S LED SEM MALETA + CONTRA ANGULAR X20 S LED"
+  },
+  {
+    "ordem": 10,
+    "codigo": "1097",
+    "descricao": "CONTRA ÂNGULO X20 S LED"
+  },
+  {
+    "ordem": 11,
+    "codigo": "1120",
+    "descricao": "CONTRA ÂNGULO X20 S"
+  },
+  {
+    "ordem": 12,
+    "codigo": "10050",
+    "descricao": "AUTOCLAVE ODONTOLOGICA BIOMAX 17L"
+  },
+  {
+    "ordem": 13,
+    "codigo": "10051",
+    "descricao": "AUTOCLAVE ODONTOLOGICA BIOMAX 22L"
+  },
+  {
+    "ordem": 14,
+    "codigo": "8134",
+    "descricao": "LAVADORA ULTRASSONICA BIOCLEAN 2,5L C1 127V"
+  },
+  {
+    "ordem": 15,
+    "codigo": "8135",
+    "descricao": "LAVADORA ULTRASSONICA BIOCLEAN 2,5L C1 220V"
+  },
+  {
+    "ordem": 16,
+    "codigo": "8142",
+    "descricao": "LAVADORA ULTRASSONICA BIOCLEAN 6L C2 127V"
+  },
+  {
+    "ordem": 17,
+    "codigo": "8143",
+    "descricao": "LAVADORA ULTRASSONICA BIOCLEAN 6L C2 220V"
+  },
+  {
+    "ordem": 18,
+    "codigo": "1355",
+    "descricao": "SELADORA CLEAN PACK 127V - 60Hz GNATUS"
+  },
+  {
+    "ordem": 19,
+    "codigo": "1354",
+    "descricao": "SELADORA CLEAN PACK 220V - 60Hz GNATUS"
+  },
+  {
+    "ordem": 20,
+    "codigo": "9638",
+    "descricao": "SELADORA MANUAL CLEANPACK GNATUS  (COM SUPORTE) - LANÇAMENTO"
+  },
+  {
+    "ordem": 21,
+    "codigo": "1658",
+    "descricao": "DESTILADORA ACQUA CLEAN 127V - 60Hz"
+  },
+  {
+    "ordem": 22,
+    "codigo": "1659",
+    "descricao": "DESTILADORA ACQUA CLEAN 220V - 60Hz"
+  },
+  {
+    "ordem": 23,
+    "codigo": "16000004754",
+    "descricao": "BOMBA A VÁCUO BIOVAC IV 1HP GNATUS - 127/220V"
+  },
+  {
+    "ordem": 24,
+    "codigo": "16000002994",
+    "descricao": "KIT II BOMBA VÁCUO BIO VAC IV - CINZA GNATUS"
+  },
+  {
+    "ordem": 25,
+    "codigo": "16000004743",
+    "descricao": "KIT BV P/ COLUNA – 1 SUGADOR"
+  },
+  {
+    "ordem": 26,
+    "codigo": "16000001760",
+    "descricao": "KIT CAPA ACABAMENTO BOMBA VÁCUO"
+  },
+  {
+    "ordem": 27,
+    "codigo": "1178",
+    "descricao": "SUGMASTER 6 LITROS"
+  },
+  {
+    "ordem": 28,
+    "codigo": "1176",
+    "descricao": "SUGMASTER 3 LITROS"
+  },
+  {
+    "ordem": 29,
+    "codigo": "1182",
+    "descricao": "EQUIPOMASTER 6 LITROS"
+  },
+  {
+    "ordem": 30,
+    "codigo": "1525",
+    "descricao": "MANGUEIRA DE SUCÇÃO DUPLA"
+  },
+  {
+    "ordem": 31,
+    "codigo": "1524",
+    "descricao": "MANGUEIRA DE SUCÇÃO"
+  },
+  {
+    "ordem": 32,
+    "codigo": "1527",
+    "descricao": "MANGUEIRA DE SUCÇÃO DUPLA AUTOCLAVÁVEL"
+  },
+  {
+    "ordem": 33,
+    "codigo": "1526",
+    "descricao": "MANGUEIRA DE SUCÇÃO AUTOCLAVÁVEL"
+  },
+  {
+    "ordem": 34,
+    "codigo": "5519",
+    "descricao": "KIT COM 4 UNIDADES PONTEIRAS ANTI NÉVOA"
+  },
+  {
+    "ordem": 35,
+    "codigo": "1326",
+    "descricao": "ADAPTADOR CÂNULA BOMBA DE VÁCUO PORTÁTIL"
+  },
+  {
+    "ordem": 36,
+    "codigo": "8653",
+    "descricao": "COMPRESSOR AIR CLEAN 2 - 50L 220V"
+  },
+  {
+    "ordem": 37,
+    "codigo": "9129",
+    "descricao": "COMPRESSOR AIR CLEAN 2 - 28L 220V"
+  },
+  {
+    "ordem": 38,
+    "codigo": "8423",
+    "descricao": "COMPRESSOR AIR CLEAN 150L"
+  },
+  {
+    "ordem": 39,
+    "codigo": "8509",
+    "descricao": "COMPRESSOR AIR CLEAN 250L"
+  },
+  {
+    "ordem": 40,
+    "codigo": "6236",
+    "descricao": "CAMERA DIGITAL INTRAORAL E CORPORAL TIMEX 1H"
+  },
+  {
+    "ordem": 41,
+    "codigo": "6237",
+    "descricao": "CAMERA DIGITAL INTRAORAL E CORPORAL TIMEX 2H"
+  },
+  {
+    "ordem": 42,
+    "codigo": "8027",
+    "descricao": "ALL IN ONE 21,5 POL PROCESSADOR I3-3120M 8GB RAM 128 GB SSD COM TECLADO MOUSE E WINDOWS 10"
+  },
+  {
+    "ordem": 43,
+    "codigo": "1239",
+    "descricao": "SERVIDOR DE COMPARTILHAMENTO HANDY DENTISTY"
+  },
+  {
+    "ordem": 44,
+    "codigo": "1181",
+    "descricao": "SUPORTE PANTOGRÁFICO UNIVERSAL (COMPATÍVEL COM MULTIMARCAS)"
+  },
+  {
+    "ordem": 45,
+    "codigo": "5522",
+    "descricao": "SUPORTE MONITOR P/ CONSULTÓRIO ORIGINAL GNATUS (G1, G2, G3 E G4)"
+  },
+  {
+    "ordem": 46,
+    "codigo": "8726",
+    "descricao": "CART G-TOTEM (SEM MONITOR)"
+  },
+  {
+    "ordem": 47,
+    "codigo": "8773",
+    "descricao": "MONITOR TOUCH SCREEN 24 (16:9)"
+  },
+  {
+    "ordem": 48,
+    "codigo": "9382",
+    "descricao": "FONTE ADAPTADORA UNIVERSAL PARA ALL IN ONE E NOTEBOOKS - AUTONOMIA 45 MINUTOS"
+  },
+  {
+    "ordem": 49,
+    "codigo": "6252",
+    "descricao": "SENSOR RADIOLOGICO DIGITAL TIMEX 1H"
+  },
+  {
+    "ordem": 50,
+    "codigo": "6253",
+    "descricao": "SENSOR RADIOLOGICO DIGITAL TIMEX 2H"
+  },
+  {
+    "ordem": 51,
+    "codigo": "8654",
+    "descricao": "DIGITALIZADOR DE IMAGENS RADIOGRAFICAS TIMEX - HDS500"
+  },
+  {
+    "ordem": 52,
+    "codigo": "9115",
+    "descricao": "PLACA DE FOSFORO TAMANHO 0 - PARA DIGITALIZADOR TIMEX HDS500"
+  },
+  {
+    "ordem": 53,
+    "codigo": "9116",
+    "descricao": "PLACA DE FOSFORO TAMANHO 1 - PARA DIGITALIZADOR TIMEX HDS500"
+  },
+  {
+    "ordem": 54,
+    "codigo": "9117",
+    "descricao": "PLACA DE FOSFORO TAMANHO 2 - PARA DIGITALIZADOR TIMEX HDS500"
+  },
+  {
+    "ordem": 55,
+    "codigo": "9118",
+    "descricao": "PLACA DE FOSFORO TAMANHO 3 - PARA DIGITALIZADOR TIMEX HDS500"
+  },
+  {
+    "ordem": 56,
+    "codigo": "6345",
+    "descricao": "POSICIONADOR RADIOGRAFICO CONE INDICATOR TIMEX DIGITAL 1 (4 PEÇAS + 4 ADAPTADORES)"
+  },
+  {
+    "ordem": 57,
+    "codigo": "6346",
+    "descricao": "POSICIONADOR RADIOGRAFICO CONE INDICATOR TIMEX DIGITAL 2 (4 PEÇAS + 4 ADAPTADORES)"
+  },
+  {
+    "ordem": 58,
+    "codigo": "16000004021",
+    "descricao": "RX TIMEX 70E PANT PAREDE 127V/220V 60 HZ"
+  },
+  {
+    "ordem": 59,
+    "codigo": "16000004022",
+    "descricao": "RX TIMEX 70E PAREDE 127/220V 60HZ"
+  },
+  {
+    "ordem": 60,
+    "codigo": "16000004019",
+    "descricao": "RX AXR COL MOVEL 127V/220V 60HZ GNATUS"
+  },
+  {
+    "ordem": 61,
+    "codigo": "9352",
+    "descricao": "RAIO-X PORTATIL PORT-X IV C/ PROTEÇÃO CONTRA RETROESPALHAMENTO"
+  },
+  {
+    "ordem": 62,
+    "codigo": "8430",
+    "descricao": "ESCUDO DE RADIAÇÃO RX PORTATIL PORT-X IV"
+  },
+  {
+    "ordem": 63,
+    "codigo": "8503",
+    "descricao": "BATERIA RX PORTATIL PORT-X IV"
+  },
+  {
+    "ordem": 64,
+    "codigo": "8504",
+    "descricao": "TRIPE HS-Q999"
+  },
+  {
+    "ordem": 65,
+    "codigo": "8505",
+    "descricao": "MALETA RX PORTATIL PORT-X IV"
+  },
+  {
+    "ordem": 66,
+    "codigo": "16000002235",
+    "descricao": "JET SONIC B.P. 127/ 225V - 50/60Hz GNATUS                                     (INCLUSO 3 INSERTOS)"
+  },
+  {
+    "ordem": 67,
+    "codigo": "5796",
+    "descricao": "ULTRASSOM EASYSONIC BIVOLT GNATUS                                        (INCLUSO 5 INSERTOS)"
+  },
+  {
+    "ordem": 68,
+    "codigo": "5797",
+    "descricao": "KIT IRRIGAÇÃO GARRAFA PRESSURIZADA PARA EASYSONIC"
+  },
+  {
+    "ordem": 69,
+    "codigo": "5865",
+    "descricao": "JATO DE BICARBONATO JET HAND TB"
+  },
+  {
+    "ordem": 70,
+    "codigo": "9814",
+    "descricao": "FOTOPOLIMERIZADOR LED D"
+  },
+  {
+    "ordem": 71,
+    "codigo": "9813",
+    "descricao": "FOTOPOLIMERIZADOR ODONTOLÓGICO Q-PRO - LANÇAMENTO"
+  },
+  {
+    "ordem": 72,
+    "codigo": "9811",
+    "descricao": "FOTOPOLIMERIZADOR ODONTOLÓGICO O-LIGHT II"
+  },
+  {
+    "ordem": 73,
+    "codigo": "1068",
+    "descricao": "LOCALIZADOR APICAL E TESTE DE VITALIDADE PULPAR APX1 GNATUS"
+  },
+  {
+    "ordem": 74,
+    "codigo": "9816",
+    "descricao": "LOCALIZADOR DE ÁPICE PROPEX"
+  },
+  {
+    "ordem": 75,
+    "codigo": "10799",
+    "descricao": "MICROMOTOR DE ENDODONTIA NEOENDO PRIME - LANÇAMENTO"
+  },
+  {
+    "ordem": 76,
+    "codigo": "1171",
+    "descricao": "CONTRA ANGULO OSCILATÓRIO X10 CEPB -PUSH BUTTON - PARA LIMA MANUAL"
+  },
+  {
+    "ordem": 77,
+    "codigo": "9856",
+    "descricao": "CÂMARA DE CONSERVACAO SAGIL - (BLACK) 21L   127V"
+  },
+  {
+    "ordem": 78,
+    "codigo": "9857",
+    "descricao": "CÂMARA DE CONSERVACAO SAGIL - (BLACK) 21L   220V"
+  },
+  {
+    "ordem": 79,
+    "codigo": "9859",
+    "descricao": "CÂMARA DE CONSERVACAO SAGIL - (WHITE)  100L  220V"
+  },
+  {
+    "ordem": 80,
+    "codigo": "8249",
+    "descricao": "NOBREAK UPS XPRO TS SHARA SENOIDAL UNIVERSAL - 1500VA - BIVOLT"
+  },
+  {
+    "ordem": 81,
+    "codigo": "8738",
+    "descricao": "RACK 2BA C/CABOS S/BATERIAS GRAFITE + BAT"
+  },
+  {
+    "ordem": 82,
+    "codigo": "8739",
+    "descricao": "BATERIA 45A/H (12TE45) - 2 UNIDADES"
+  },
+  {
+    "ordem": 83,
+    "codigo": "1169",
+    "descricao": "ALTA ROTAÇÃO AX1 LED"
+  },
+  {
+    "ordem": 84,
+    "codigo": "4482",
+    "descricao": "ALTA ROTAÇÃO AX1 LED UV"
+  },
+  {
+    "ordem": 85,
+    "codigo": "1168",
+    "descricao": "ALTA ROTAÇÃO AX1 NT"
+  },
+  {
+    "ordem": 86,
+    "codigo": "1075",
+    "descricao": "ALTA ROTAÇÃO AX4 NU 45 GRAUS"
+  },
+  {
+    "ordem": 87,
+    "codigo": "1077",
+    "descricao": "MICRO MOTOR IX1 S/ SPRAY"
+  },
+  {
+    "ordem": 88,
+    "codigo": "1116",
+    "descricao": "PECA DE MAO CONTRA ANGULAR M5 PB"
+  },
+  {
+    "ordem": 89,
+    "codigo": "1118",
+    "descricao": "CONTRA ANGULO X1 PB"
+  },
+  {
+    "ordem": 90,
+    "codigo": "1090",
+    "descricao": "CONTRA ANGULO X1 LT  - CHAVETA"
+  },
+  {
+    "ordem": 91,
+    "codigo": "1172",
+    "descricao": "CONTRA ÂNGULO ROTÁTORIO X10 PB - PUSH BUTTON - PARA LIMA TIPO NITI"
+  },
+  {
+    "ordem": 92,
+    "codigo": "1079",
+    "descricao": "PECA RETA INTRA RX1"
+  },
+  {
+    "ordem": 93,
+    "codigo": "6188",
+    "descricao": "KIT ACADÊMICO PRIME - ARO AX1 NT - CA X1 LT - MM IX1 - PR RX1 - C/ ADAPTADOR BROCA + SACA BROCA"
+  },
+  {
+    "ordem": 94,
+    "codigo": "6570",
+    "descricao": "KIT ACADEMICO PLUS - ARO AX1 NT - CA X1 PB - MM IX1 - PR RX1"
+  },
+  {
+    "ordem": 95,
+    "codigo": "6574",
+    "descricao": "KIT ACADEMICO PROFESSIONAL - ARO AX1 LED - CA X1 PB - MM IX1 - PR RX1"
+  },
+  {
+    "ordem": 96,
+    "codigo": "2042 + 4060000520",
+    "descricao": "ADAPTADOR BROCA + CHAVE SACA BROCA"
+  },
+  {
+    "ordem": 97,
+    "codigo": "9457",
+    "descricao": "MOCHILA GNATUS KIT ACADEMICO"
+  },
+  {
+    "ordem": 98,
+    "codigo": "4631",
+    "descricao": "MM ELETRICO COM  CONSOLE PORTÁTIL SEM CONTRA ÂNGULO MULTIPLICADOR"
+  },
+  {
+    "ordem": 99,
+    "codigo": "8729",
+    "descricao": "MOCHO STANDARD"
+  },
+  {
+    "ordem": 100,
+    "codigo": "8730",
+    "descricao": "MOCHO STANDARD FIT"
+  },
+  {
+    "ordem": 101,
+    "codigo": "8743",
+    "descricao": "MOCHO PROFESSIONAL"
+  },
+  {
+    "ordem": 102,
+    "codigo": "16000003063",
+    "descricao": "CABEÇOTE REFLETOR PERSUS LED"
+  },
+  {
+    "ordem": 103,
+    "codigo": "16000004553",
+    "descricao": "CAB REFL SIRIUS G8 SENS 3 LEDS"
+  },
+  {
+    "ordem": 104,
+    "codigo": "16000003065",
+    "descricao": "CAB REFL SIRIUS G8 SENSOR 5 LEDS (STD)"
+  },
+  {
+    "ordem": 105,
+    "codigo": "16000003066",
+    "descricao": "CAB REFL SIRIUS G8 SENS 5 (3X2) LEDS (STD)"
+  },
+  {
+    "ordem": 106,
+    "codigo": "9444",
+    "descricao": "REFLETOR ODONTOLÓGICO HELIOS LED FSA"
+  },
+  {
+    "ordem": 107,
+    "codigo": "9442",
+    "descricao": "REFLETOR ODONTOLÓGICO HELIOS LED FSH"
+  },
+  {
+    "ordem": 108,
+    "codigo": "9445",
+    "descricao": "REFLETOR ODONTOLÓGICO HELIOS LED FSO"
+  },
+  {
+    "ordem": 109,
+    "codigo": "9443",
+    "descricao": "REFLETOR ODONTOLÓGICO HELIOS LED FSE"
+  },
+  {
+    "ordem": 110,
+    "codigo": "10771",
+    "descricao": "REFLETOR ODONTOLÓGICO HELIOS LED-V3"
+  },
+  {
+    "ordem": 111,
+    "codigo": "8156",
+    "descricao": "REFLETOR DUPLO BANCADA HELIUS LED ARTICULADO"
+  },
+  {
+    "ordem": 112,
+    "codigo": "6365",
+    "descricao": "REFLETOR UNICO BANCADA HELIUS LED ARTICULADO"
+  },
+  {
+    "ordem": 113,
+    "codigo": "8762",
+    "descricao": "CJ REFLETOR DUPLO BANCADA HZ PERSUS LED FIXO"
+  },
+  {
+    "ordem": 114,
+    "codigo": "8782",
+    "descricao": "CJ REFLETOR UNICO BANCADA HZ PERSUS LED FIXO"
+  },
+  {
+    "ordem": 115,
+    "codigo": "8125",
+    "descricao": "EQUIPO MINI 3 - NEW"
+  },
+  {
+    "ordem": 116,
+    "codigo": "8262",
+    "descricao": "EQUIPO MINI 4 - NEW"
+  },
+  {
+    "ordem": 117,
+    "codigo": "16000003654",
+    "descricao": "KIT BANDEJA AUXILIAR PLASTICA"
+  },
+  {
+    "ordem": 118,
+    "codigo": "8486",
+    "descricao": "TIP G1 (KIT ULTRASSOM N2/N3) - SCALING"
+  },
+  {
+    "ordem": 119,
+    "codigo": "8487",
+    "descricao": "TIP G2 (KIT ULTRASSOM N2/N3) - SCALING"
+  },
+  {
+    "ordem": 120,
+    "codigo": "8489",
+    "descricao": "TIP G4 (KIT ULTRASSOM N2/N3) - SCALING"
+  },
+  {
+    "ordem": 121,
+    "codigo": "8498",
+    "descricao": "TIP G7 (KIT ULTRASSOM N2/N3) - SCALING"
+  },
+  {
+    "ordem": 122,
+    "codigo": "8499",
+    "descricao": "TIP G8 (KIT ULTRASSOM N2/N3) - SCALING"
+  },
+  {
+    "ordem": 123,
+    "codigo": "8488",
+    "descricao": "TIP G9 (KIT ULTRASSOM N2/N3) - SCALING"
+  },
+  {
+    "ordem": 124,
+    "codigo": "8490",
+    "descricao": "TIP P1 (KIT ULTRASSOM N2/N3) - PERIO"
+  },
+  {
+    "ordem": 125,
+    "codigo": "8500",
+    "descricao": "TIP P4 (KIT ULTRASSOM N2/N3) - PERIO"
+  },
+  {
+    "ordem": 126,
+    "codigo": "8502",
+    "descricao": "ESTOJO DE TIPS KIT ULTRASSOM N2/N3 (2xG1, 1xG2, 1xP1, 1xG4)"
+  },
+  {
+    "ordem": 127,
+    "codigo": "5234",
+    "descricao": "ADAPTADOR ROSCA JET SONIC"
+  },
+  {
+    "ordem": 128,
+    "codigo": "5405",
+    "descricao": "CHAVE  ADAPTADOR INSERTO JETSONIC"
+  },
+  {
+    "ordem": 129,
+    "codigo": "8471",
+    "descricao": "TIP GD1 (EASYSONIC) - SCALING"
+  },
+  {
+    "ordem": 130,
+    "codigo": "8472",
+    "descricao": "TIP GD2 (EASYSONIC) - SCALING"
+  },
+  {
+    "ordem": 131,
+    "codigo": "8474",
+    "descricao": "TIP GD4 (EASYSONIC) - SCALING"
+  },
+  {
+    "ordem": 132,
+    "codigo": "8483",
+    "descricao": "TIP GD7 (EASYSONIC) - SCALING"
+  },
+  {
+    "ordem": 133,
+    "codigo": "8484",
+    "descricao": "TIP GD8 (EASYSONIC) - SCALING"
+  },
+  {
+    "ordem": 134,
+    "codigo": "8473",
+    "descricao": "TIP GD9 (EASYSONIC) - SCALING"
+  },
+  {
+    "ordem": 135,
+    "codigo": "8475",
+    "descricao": "TIP PD1 (EASYSONIC) - PERIO"
+  },
+  {
+    "ordem": 136,
+    "codigo": "8684",
+    "descricao": "TIP PD3 (EASYSONIC) - PERIO"
+  },
+  {
+    "ordem": 137,
+    "codigo": "8485",
+    "descricao": "TIP PD4 (EASYSONIC) - PERIO"
+  },
+  {
+    "ordem": 138,
+    "codigo": "8685",
+    "descricao": "TIP PD12 (EASYSONIC) - PERIO"
+  },
+  {
+    "ordem": 139,
+    "codigo": "8501",
+    "descricao": "ESTOJO DE TIPS EASYSONIC (2xGD1, 1xGD2, 1xPD1, 1xGD4)"
+  },
+  {
+    "ordem": 140,
+    "codigo": "8477",
+    "descricao": "TIP ED4 - ENDO (MODO ENDO APENAS NO JETSONIC)"
+  },
+  {
+    "ordem": 141,
+    "codigo": "8476",
+    "descricao": "TIP ED5 - ENDO (MODO ENDO APENAS NO JETSONIC)"
+  },
+  {
+    "ordem": 142,
+    "codigo": "8479",
+    "descricao": "TIP ED19D - ENDO (MODO ENDO APENAS NO JETSONIC)"
+  },
+  {
+    "ordem": 143,
+    "codigo": "8480",
+    "descricao": "TIP ED24D - ENDO (MODO ENDO APENAS NO JETSONIC)"
+  },
+  {
+    "ordem": 144,
+    "codigo": "1606",
+    "descricao": "PONTEIRA DE CLAREAMENTO"
+  },
+  {
+    "ordem": 145,
+    "codigo": "1607",
+    "descricao": "PONTEIRA DE FOTOPOLIMERIZAÇÃO"
+  },
+  {
+    "ordem": 146,
+    "codigo": "1328",
+    "descricao": "KIT IRRIGAÇÃO"
+  },
+  {
+    "ordem": 147,
+    "codigo": "4462",
+    "descricao": "FILME AUTORREVELÁVEL PARA RAIOS X ODONTOLÓGICO (CX C/ 50)"
+  },
+  {
+    "ordem": 148,
+    "codigo": "6185",
+    "descricao": "GNATUS SPRAY LUBRIFICANTE ALTA/BAIXA 200ML"
+  },
+  {
+    "ordem": 149,
+    "codigo": "9155",
+    "descricao": "KIT PLASTICO PROTETOR DIGITALIZADOR – TAMANHO 0"
+  },
+  {
+    "ordem": 150,
+    "codigo": "9156",
+    "descricao": "KIT PLASTICO PROTETOR DIGITALIZADOR – TAMANHO 1"
+  },
+  {
+    "ordem": 151,
+    "codigo": "9157",
+    "descricao": "KIT PLASTICO PROTETOR DIGITALIZADOR – TAMANHO 2"
+  },
+  {
+    "ordem": 152,
+    "codigo": "9158",
+    "descricao": "KIT PLASTICO PROTETOR DIGITALIZADOR – TAMANHO 3"
+  },
+  {
+    "ordem": 153,
+    "codigo": "9159",
+    "descricao": "KIT CAPA PAPEL PROTEÇÃO DIGITALIZADOR – TAMANHO 0"
+  },
+  {
+    "ordem": 154,
+    "codigo": "9160",
+    "descricao": "KIT CAPA PAPEL PROTEÇÃO DIGITALIZADOR – TAMANHO 1"
+  },
+  {
+    "ordem": 155,
+    "codigo": "9161",
+    "descricao": "KIT CAPA PAPEL PROTEÇÃO DIGITALIZADOR – TAMANHO 2"
+  },
+  {
+    "ordem": 156,
+    "codigo": "9162",
+    "descricao": "KIT CAPA PAPEL PROTEÇÃO DIGITALIZADOR – TAMANHO 3"
+  },
+  {
+    "ordem": 157,
+    "codigo": "8641",
+    "descricao": "APARELHO DE RAIO-X ODONTOLÓGICO PANORÂMICO PAPAYA"
+  },
+  {
+    "ordem": 158,
+    "codigo": "8642",
+    "descricao": "APARELHO DE RAIO-X ODONTOLÓGICO PANORÂMICO PAPAYA PLUS"
+  },
+  {
+    "ordem": 159,
+    "codigo": "8643",
+    "descricao": "APARELHO DE RAIO-X ODONTOLÓGICO PANORÂMICO PAPAYA 3D PREMIUM"
+  },
+  {
+    "ordem": 160,
+    "codigo": "8644",
+    "descricao": "APARELHO DE RAIO-X ODONTOLÓGICO PANORÂMICO PAPAYA 3D PREMIUM PLUS"
+  },
+  {
+    "ordem": 161,
+    "codigo": "9131",
+    "descricao": "ACESSÓRIO CARPAL PARA LINHA DE RAIO-X PAPAYA"
+  },
+  {
+    "ordem": 162,
+    "codigo": "9132",
+    "descricao": "SUPORTE CARPAL PAPAYA"
+  },
+  {
+    "ordem": 163,
+    "codigo": "9600",
+    "descricao": "SCANNER INTRAORAL HELIOS 500"
+  },
+  {
+    "ordem": 164,
+    "codigo": "8287",
+    "descricao": "CART G-TOUCH"
+  },
+  {
+    "ordem": 165,
+    "codigo": "10957",
+    "descricao": "CONSULTÓRIO ODONTOLÓGICO KIDS GEZINHA SAFARI"
+  },
+  {
+    "ordem": 166,
+    "codigo": "16000004770",
+    "descricao": "CONSULTORIO G1 F 2TB TV"
+  },
+  {
+    "ordem": 167,
+    "codigo": "16000004771",
+    "descricao": "CONSULTORIO G1 FIT C 2TB TV"
+  },
+  {
+    "ordem": 168,
+    "codigo": "16000004772",
+    "descricao": "CONSULTORIO G1 FIT SF 2TB TV"
+  },
+  {
+    "ordem": 169,
+    "codigo": "16000004773",
+    "descricao": "CONSULTORIO G1 SF 2TB TV"
+  },
+  {
+    "ordem": 170,
+    "codigo": "16000004774",
+    "descricao": "CONSULTORIO G2 C 2TB TV"
+  },
+  {
+    "ordem": 171,
+    "codigo": "16000004775",
+    "descricao": "CONSULTORIO G2 F 2TB TV"
+  },
+  {
+    "ordem": 172,
+    "codigo": "16000004776",
+    "descricao": "CONSULTORIO G2 H 2TB TV"
+  },
+  {
+    "ordem": 173,
+    "codigo": "16000004777",
+    "descricao": "CONSULTORIO G3 F 3TB TV"
+  },
+  {
+    "ordem": 174,
+    "codigo": "16000004778",
+    "descricao": "CONSULTORIO G3 H 3TB TV"
+  },
+  {
+    "ordem": 175,
+    "codigo": "16000004779",
+    "descricao": "CONSULTORIO G4 F 3TB TV VP"
+  },
+  {
+    "ordem": 176,
+    "codigo": "21000001316",
+    "descricao": "ESTOF SOFT PVC PRATA - 30"
+  },
+  {
+    "ordem": 177,
+    "codigo": "21000001317",
+    "descricao": "ESTOF SOFT PVC OURO - 31"
+  },
+  {
+    "ordem": 178,
+    "codigo": "21000001318",
+    "descricao": "ESTOF SOFT PVC DESERT ROSE - 35"
+  },
+  {
+    "ordem": 179,
+    "codigo": "21000001319",
+    "descricao": "ESTOF SOFT PVC VD-ESCURO - 37"
+  },
+  {
+    "ordem": 180,
+    "codigo": "21000001320",
+    "descricao": "ESTOF SOFT PVC AZ-CEL - 38"
+  },
+  {
+    "ordem": 181,
+    "codigo": "21000001321",
+    "descricao": "ESTOF SOFT PVC AZ-MAR - 39"
+  },
+  {
+    "ordem": 182,
+    "codigo": "21000001322",
+    "descricao": "ESTOF SOFT PVC LARANJA - 41"
+  },
+  {
+    "ordem": 183,
+    "codigo": "21000001323",
+    "descricao": "ESTOF SOFT PVC ANGRA - 88"
+  },
+  {
+    "ordem": 184,
+    "codigo": "21000001324",
+    "descricao": "ESTOF SOFT PVC NOZES - 90"
+  },
+  {
+    "ordem": 185,
+    "codigo": "21000001325",
+    "descricao": "ESTOF SOFT PVC GRIS - 91"
+  },
+  {
+    "ordem": 186,
+    "codigo": "21000001326",
+    "descricao": "ESTOF SOFT VISCO PRATA - 30"
+  },
+  {
+    "ordem": 187,
+    "codigo": "21000001327",
+    "descricao": "ESTOF SOFT VISCO OURO - 31"
+  },
+  {
+    "ordem": 188,
+    "codigo": "21000001328",
+    "descricao": "ESTOF SOFT VISCO DESERT ROSE - 35"
+  },
+  {
+    "ordem": 189,
+    "codigo": "21000001329",
+    "descricao": "ESTOF SOFT VISCO VD-ESCURO - 37"
+  },
+  {
+    "ordem": 190,
+    "codigo": "21000001330",
+    "descricao": "ESTOF SOFT VISCO AZ-CEL - 38"
+  },
+  {
+    "ordem": 191,
+    "codigo": "21000001331",
+    "descricao": "ESTOF SOFT VISCO AZ-MAR - 39"
+  },
+  {
+    "ordem": 192,
+    "codigo": "21000001332",
+    "descricao": "ESTOF SOFT VISCO LARANJA - 41"
+  },
+  {
+    "ordem": 193,
+    "codigo": "21000001333",
+    "descricao": "ESTOF SOFT VISCO ANGRA - 88"
+  },
+  {
+    "ordem": 194,
+    "codigo": "21000001334",
+    "descricao": "ESTOF SOFT VISCO NOZES - 90"
+  },
+  {
+    "ordem": 195,
+    "codigo": "21000001335",
+    "descricao": "ESTOF SOFT VISCO GRIS - 91"
+  },
+  {
+    "ordem": 196,
+    "codigo": "21000001336",
+    "descricao": "ESTOF SOFT COURO NERO - 20"
+  },
+  {
+    "ordem": 197,
+    "codigo": "21000001337",
+    "descricao": "ESTOF SOFT COURO CARRARA - 26"
+  },
+  {
+    "ordem": 198,
+    "codigo": "21000001338",
+    "descricao": "ESTOF SOFT COURO MARINE - 76"
+  },
+  {
+    "ordem": 199,
+    "codigo": "21000001339",
+    "descricao": "ESTOF SOFT COURO TERRA COTA - 87"
+  },
+  {
+    "ordem": 200,
+    "codigo": "21000001340",
+    "descricao": "ESTOF SOFT COURO NOZES - 90"
+  },
+  {
+    "ordem": 201,
+    "codigo": "6745",
+    "descricao": "AUTOCLAVE ODONTOLÓGICA BIOCLEAN 12L - 127V/220V"
+  },
+  {
+    "ordem": 202,
+    "codigo": "6746",
+    "descricao": "AUTOCLAVE ODONTOLÓGICA BIOCLEAN 21L - 127V/220V"
+  },
+  {
+    "ordem": 203,
+    "codigo": "6747",
+    "descricao": "AUTOCLAVE ODONTOLÓGICA BIOCLEAN PLUS 12L - 127V/220V"
+  },
+  {
+    "ordem": 204,
+    "codigo": "6748",
+    "descricao": "AUTOCLAVE ODONTOLOGICA BIOCLEAN PLUS 21L - 127V/220V"
+  },
+  {
+    "ordem": 205,
+    "codigo": "10050",
+    "descricao": "AUTOCLAVE ODONTOÓGICO BIOMAX 17L"
+  },
+  {
+    "ordem": 206,
+    "codigo": "10051",
+    "descricao": "AUTOCLAVE ODONTOLÓGICA BIOMAX 22L"
+  }
+]
