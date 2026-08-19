@@ -1298,11 +1298,11 @@ Repositório único e permanente das decisões de crédito, acoplado à Liberaç
   - [services/protheusRetorno.js](services/protheusRetorno.js) — `POST /Cobranca/importar-retorno` (upload .RET → FINA205)
   - [services/protheusBoleto.js](services/protheusBoleto.js) — wrapper de linha digitável + código de barras. ⚠️ **NÃO chama mais Diego** (2026-05-29) — delega pro [services/linhaDigitavel.js](services/linhaDigitavel.js) (cálculo Febraban local). Mantida pra preservar a assinatura externa dos callers
   - [services/protheusSolicCompra.js](services/protheusSolicCompra.js) — `POST /SolicCompra/incluir` (Solicitar SC)
-- **Endpoint padrão**: `POST {PROTHEUS_API_URL}/<recurso>/<acao>` — Basic Auth (`PROTHEUS_API_USER`/`PROTHEUS_API_PASS`, default `admin:Gn@tu5`)
+- **Endpoint padrão**: `POST {PROTHEUS_API_URL}/<recurso>/<acao>` — Basic Auth (`PROTHEUS_API_USER`/`PROTHEUS_API_PASS`)
+- ⚠️ **Credencial NUNCA vai em código, fonte ADVPL ou documentação — só no `.env`.** Este manual já documentou a senha literal como "default", e isso virou padrão copiado pros WS do Protheus (credencial hardcoded em fonte); na rotação de 17/08/2026 cada cópia esquecida quebrou um serviço (Cobranca, SolicCompra, NFSe — dias de incidentes). Do lado Protheus os WS leem `MV_XINTUSR`/`MV_XINTPWD` (unificação Diego 18/08/2026); rotação = atualizar o `.env` da VPS + os 2 parâmetros MV + restart (⚠️ armadilha do env stale do pm2 — ver memória de deploy).
 - `.env`:
   - `PROTHEUS_API_URL=http://protheus.gnatus.com.br:8081/rest` — ⚠️ **em produção está FIXADO no IP `http://179.108.181.12:8081/rest`** (não no hostname) porque o outro link do round-robin (`200.15.18.119`) NÃO publica a 8081, o que fazia as chamadas REST caírem ~50% (`fetch failed`). Voltar p/ hostname só depois que a rede publicar a 8081 no VIP do 200 (ver §1.1/§9)
-  - `PROTHEUS_API_USER=admin`
-  - `PROTHEUS_API_PASS=Gn@tu5`
+  - `PROTHEUS_API_USER` / `PROTHEUS_API_PASS` — valores só no `.env` da VPS (nunca aqui)
   - `PROTHEUS_API_PATH_BORDERO=/Cobranca/gerar-bordero` (override opcional)
   - `PROTHEUS_API_PATH_SOLIC_COMPRA=/SolicCompra/incluir` (override opcional)
 - Timeout: 60s pra Cobrança · 180s pra SolicCompra (anexos inflam payload, AdvPL leva ~80s/MB)
