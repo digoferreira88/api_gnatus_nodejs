@@ -103,6 +103,16 @@ module.exports = (app) => ({
                       AND ak2.AK_USER = @cod)
                 )
               END limiteAprov`;
+      // ELEGIBILIDADE de QUEM está olhando pra APROVAR esta linha — MESMA regra do
+      // pré-check de aprovacoes.aprovar.js (nomeado direto OU membro do grupo). Na
+      // visão admin (que enxerga tudo pra auditoria) é isto que separa o que o admin
+      // PODE aprovar do que é só consulta — o Protheus (e o pré-check) recusaria o resto.
+      const elegivelSql = `
+              CASE WHEN scr.CR_USER = @cod
+                    OR EXISTS (SELECT 1 FROM SAL010 sal WITH (NOLOCK)
+                                WHERE sal.D_E_L_E_T_ <> '*' AND sal.AL_FILIAL = '01'
+                                  AND sal.AL_COD = scr.CR_GRUPO AND sal.AL_USER = @cod)
+                   THEN 1 ELSE 0 END elegivel`;
       const scrPendentes = await Protheus.connectAndQuery(
         isAdmin
         ? // Admin: vê tudo pendente (sem filtro por usuário/grupo)
@@ -118,7 +128,8 @@ module.exports = (app) => ({
                     WHEN scr.CR_USER = @cod THEN 'DIRETO'
                     ELSE 'ADMIN'
                   END origem,
-                  ${limiteAprovSql}
+                  ${limiteAprovSql},
+                  ${elegivelSql}
              FROM SCR010 scr WITH (NOLOCK)
             WHERE scr.D_E_L_E_T_ <> '*'
               AND scr.CR_FILIAL = '01'
@@ -140,7 +151,8 @@ module.exports = (app) => ({
                     WHEN scr.CR_USER = @cod THEN 'DIRETO'
                     ELSE 'GRUPO'
                   END origem,
-                  ${limiteAprovSql}
+                  ${limiteAprovSql},
+                  ${elegivelSql}
              FROM SCR010 scr WITH (NOLOCK)
             WHERE scr.D_E_L_E_T_ <> '*'
               AND scr.CR_FILIAL = '01'
@@ -376,12 +388,16 @@ module.exports = (app) => ({
             moeda: toN(info?.moeda) || 1,
             taxa: toN(info?.taxa) || 0,
             limiteAprovador: 0,   // preenchido abaixo (maior limite entre os níveis do user)
+            podeAprovar: false,   // true se o usuário é elegível a aprovar (nomeado/grupo) em algum nível
             itens,
             anexos: anexos.get(key) || []
           });
         }
         // Se tem ao menos um nível DIRETO, prevalece (relevância maior)
         if (trim(s.origem) === 'DIRETO') map.get(key).origem = 'DIRETO';
+        // Elegível a aprovar se em QUALQUER nível o user é o aprovador (nomeado/grupo).
+        // Na visão admin, os docs de terceiros ficam podeAprovar=false → só consulta.
+        if (toN(s.elegivel) === 1) map.get(key).podeAprovar = true;
         // Maior limite entre as linhas que são do próprio usuário
         const lim = toN(s.limiteAprov);
         if (lim > map.get(key).limiteAprovador) map.get(key).limiteAprovador = lim;

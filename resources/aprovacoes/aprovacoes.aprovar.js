@@ -73,14 +73,11 @@ module.exports = (app) => ({
     // Antes de bater no Protheus, confere que ESTE usuario eh aprovador valido
     // pra ESTE documento especifico. Sem isso, qualquer user com perm 13001
     // poderia aprovar SC/PC de qualquer outro aprovador (cross-BU).
-    // Admin (perm 0) bypass — auditoria abrange.
-    const admCheck = await Pg.connectAndQuery(
-      `SELECT 1 FROM tab_intranet_usr_permissoes WHERE id_user = @id AND id_permissao = 0 LIMIT 1`,
-      { id: user.ID }
-    );
-    const isAdmin = admCheck.length > 0;
-
-    if (!isAdmin) {
+    // A regra do Protheus vale pra TODOS, inclusive admin (perm 0) — decisão 19/08:
+    // o admin VÊ tudo (auditoria, em /pendentes) mas só APROVA o que é da alçada
+    // dele. Sem o antigo bypass, admin não aprova mais documento de terceiro (evita
+    // "aprovador universal" cross-BU). Quem não é aprovador daquele doc leva 403.
+    {
       // SCR no Protheus: tipo SC ou IP (para PC), status 02, sem aprovacao
       const tipoFiltro = tipoIntranet === 'PC' ? 'IP' : 'SC';
       let elegivel;
