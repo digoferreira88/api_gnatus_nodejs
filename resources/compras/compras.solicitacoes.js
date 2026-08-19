@@ -7,13 +7,19 @@ const toProtheusDate = (iso) => {
 const trim = (v) => String(v || '').trim();
 const toNumber = (v) => Number(v || 0);
 
-// Status do SCR010 (alçada de aprovação)
+// Status do SCR010 (alçada de aprovação).
+// ⚠️ Corrigido 19/08/2026: o de-para estava INVERTIDO (02 aparecia como "Liberado").
+// Confirmado nos dados de produção: '02' = 26 linhas com ZERO liberação (PENDENTE);
+// '03' = 847 linhas 100% com CR_DATALIB (LIBERADO); '05/06/07' = histórico já
+// resolvido (todas com data). A inversão fazia a SC pendente da Camila (CR_STATUS='02')
+// exibir "Liberado" ao lado de "Bloqueada" — contradição que confundiu o usuário.
 const decodeStatusAprovacao = (s) => {
   switch (trim(s)) {
-    case '02': return { codigo: 'LIBERADO',  label: 'Liberado',  cor: '#09A013' };
-    case '03': return { codigo: 'PENDENTE',  label: 'Pendente',  cor: '#f5a500' };
-    case '05': return { codigo: 'BLOQUEADO', label: 'Bloqueado', cor: '#8093ac' };
+    case '02': return { codigo: 'PENDENTE',  label: 'Pendente',  cor: '#f5a500' };
+    case '03': return { codigo: 'LIBERADO',  label: 'Liberado',  cor: '#09A013' };
+    case '05': return { codigo: 'LIBERADO',  label: 'Liberado',  cor: '#09A013' };
     case '06': return { codigo: 'REJEITADO', label: 'Rejeitado', cor: '#c9302c' };
+    case '07': return { codigo: 'REJEITADO', label: 'Rejeitado', cor: '#c9302c' };
     default:   return { codigo: trim(s),     label: trim(s),     cor: '#6b7a90' };
   }
 };
