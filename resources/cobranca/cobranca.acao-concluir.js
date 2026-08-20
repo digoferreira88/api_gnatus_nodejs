@@ -28,8 +28,8 @@ module.exports = (app) => ({
       await Pg.connectAndQuery(
         `UPDATE tab_cobranca_acao
             SET concluido    = @c,
-                concluido_em  = CASE WHEN @c THEN NOW()  ELSE NULL END,
-                concluido_por = CASE WHEN @c THEN @uid   ELSE NULL END
+                concluido_em  = CASE WHEN @c THEN NOW()      ELSE NULL END,
+                concluido_por = CASE WHEN @c THEN @uid::int  ELSE NULL END
           WHERE id = @id`,
         { c: concluido, uid: user.ID, id });
 
