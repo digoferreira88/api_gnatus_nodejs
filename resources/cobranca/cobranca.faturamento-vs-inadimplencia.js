@@ -12,6 +12,17 @@ const toN  = (v) => Number(v || 0);
 
 const B2C_EQUIPES = ['Comercial Varejo', 'Digital', 'Representantes'];
 
+// CFOPs de venda (p/ o faturamento do periodo, usado no Prazo Medio de Recebimento).
+const CFOPS_VENDA = [
+  '5101','5102','5103','5104','5105','5106','5109','5110','5111','5112','5113','5114','5115','5116','5117','5118','5119','5120','5122','5123','5129',
+  '5251','5252','5253','5254','5255','5256','5257','5258','5301','5302','5303','5304','5305','5306','5307','5351','5352','5353','5354','5355','5356','5357','5359','5360',
+  '5401','5402','5403','5405','5651','5652','5653','5654','5655','5656','5667','5932','5933',
+  '6101','6102','6103','6104','6105','6106','6107','6108','6109','6110','6111','6112','6113','6114','6115','6116','6117','6118','6119','6120','6122','6123','6129',
+  '6251','6252','6253','6254','6255','6256','6257','6258','6301','6302','6303','6304','6305','6306','6307','6351','6352','6353','6354','6355','6356','6357','6359','6360',
+  '6401','6402','6403','6404','6651','6652','6653','6654','6655','6656','6667','6932','6933',
+  '7101','7102','7105','7106','7127','7129','7251','7301','7358','7651','7654','7667'
+];
+
 const FatInadFiltros = require('../../services/cobrancaFatInadFiltros');
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
 
@@ -140,6 +151,32 @@ module.exports = (app) => ({
       const pctAtual = totCR > 0 ? (totInad / totCR) * 100 : 0;
       const ticketMedio = totQtd > 0 ? totInad / totQtd : 0;
 
+      // Prazo Medio de Recebimento (DSO) = contas a receber / (faturamento do periodo / dias).
+      // Faturamento = NF de saida (SF2/SD2, CFOPs de venda) do mesmo periodo/filtros.
+      let totFat = 0;
+      try {
+        const cfopList = CFOPS_VENDA.map(c => `'${c}'`).join(',');
+        const fatRows = await Protheus.connectAndQuery(`
+          SELECT SUM(sd2.D2_VALBRUT) faturado
+            FROM SF2010 sf2 WITH (NOLOCK)
+            INNER JOIN SD2010 sd2 WITH (NOLOCK)
+              ON sd2.D2_FILIAL = sf2.F2_FILIAL AND sd2.D2_DOC = sf2.F2_DOC
+             AND sd2.D2_SERIE = sf2.F2_SERIE AND sd2.D2_CLIENTE = sf2.F2_CLIENTE
+             AND sd2.D2_LOJA = sf2.F2_LOJA AND sd2.D_E_L_E_T_ <> '*'
+             AND sd2.D2_CF IN (${cfopList})
+            ${fi.fatJoins}
+           WHERE sf2.D_E_L_E_T_ <> '*' AND sf2.F2_FILIAL = '01'
+             AND sf2.F2_EMISSAO BETWEEN @ini AND @fim
+             ${fi.fatWhere}
+             ${excluiSql('sf2.F2_CLIENTE', 'sf2.F2_LOJA')}`,
+          sqlParams);
+        totFat = toN(fatRows[0]?.faturado);
+      } catch (e) { console.warn('fat-vs-inad faturamento(PMR):', e.message); }
+      const iniDate = new Date(anoMin, 0, 1).getTime();
+      const fimDate = Math.min(Date.now(), new Date(anoMax, 11, 31).getTime());
+      const diasPeriodo = Math.max(1, Math.round((fimDate - iniDate) / 86400000));
+      const pmr = totFat > 0 ? (totCR / totFat) * diasPeriodo : 0;
+
       // Meta (% sobre contas a receber)
       const metaPct = Number(req.query.metaPct) || 6;
       const inadAlvo = totCR * (metaPct / 100);
@@ -219,17 +256,31 @@ module.exports = (app) => ({
            GROUP BY ${BU_EXPR}`,
           sqlParams
         );
-        const bc = { B2C: { equipe: 'B2C', saldo: 0, qtd: 0 }, B2B: { equipe: 'B2B', saldo: 0, qtd: 0 } };
+        const bc = {
+          B2C: { equipe: 'B2C', saldo: 0, qtd: 0, bus: [] },
+          B2B: { equipe: 'B2B', saldo: 0, qtd: 0, bus: [] }
+        };
         inadBuRows.forEach(r => {
+          const buLabel = trim(r.buLabel) || '(sem BU)';
           const eq = mapBuEquipe.get(trim(r.buLabel)) || 'Sem equipe';
           const cat = setB2C.has(eq) ? 'B2C' : 'B2B';
-          bc[cat].saldo += toN(r.saldo); bc[cat].qtd += toN(r.qtd);
+          const saldo = toN(r.saldo), qtd = toN(r.qtd);
+          bc[cat].saldo += saldo; bc[cat].qtd += qtd;
+          bc[cat].bus.push({ bu: buLabel, saldo, qtd });
         });
         porEquipe = [bc.B2C, bc.B2B]
           .filter(e => e.saldo > 0 || e.qtd > 0)
           .map(e => ({
             equipe: e.equipe, saldo: Number(e.saldo.toFixed(2)), qtd: e.qtd,
-            pct_da_inadimplencia: totInad > 0 ? Number(((e.saldo / totInad) * 100).toFixed(2)) : 0
+            pct_da_inadimplencia: totInad > 0 ? Number(((e.saldo / totInad) * 100).toFixed(2)) : 0,
+            // Granularidade: quanto cada BU representa DENTRO da equipe.
+            bus: e.bus
+              .filter(b => b.saldo > 0 || b.qtd > 0)
+              .map(b => ({
+                bu: b.bu, saldo: Number(b.saldo.toFixed(2)), qtd: b.qtd,
+                pct_da_equipe: e.saldo > 0 ? Number(((b.saldo / e.saldo) * 100).toFixed(2)) : 0
+              }))
+              .sort((a, b) => b.saldo - a.saldo)
           }))
           .sort((a, b) => b.saldo - a.saldo);
       } catch (e) { console.warn('fat-vs-inad porEquipe:', e.message); }
@@ -271,7 +322,9 @@ module.exports = (app) => ({
           inadimplencia: Number(totInad.toFixed(2)),
           pctInadimplencia: Number(pctAtual.toFixed(2)),
           qtdTitulosInad: totQtd,
-          ticketMedio: Number(ticketMedio.toFixed(2))
+          ticketMedio: Number(ticketMedio.toFixed(2)),
+          prazoMedioRecebimento: Number(pmr.toFixed(1)),   // dias (DSO)
+          faturamentoPeriodo: Number(totFat.toFixed(2))
         },
         serie,
         analise: {
