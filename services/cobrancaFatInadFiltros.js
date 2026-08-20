@@ -70,18 +70,40 @@ async function montar({ Pg }, query) {
     }
   }
   if (equipe) {
-    const rows = await Pg.connectAndQuery(
-      `SELECT DISTINCT bu_codigo FROM tab_cobranca_bu_equipe WHERE equipe = @eq`,
-      { eq: equipe }
-    );
-    const labels = rows.map(r => trim(r.bu_codigo)).filter(Boolean);
-    if (labels.length === 0) {
-      fatConds.push('1 = 0'); inadConds.push('1 = 0');   // equipe sem BUs -> vazio
+    const eqU = equipe.toUpperCase();
+    if (eqU === 'B2C' || eqU === 'B2B') {
+      // Modelo B2B/B2C (tela Faturamento x Inadimplencia). B2C = 3 equipes;
+      // B2B = tudo que NAO e B2C (inclusive titulos sem BU). Nao afeta o dashboard,
+      // que passa o nome cru da equipe (cai no else abaixo).
+      const b2cRows = await Pg.connectAndQuery(
+        `SELECT DISTINCT bu_codigo FROM tab_cobranca_bu_equipe
+          WHERE equipe IN ('Comercial Varejo','Digital','Representantes')`, {});
+      const labels = b2cRows.map(r => trim(r.bu_codigo)).filter(Boolean);
+      if (labels.length) {
+        const inList = labels.map((_, i) => `@eqb${i}`).join(',');
+        labels.forEach((l, i) => { params[`eqb${i}`] = l; });
+        const condB2C  = `${BU_LABEL} IN (${inList})`;
+        const condB2B  = `(${BU_LABEL} NOT IN (${inList}) OR ${BU_LABEL} IS NULL)`;
+        const cond = eqU === 'B2C' ? condB2C : condB2B;
+        fatConds.push(cond);  fatSc5 = true;  fatSx5 = true;
+        inadConds.push(cond); inadSc5 = true; inadSx5 = true;
+      } else if (eqU === 'B2C') {
+        fatConds.push('1 = 0'); inadConds.push('1 = 0');
+      }
     } else {
-      const inList = labels.map((_, i) => `@eq${i}`).join(',');
-      labels.forEach((l, i) => { params[`eq${i}`] = l; });
-      fatConds.push(`${BU_LABEL} IN (${inList})`); fatSc5 = true; fatSx5 = true;
-      inadConds.push(`${BU_LABEL} IN (${inList})`); inadSc5 = true; inadSx5 = true;
+      const rows = await Pg.connectAndQuery(
+        `SELECT DISTINCT bu_codigo FROM tab_cobranca_bu_equipe WHERE equipe = @eq`,
+        { eq: equipe }
+      );
+      const labels = rows.map(r => trim(r.bu_codigo)).filter(Boolean);
+      if (labels.length === 0) {
+        fatConds.push('1 = 0'); inadConds.push('1 = 0');   // equipe sem BUs -> vazio
+      } else {
+        const inList = labels.map((_, i) => `@eq${i}`).join(',');
+        labels.forEach((l, i) => { params[`eq${i}`] = l; });
+        fatConds.push(`${BU_LABEL} IN (${inList})`); fatSc5 = true; fatSx5 = true;
+        inadConds.push(`${BU_LABEL} IN (${inList})`); inadSc5 = true; inadSx5 = true;
+      }
     }
   }
 
