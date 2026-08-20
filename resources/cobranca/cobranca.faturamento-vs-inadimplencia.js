@@ -12,6 +12,13 @@ const toN  = (v) => Number(v || 0);
 
 const B2C_EQUIPES = ['Comercial Varejo', 'Digital', 'Representantes'];
 
+// E1_FORMAPG nao tem cBox/SX5 (mesmo mapa do painel de cobranca).
+const FORMAS_PGTO = {
+  '1': 'Cheque', '2': 'Dinheiro', '3': 'Cartao', '4': 'Boleto Bancario',
+  '5': 'Nao informado', '6': 'Financiamento', '7': 'Cartao BNDS', '8': 'Bonificacao',
+  '9': 'Consignado', 'B': 'Antecipacao Parcelada', 'A': 'Futuro Garantido', '': 'Nao informado'
+};
+
 // CFOPs de venda (p/ o faturamento do periodo, usado no Prazo Medio de Recebimento).
 const CFOPS_VENDA = [
   '5101','5102','5103','5104','5105','5106','5109','5110','5111','5112','5113','5114','5115','5116','5117','5118','5119','5120','5122','5123','5129',
@@ -102,6 +109,11 @@ module.exports = (app) => ({
     const fi = await FatInadFiltros.montar({ Pg }, req.query);
     Object.assign(sqlParams, fi.params);
 
+    // Forma de pagamento: a serie/faturamento ja respeitam via fi (E1_FORMAPG/C5_FORMAPG).
+    // topClientes/aging/porEquipe usam condBuInad, entao aplicamos condForma neles (mesmo @forma).
+    const formaSel = trim(req.query.formaPgto);
+    const condForma = formaSel ? `AND RTRIM(se1.E1_FORMAPG) = @forma` : '';
+
     try {
       const joinSx5Bu = joinSx5 ? `LEFT JOIN SX5010 bu_sx5 WITH (NOLOCK)
                 ON bu_sx5.X5_FILIAL = '  ' AND bu_sx5.X5_TABELA = 'Z1'
@@ -177,6 +189,28 @@ module.exports = (app) => ({
       const diasPeriodo = Math.max(1, Math.round((fimDate - iniDate) / 86400000));
       const pmr = totFat > 0 ? (totCR / totFat) * diasPeriodo : 0;
 
+      // Formas de pagamento disponiveis (pra o dropdown) — universo de contas a
+      // receber do periodo (independente da forma selecionada, pra a lista nao sumir).
+      let formasDisponiveis = [];
+      try {
+        const fRows = await Protheus.connectAndQuery(`
+          SELECT RTRIM(se1.E1_FORMAPG) cod, COUNT(*) qtd, SUM(se1.E1_SALDO) saldo
+            FROM SE1010 se1 WITH (NOLOCK)
+           WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
+             AND se1.E1_SALDO > 0
+             AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+             AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+             ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
+           GROUP BY RTRIM(se1.E1_FORMAPG)
+           ORDER BY SUM(se1.E1_SALDO) DESC`,
+          { ini: inicioStr, fim: fimStr });
+        formasDisponiveis = fRows.map(r => ({
+          cod: trim(r.cod),
+          nome: FORMAS_PGTO[trim(r.cod)] || `Forma ${trim(r.cod)}`,
+          qtd: toN(r.qtd), saldo: Number(toN(r.saldo).toFixed(2))
+        }));
+      } catch (e) { console.warn('fat-vs-inad formas:', e.message); }
+
       // Meta (% sobre contas a receber)
       const metaPct = Number(req.query.metaPct) || 6;
       const inadAlvo = totCR * (metaPct / 100);
@@ -199,6 +233,7 @@ module.exports = (app) => ({
            AND se1.E1_EMISSAO BETWEEN @ini AND @fim
            AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
            ${condBuInad}
+           ${condForma}
            ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
          GROUP BY se1.E1_CLIENTE, se1.E1_LOJA, sa1.A1_NOME, se1.E1_NOMCLI, sa1.A1_EST
          ORDER BY SUM(se1.E1_SALDO) DESC`,
@@ -221,6 +256,7 @@ module.exports = (app) => ({
            AND se1.E1_EMISSAO BETWEEN @ini AND @fim
            AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
            ${condBuInad}
+           ${condForma}
            ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
          GROUP BY ${FAIXA_CASE}`,
         sqlParams
@@ -252,6 +288,7 @@ module.exports = (app) => ({
              AND se1.E1_EMISSAO BETWEEN @ini AND @fim
              AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
              ${condBuInad}
+             ${condForma}
              ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
            GROUP BY ${BU_EXPR}`,
           sqlParams
@@ -309,6 +346,8 @@ module.exports = (app) => ({
       return res.json({
         periodo: { anoMin, anoMax },
         equipe: equipe || null,
+        formaPgto: formaSel || null,
+        formas_pgto_disponiveis: formasDisponiveis,
         incluir360mais: !!inc360,
         meta: {
           pct: metaPct,
