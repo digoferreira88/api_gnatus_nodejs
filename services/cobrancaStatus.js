@@ -18,6 +18,7 @@ const STATUS_LIST = [
   { value: 'SEM_RETORNO',         label: 'Sem resposta/retorno do cliente' },
   { value: 'PROTESTO',            label: 'Protesto' },
   { value: 'JURIDICO',            label: 'Jurídico' },
+  { value: 'ACORDO_JURIDICO',     label: 'Acordo Jurídico' },
   { value: 'TERCEIRIZADA',        label: 'Terceirizada' },
   { value: 'NEGATIVADO',          label: 'Negativado' },
   { value: 'PERDA',               label: 'Perda' }
