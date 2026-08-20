@@ -40,7 +40,7 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Protheus, Pg } = app.services;
-    const { cliente, uf, faixa, bu, formaPgto } = req.query;
+    const { cliente, uf, faixa, bu, formaPgto, status } = req.query;
     const diasMinimos = Number(req.query.diasMinimos || 5);
 
     const params = { diasMinimos };
@@ -161,7 +161,7 @@ module.exports = (app) => ({
         };
       });
 
-      const filtrados = faixa
+      let filtrados = faixa
         ? titulos.filter(t => t.faixa.codigo === String(faixa))
         : titulos;
 
@@ -205,6 +205,26 @@ module.exports = (app) => ({
         const st = statusMap.get(`${t.clienteCod}|${t.clienteLoja}`);
         t.statusCobranca = st ? st.status : '';
       });
+
+      // Status disponíveis (contados por CLIENTE, não por título) para popular o
+      // filtro — antes de aplicar o filtro de status, pra o dropdown mostrar tudo.
+      // '__SEM__' = clientes sem status cadastrado.
+      const statusPorCliente = new Map();
+      filtrados.forEach(t => {
+        const ck = `${t.clienteCod}|${t.clienteLoja}`;
+        if (!statusPorCliente.has(ck)) statusPorCliente.set(ck, trim(t.statusCobranca));
+      });
+      const statusSet = new Map();
+      statusPorCliente.forEach(st => { const k = st || '__SEM__'; statusSet.set(k, (statusSet.get(k) || 0) + 1); });
+      const statusDisponiveis = [...statusSet.entries()]
+        .map(([st, qtd]) => ({ status: st, qtd }))
+        .sort((a, b) => b.qtd - a.qtd);
+
+      // Filtro por STATUS (CSV de códigos; '__SEM__' = sem status cadastrado).
+      if (status) {
+        const sel = new Set(String(status).split(',').map(s => s.trim()).filter(Boolean));
+        filtrados = filtrados.filter(t => sel.has(trim(t.statusCobranca) || '__SEM__'));
+      }
 
       // Agrega por cliente
       const porClienteMap = new Map();
@@ -274,6 +294,7 @@ module.exports = (app) => ({
         porFaixa,
         busDisponiveis,
         formasPgtoDisponiveis,
+        statusDisponiveis,
         geradoEm: new Date().toISOString(),
         titulos: filtrados,
         porCliente
