@@ -12,6 +12,16 @@ const toN  = (v) => Number(v || 0);
 
 const B2C_EQUIPES = ['Comercial Varejo', 'Digital', 'Representantes'];
 
+// Consolidacao de BUs no drill-down (regra de negocio 20/08): CIOSP (qualquer
+// ediçao) e FRANQUEADO REPRESENTAÇÃO contam como "Comercial Varejo".
+const canonBu = (label) => {
+  const L = String(label || '').trim();
+  if (!L) return '';
+  if (/^CIOSP\b/i.test(L)) return 'Comercial Varejo';
+  if (L.toUpperCase() === 'FRANQUEADO REPRESENTAÇÃO') return 'Comercial Varejo';
+  return L;
+};
+
 // E1_FORMAPG nao tem cBox/SX5 (mesmo mapa do painel de cobranca).
 const FORMAS_PGTO = {
   '1': 'Cheque', '2': 'Dinheiro', '3': 'Cartao', '4': 'Boleto Bancario',
@@ -294,16 +304,20 @@ module.exports = (app) => ({
           sqlParams
         );
         const bc = {
-          B2C: { equipe: 'B2C', saldo: 0, qtd: 0, bus: [] },
-          B2B: { equipe: 'B2B', saldo: 0, qtd: 0, bus: [] }
+          B2C: { equipe: 'B2C', saldo: 0, qtd: 0, bus: new Map() },
+          B2B: { equipe: 'B2B', saldo: 0, qtd: 0, bus: new Map() }
         };
         inadBuRows.forEach(r => {
-          const buLabel = trim(r.buLabel) || '(sem BU)';
-          const eq = mapBuEquipe.get(trim(r.buLabel)) || 'Sem equipe';
+          // Canonicaliza a BU (CIOSP/FRANQUEADO REPRESENTAÇÃO -> Comercial Varejo) e
+          // classifica pela equipe da BU JA canonicalizada, pra a linha e o B2B/B2C baterem.
+          const buLabel = canonBu(r.buLabel) || '(sem BU)';
+          const eq = mapBuEquipe.get(buLabel) || mapBuEquipe.get(trim(r.buLabel)) || 'Sem equipe';
           const cat = setB2C.has(eq) ? 'B2C' : 'B2B';
           const saldo = toN(r.saldo), qtd = toN(r.qtd);
           bc[cat].saldo += saldo; bc[cat].qtd += qtd;
-          bc[cat].bus.push({ bu: buLabel, saldo, qtd });
+          const cur = bc[cat].bus.get(buLabel) || { bu: buLabel, saldo: 0, qtd: 0 };
+          cur.saldo += saldo; cur.qtd += qtd;
+          bc[cat].bus.set(buLabel, cur);
         });
         porEquipe = [bc.B2C, bc.B2B]
           .filter(e => e.saldo > 0 || e.qtd > 0)
@@ -311,7 +325,7 @@ module.exports = (app) => ({
             equipe: e.equipe, saldo: Number(e.saldo.toFixed(2)), qtd: e.qtd,
             pct_da_inadimplencia: totInad > 0 ? Number(((e.saldo / totInad) * 100).toFixed(2)) : 0,
             // Granularidade: quanto cada BU representa DENTRO da equipe.
-            bus: e.bus
+            bus: Array.from(e.bus.values())
               .filter(b => b.saldo > 0 || b.qtd > 0)
               .map(b => ({
                 bu: b.bu, saldo: Number(b.saldo.toFixed(2)), qtd: b.qtd,
