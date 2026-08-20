@@ -21,12 +21,14 @@ module.exports = (app) => ({
       let sql = `
         SELECT a.ID, a.CLIENTE_COD, a.CLIENTE_LOJA,
                a.TIPO_ACAO, a.RESULTADO, a.DATA_PROMESSA, a.VALOR_PROMETIDO,
-               a.DESCRICAO, a.CRIADO_EM, a.TITULO_NUM, a.TITULO_PARCELA
+               a.DESCRICAO, a.CRIADO_EM, a.TITULO_NUM, a.TITULO_PARCELA,
+               a.CONCLUIDO, a.CONCLUIDO_EM
           FROM tab_cobranca_acao a
          WHERE a.ID_USER = @uid`;
       if (scope === 'pendentes') {
         sql += ` AND a.DATA_PROMESSA IS NOT NULL
-                 AND a.RESULTADO IN ('PROMESSA_PAGAMENTO','ACORDO_FECHADO')`;
+                 AND a.RESULTADO IN ('PROMESSA_PAGAMENTO','ACORDO_FECHADO')
+                 AND a.CONCLUIDO = false`;
       }
       sql += ` ORDER BY COALESCE(a.DATA_PROMESSA, a.CRIADO_EM) ASC`;
 
@@ -72,6 +74,7 @@ module.exports = (app) => ({
           dataPromessa: r.DATA_PROMESSA, valorPrometido: toNumber(r.VALOR_PROMETIDO),
           descricao: r.DESCRICAO || '', criadoEm: r.CRIADO_EM,
           tituloNum: trim(r.TITULO_NUM), tituloParcela: trim(r.TITULO_PARCELA),
+          concluido: r.CONCLUIDO === true, concluidoEm: r.CONCLUIDO_EM,
           statusPromessa
         };
       });
