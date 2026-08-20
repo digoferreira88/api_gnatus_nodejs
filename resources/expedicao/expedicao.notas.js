@@ -91,6 +91,18 @@ module.exports = (app) => ({
         f2.F2_VALMERC        total,
         ISNULL(imp.difal, 0) difal,
         ISNULL(imp.fcp, 0)   fcp,
+        -- Pedido(s) de venda da NF (SD2.D2_PEDIDO). Normalmente 1 por NF; se houver
+        -- mais de um, concatena os distintos ("123, 124"). Ignora itens sem pedido.
+        STUFF((SELECT DISTINCT ', ' + RTRIM(sd2p.D2_PEDIDO)
+                 FROM SD2010 sd2p WITH (NOLOCK)
+                WHERE sd2p.D2_FILIAL  = f2.F2_FILIAL
+                  AND sd2p.D2_DOC     = f2.F2_DOC
+                  AND sd2p.D2_SERIE   = f2.F2_SERIE
+                  AND sd2p.D2_CLIENTE = f2.F2_CLIENTE
+                  AND sd2p.D2_LOJA    = f2.F2_LOJA
+                  AND sd2p.D_E_L_E_T_ <> '*'
+                  AND RTRIM(sd2p.D2_PEDIDO) <> ''
+                FOR XML PATH('')), 1, 2, '') pedido,
         f2.R_E_C_N_O_        id
       FROM SF2010 f2 WITH (NOLOCK)
       LEFT JOIN SA1010 sa1 WITH (NOLOCK)
@@ -156,6 +168,7 @@ module.exports = (app) => ({
           id: r.id,
           nfe: trim(r.nfe),
           serie: trim(r.serie),
+          pedido: trim(r.pedido),
           emissao: trim(r.emissao),
           clienteCod: trim(r.clienteCod),
           clienteLoja: trim(r.clienteLoja),
