@@ -85,6 +85,10 @@ async function buscarTitulos(Protheus, deltaDias, mode = 'exato', deltaMax = nul
       AND se1.E1_FILIAL = '01'
       AND se1.E1_SALDO > 0
       AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+      -- SOMENTE Boleto Bancário (E1_FORMAPG='4'). Cobrança por WhatsApp só faz
+      -- sentido p/ boleto; cartão/dinheiro/financiamento gerariam erro (decisão
+      -- 20/08). Vale p/ a curadoria manual E p/ a automação (mesma fonte).
+      AND RTRIM(se1.E1_FORMAPG) = '4'
       AND ${condVenc}
     ORDER BY se1.E1_VENCREA, se1.E1_CLIENTE`,
     params
