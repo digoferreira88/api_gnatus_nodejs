@@ -17,6 +17,23 @@ const { emitirDps, ambiente } = require('./nfseBarretos');
 const soDig = (v) => String(v == null ? '' : v).replace(/\D/g, '');
 const trim = (v) => String(v == null ? '' : v).trim();
 
+// Clientes com emissão de NFS-e SUSPENSA momentaneamente (ex.: cadastro pendente
+// na prefeitura). Env NFSE_CLIENTES_EXCLUIDOS = CSV de "codigo" ou "codigo|loja".
+// Reversível: remover da env + recarregar. Ex.: "166877|01" (I LOVE ODONTO).
+function clientesExcluidos() {
+  const set = new Set();
+  String(process.env.NFSE_CLIENTES_EXCLUIDOS || '')
+    .split(/[;,]/).map((s) => s.replace(/\s+/g, '').toUpperCase()).filter(Boolean)
+    .forEach((e) => set.add(e));
+  return set;
+}
+function clienteExcluido(cliente, loja) {
+  const set = clientesExcluidos();
+  if (!set.size) return false;
+  const c = trim(cliente).toUpperCase(), l = trim(loja).toUpperCase();
+  return set.has(c) || set.has(`${c}|${l}`);
+}
+
 // De-para produto → cTribNac (fallback enquanto o B1_CODISS não é preenchido no
 // cadastro do Protheus). Fonte: planilha do fiscal (data/nfse-depara-servicos.json).
 // Map codigo -> { cTribNac, cIndOp, nbs }. cIndOp/nbs entraram com a Reforma
@@ -119,6 +136,12 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
   const k = { filial: '01', serie: trim(serie), doc: trim(doc), cliente: trim(cliente), loja: trim(loja) };
   const por = trim(user && (user.EMAIL || user.NOME)) || 'sistema';
 
+  // Cliente com emissão suspensa (cadastro pendente na prefeitura, etc.) → não emite.
+  // Não cria reserva nem toca o Protheus; só sinaliza pra quem chamou.
+  if (clienteExcluido(k.cliente, k.loja)) {
+    return { ok: false, excluida: true, motivo: 'CLIENTE_EXCLUIDO', id: null, cliente: k.cliente, loja: k.loja };
+  }
+
   // 1) reserva a emissão (INSERT PENDENTE). Conflito = já EMITIDA ou em andamento.
   const ins = await Pg.connectAndQuery(`
     INSERT INTO tab_nfse_emitida (filial, serie, doc, cliente, loja, ambiente, status, emitido_por)
@@ -180,4 +203,4 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
   }
 }
 
-module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador };
+module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido };

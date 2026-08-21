@@ -5,7 +5,7 @@
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([16001, 0]);
 const { listarNotasServicoPeriodo, dataIso } = require('../../services/nfseProtheus');
-const { config } = require('../../services/nfseEmissao');
+const { config, clienteExcluido } = require('../../services/nfseEmissao');
 
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
@@ -70,7 +70,10 @@ module.exports = (app) => ({
       const doc = trim(n.doc), cli = trim(n.cliente), loja = trim(n.loja);
       const e = mapEmit.get(`${doc}|${cli}|${loja}`);
       const emiRaw = trim(n.emissao).replace(/\D/g, '').slice(0, 8);
-      const status = e ? e.status : (corte && emiRaw && emiRaw < corte ? 'LEGADA' : 'NAO_EMITIDA');
+      let status = e ? e.status : (corte && emiRaw && emiRaw < corte ? 'LEGADA' : 'NAO_EMITIDA');
+      // Cliente com emissão suspensa (cadastro pendente na prefeitura) → EXCLUIDA.
+      // Só sobrepõe o que NÃO foi de fato emitido (uma EMITIDA anterior continua válida).
+      if (status !== 'EMITIDA' && clienteExcluido(cli, loja)) status = 'EXCLUIDA';
       return {
         doc, serie: trim(n.serie), cliente: cli, loja,
         clienteNome: nomes.get(`${cli}|${loja}`) || '',
@@ -80,13 +83,16 @@ module.exports = (app) => ({
         ctribnac: e ? trim(e.ctribnac) : ''
       };
     });
-    if (soPendentes) docs = docs.filter((d) => d.status !== 'EMITIDA' && d.status !== 'LEGADA');
+    const totExcluidas = docs.filter((d) => d.status === 'EXCLUIDA').length;   // antes do filtro de pendentes
+    // EXCLUIDA sai da fila "só não emitidas" (não é acionável), igual EMITIDA/LEGADA.
+    if (soPendentes) docs = docs.filter((d) => d.status !== 'EMITIDA' && d.status !== 'LEGADA' && d.status !== 'EXCLUIDA');
 
     const kpis = {
       total: docs.length,
       naoEmitidas: docs.filter((d) => d.status === 'NAO_EMITIDA').length,
       emitidas: docs.filter((d) => d.status === 'EMITIDA').length,
       rejeitadas: docs.filter((d) => d.status === 'REJEITADA' || d.status === 'ERRO').length,
+      excluidas: totExcluidas,
       legadas: docs.filter((d) => d.status === 'LEGADA').length,
       valorTotal: +docs.reduce((s, d) => s + d.valor, 0).toFixed(2)
     };

@@ -41,19 +41,20 @@ module.exports = (app) => ({
 
     const emitidas = resultados.filter((r) => r.ok && !r.jaEmitida).length;
     const jaEmitidas = resultados.filter((r) => r.jaEmitida).length;
-    const falhas = resultados.filter((r) => !r.ok).length;
+    const excluidas = resultados.filter((r) => r.excluida).length;   // cliente suspenso (não é falha)
+    const falhas = resultados.filter((r) => !r.ok && !r.excluida).length;
 
     Auditoria.registrar(app, {
       modulo: 'Fiscal', submodulo: 'NFSe',
       acao: 'EMITIR_NFSE', severidade: falhas ? 'ALERTA' : 'CRITICO', req,
       entidade: 'nfse', entidadeId: notas.map((n) => `${n.serie}/${n.doc}`).slice(0, 5).join(','),
-      descricao: `Emissão NFS-e (${ambienteRotulo}): ${emitidas} emitida(s), ${jaEmitidas} já existia(m), ${falhas} falha(s) de ${notas.length}.`,
-      meta: { ambiente: ambienteRotulo, total: notas.length, emitidas, jaEmitidas, falhas }
+      descricao: `Emissão NFS-e (${ambienteRotulo}): ${emitidas} emitida(s), ${jaEmitidas} já existia(m), ${excluidas} excluída(s), ${falhas} falha(s) de ${notas.length}.`,
+      meta: { ambiente: ambienteRotulo, total: notas.length, emitidas, jaEmitidas, excluidas, falhas }
     });
 
     return res.json({
       ambiente: ambienteRotulo,
-      resumo: { total: notas.length, emitidas, jaEmitidas, falhas },
+      resumo: { total: notas.length, emitidas, jaEmitidas, excluidas, falhas },
       resultados
     });
   }
