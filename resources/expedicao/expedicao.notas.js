@@ -130,7 +130,7 @@ module.exports = (app) => ({
       WHERE f2.F2_FILIAL = '01'
         AND f2.D_E_L_E_T_ <> '*'
         AND f2.F2_SERIE = '1'
-        AND f2.F2_EMISSAO > @dataMinima
+        AND f2.F2_EMISSAO >= @dataMinima   -- "a partir de" = inclusivo (antes era > e sumia a NF emitida exatamente na data escolhida)
         ${condAba}
         AND (sa1.A1_COD IS NULL OR sa1.D_E_L_E_T_ <> '*')
         -- Exclui NF que NAO tenha NENHUM item com CFOP de expedicao fisica.
