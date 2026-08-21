@@ -64,6 +64,13 @@ module.exports = (app) => ({
       condAba = `AND fe.z1_expedic IS NULL`;
     }
 
+    // Eixo da data "a partir de" muda por aba:
+    //   pendentes                 -> EMISSAO da NF (ainda nao foi expedida)
+    //   sem_rastreio / expedidas  -> data de EXPEDICAO (fluxo de quem expede)
+    const dateCond = (aba === 'pendentes')
+      ? `AND f2.F2_EMISSAO >= @dataMinima`
+      : `AND fe.z1_expedic >= @dataMinima`;
+
     // SX3 da Gnatus: DIFAL = SD2.D2_DIFAL ; FCP Proprio = SD2.D2_VALFECP.
     // Nao ha campo agregado em SF2 — somamos por NF via subquery.
     const sql = `
@@ -130,7 +137,7 @@ module.exports = (app) => ({
       WHERE f2.F2_FILIAL = '01'
         AND f2.D_E_L_E_T_ <> '*'
         AND f2.F2_SERIE = '1'
-        AND f2.F2_EMISSAO >= @dataMinima   -- "a partir de" = inclusivo (antes era > e sumia a NF emitida exatamente na data escolhida)
+        ${dateCond}
         ${condAba}
         AND (sa1.A1_COD IS NULL OR sa1.D_E_L_E_T_ <> '*')
         -- Exclui NF que NAO tenha NENHUM item com CFOP de expedicao fisica.
