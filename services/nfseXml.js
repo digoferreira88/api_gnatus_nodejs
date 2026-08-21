@@ -21,7 +21,24 @@ const IBGE_UF = {
 const soDig = (v) => String(v == null ? '' : v).replace(/\D/g, '');
 const money = (v) => Number(v || 0).toFixed(2);
 const trim = (v) => String(v == null ? '' : v).trim();
-const esc = (v) => trim(v)
+
+// Sanitiza texto p/ os tipos-texto do Padrão Nacional (ex.: TSLogradouro), que só
+// aceitam imprimível Latin-1 (U+0020..U+00FF). Caracteres tipográficos Unicode do
+// cadastro do Protheus — travessão "–"/"—" (U+2013/14), aspas curvas, reticências,
+// espaço fino/NBSP — estouram o pattern do XSD e a prefeitura rejeita com E1235
+// "Falha no esquema XML do DF-e". Normaliza os comuns p/ ASCII e remove o resto
+// (vira espaço). PRESERVA acentos (ç, ã, é... são <= U+00FF, válidos).
+const sanitizarTexto = (v) => String(v == null ? '' : v)
+  .replace(/[‐-―−]/g, '-')          // hífen/traço/travessão/minus -> -
+  .replace(/[‘’‚′]/g, "'")     // aspas simples curvas / prime -> '
+  .replace(/[“”„″]/g, '"')     // aspas duplas curvas -> "
+  .replace(/…/g, '...')                        // reticências -> ...
+  .replace(/[   ]/g, ' ')            // espaços especiais -> espaço
+  .replace(/[•·∙]/g, '-')            // bullets -> -
+  .replace(/[^ -ÿ]/g, ' ')                // resto fora do Latin-1 imprimível -> espaço
+  .replace(/\s+/g, ' ').trim();
+
+const esc = (v) => sanitizarTexto(v)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
 // IBGE (7 díg) do município a partir de UF + A1_COD_MUN (Protheus guarda 5 díg).
@@ -191,4 +208,4 @@ function montarDps(nota, cfg) {
   return { xml, id };
 }
 
-module.exports = { montarDps, ibgeMunicipio, idInfDps, IBGE_UF };
+module.exports = { montarDps, ibgeMunicipio, idInfDps, IBGE_UF, sanitizarTexto };
