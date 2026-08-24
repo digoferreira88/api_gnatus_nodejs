@@ -247,7 +247,12 @@ const GARPECAS_MOVE = {
     // outro motivo NÃO dispara e-mail no Pipefy — aqui idem (senão a ATA
     // receberia WhatsApp em cancelamento que hoje é silencioso).
     quando: (c) => c.cancelamentoNotificavel,
-    params: (c) => [c.ataNome, c.motivos] }
+    // 3 params (confirmado no cadastro da Suri em 24/08): {{1}} nome da ATA,
+    // {{2}} DESCREVA OS PROBLEMAS ENCONTRADOS, {{3}} DESCREVA O MOTIVO DA
+    // NEGATIVA DA GARANTIA — os mesmos 2 campos que o e-mail imprime em linhas
+    // separadas. Campo vazio vira espaço no sanitize() do suri.js (o que o Meta
+    // aceita), reproduzindo a linha em branco do e-mail.
+    params: (c) => [c.ataNome, c.motivoProblemas, c.motivoNegativa] }
 };
 
 // ---- pré-filtro (economia de API) ----
@@ -444,15 +449,14 @@ async function garPecasContexto(card) {
   const validaGarantia = trim(valorCampo(card, 'ser_validada_a_garantia')).toUpperCase();
   const cancelamentoNotificavel = osConforme === 'NÃO' || validaGarantia === 'NÃO -> GARANTIA NEGADA';
 
-  // O e-mail imprime os 2 campos de motivo em linhas separadas; no WhatsApp vira
-  // UM parâmetro — o Meta recusa parâmetro vazio e, na prática, os dois são
-  // excludentes (um é "OS não conforme", o outro "garantia negada").
-  const motivos = [
-    trim(valorCampo(card, 'descreva_os_problemas_encontrados')),
-    trim(valorCampo(card, 'descreva_o_motivo_da_negativa_da_garantia'))
-  ].filter(Boolean).join(' — ') || 'Motivo não informado';
+  // Os 2 campos de motivo vão SEPARADOS ({{2}} e {{3}} do template), iguais às
+  // 2 linhas do e-mail. Na prática são excludentes (um é "OS não conforme", o
+  // outro "garantia negada"); o vazio vira espaço no sanitize() do suri.js, que
+  // é o que o Meta aceita — mesma aparência da linha em branco do e-mail.
+  const motivoProblemas = trim(valorCampo(card, 'descreva_os_problemas_encontrados'));
+  const motivoNegativa  = trim(valorCampo(card, 'descreva_o_motivo_da_negativa_da_garantia'));
 
-  return { numero, ataNome, ataFone, cancelamentoNotificavel, motivos };
+  return { numero, ataNome, ataFone, cancelamentoNotificavel, motivoProblemas, motivoNegativa };
 }
 
 
