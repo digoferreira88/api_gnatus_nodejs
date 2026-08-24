@@ -7,6 +7,7 @@
 //     card.late tambem notifica e inclui a gerente Patricia (305322776)
 //   - G-CARE INTERNO (307050389): 4 fases notificam o CLIENTE (tabela CLIENTES)
 //   - Teste_TI (306929743): branch de teste preservado
+//   - 13 | SOLICITACAO DE PECAS EM GARANTIA (306873829): 3 e-mails -> WhatsApp p/ ATA
 // Envio: services/suri (mesma API/canal do PHP). Fila com dedupe em
 // tab_pipefy_wh_fila (numero+card+fase+acao), eventos em tab_pipefy_wh_evento.
 
@@ -212,6 +213,43 @@ const GCARE_FIELD_TRIGGERS = {
   ]
 };
 
+// ============ 13 | SOLICITAÇÃO DE PEÇAS EM GARANTIA (306873829) ============
+// Espelha em WhatsApp (Suri) os 3 e-mails que o pipe envia para a ATA. Mesma
+// mecânica do G-Care novo: config declarativa + contexto resolvido 1x por evento.
+// Automações espelhadas (lidas da API do Pipefy em 19/08/2026):
+//   306374865  CARD CRIADO                  -> e-mail 309370587 "SOLICITAÇÃO DE PEÇAS CRIADA"
+//   306374866  CONCLUÍDA (move p/ 341436415)-> e-mail 309370606
+//   307733986  CANCELADA (move p/ 343844203)-> e-mail 309745268, COM CONDIÇÃO:
+//        os_dados_da_ordem_de_servi_o_est_o_conforme = 'NÃO'
+//     OU ser_validada_a_garantia = 'NÃO -> GARANTIA NEGADA'
+// Destinatário dos 3 = ATA (conector `solicitante` -> tabela ASSISTÊNCIA TÉCNICA
+// AUTORIZADA Kvl8bjo9, a MESMA do G-Care: nome_fantasia / telefone / e_mail).
+const PIPE_GARANTIA_PECAS = '306873829';
+
+// IDs informados pelo usuário (templates já cadastrados na Suri). Env sobrepõe
+// sem deploy, no mesmo padrão dos SURI_TPL_GCARE_*.
+const TPL_GARPECAS = {
+  criada:    process.env.SURI_TPL_GARPECAS_CRIADA    || '1039229075538566',
+  concluida: process.env.SURI_TPL_GARPECAS_CONCLUIDA || '904894906027504',
+  cancelada: process.env.SURI_TPL_GARPECAS_CANCELADA || '1731030645106650'
+};
+
+// card.create -> confirma a abertura para a ATA (espelha o e-mail 309370587)
+const GARPECAS_CREATE = [
+  { tpl: 'criada', destino: 'ata', params: (c) => [c.ataNome, c.numero] }
+];
+// card.move -> fase de destino
+const GARPECAS_MOVE = {
+  '341436415': { tpl: 'concluida', destino: 'ata',          // CONCLUÍDO
+    params: (c) => [c.ataNome, c.numero] },
+  '343844203': { tpl: 'cancelada', destino: 'ata',          // CANCELADO
+    // Só notifica nos 2 casos da automação 307733986. Mover p/ CANCELADO por
+    // outro motivo NÃO dispara e-mail no Pipefy — aqui idem (senão a ATA
+    // receberia WhatsApp em cancelamento que hoje é silencioso).
+    quando: (c) => c.cancelamentoNotificavel,
+    params: (c) => [c.ataNome, c.motivos] }
+};
+
 // ---- pré-filtro (economia de API) ----
 // Só estas ações têm branch. Qualquer outra (field_update, done, comment...) é
 // descartada ANTES de consultar o card, evitando 1 chamada dadosCard por evento.
@@ -381,6 +419,43 @@ async function gcareContexto(card) {
     cliNome, cliNomeCompleto, cliFone, ataNome, ataFone, tecNome, tecFone };
 }
 
+// ---------- contexto 13 | SOLICITAÇÃO DE PEÇAS EM GARANTIA ----------
+async function garPecasContexto(card) {
+  // Nº da solicitação: o campo é do tipo 'id' do Pipefy — NÃO volta na API (não
+  // aparece em `fields`) e o TÍTULO do card é o próprio número. Verificado em 6
+  // cards de 3 fases: title === card.id em todos. O e-mail do pipe referencia o
+  // mesmo campo, então o WhatsApp mostra exatamente o que a ATA vê no e-mail.
+  // NÃO 'corrigir' trocando pelo valorCampo — ele é sempre vazio.
+  const numero = trim(valorCampo(card, 'n_da_solicita_o_de_pe_as_em_garantia')) || trim(card.title);
+
+  // ATA = conector `solicitante` (tabela ASSISTÊNCIA TÉCNICA AUTORIZADA)
+  let ataNome = '', ataFone = '';
+  const ataIds = arrayCampo(card, 'solicitante');
+  if (ataIds.length) {
+    try {
+      const r = await dadosDatabasePorId(ataIds[0]);
+      ataNome = trim(valorRecord(r.record_fields, 'nome_fantasia')) || trim(valorRecord(r.record_fields, 'raz_o_social'));
+      ataFone = trim(valorRecord(r.record_fields, 'telefone'));
+    } catch (e) { /* segue com o que tem */ }
+  }
+
+  // Condição da automação 307733986 (cancelamento que notifica).
+  const osConforme     = trim(valorCampo(card, 'os_dados_da_ordem_de_servi_o_est_o_conforme')).toUpperCase();
+  const validaGarantia = trim(valorCampo(card, 'ser_validada_a_garantia')).toUpperCase();
+  const cancelamentoNotificavel = osConforme === 'NÃO' || validaGarantia === 'NÃO -> GARANTIA NEGADA';
+
+  // O e-mail imprime os 2 campos de motivo em linhas separadas; no WhatsApp vira
+  // UM parâmetro — o Meta recusa parâmetro vazio e, na prática, os dois são
+  // excludentes (um é "OS não conforme", o outro "garantia negada").
+  const motivos = [
+    trim(valorCampo(card, 'descreva_os_problemas_encontrados')),
+    trim(valorCampo(card, 'descreva_o_motivo_da_negativa_da_garantia'))
+  ].filter(Boolean).join(' — ') || 'Motivo não informado';
+
+  return { numero, ataNome, ataFone, cancelamentoNotificavel, motivos };
+}
+
+
 // ---------- fila (dedupe identico ao PHP) ----------
 async function enfileirar(Pg, { fone, cardId, faseId, action, templateId, parametros }) {
   if (!fone) return false;
@@ -455,7 +530,7 @@ async function processarEvento({ Pg }, payload) {
   if (!ACOES_TRATADAS.has(action)) return { acoes: [`ação "${action || '?'}" não tratada — ignorado (sem API)`] };
   const pipeHash = trim(d.card?.pipe_id);
   if (action === 'card.move' && faseId && PIPES_FASE_GATED.has(pipeHash)
-      && !MAPA_FASE_RESPONSAVEL[faseId] && !FASES_CLIENTES_GCARE[faseId] && !GCARE_MOVE[faseId]) {
+      && !MAPA_FASE_RESPONSAVEL[faseId] && !FASES_CLIENTES_GCARE[faseId] && !GCARE_MOVE[faseId] && !GARPECAS_MOVE[faseId]) {
     return { acoes: [`fase ${faseId} sem gatilho no pipe ${pipeHash} — ignorado (sem API)`] };
   }
   // field_update: só interessa aos 2 campos-gatilho do G-Care novo — qualquer
@@ -571,6 +646,39 @@ async function processarEvento({ Pg }, payload) {
             acoes.push(`G-Care(novo) ${cfg.tpl} [${gatilho}] → ${cfg.destino} ${fone}`);
           else acoes.push(`G-Care(novo) ${cfg.tpl}: sem telefone válido (${cfg.destino}) ou já enviado a este número`);
         } catch (e) { acoes.push(`G-Care(novo) ${cfg.tpl}: ERRO ${e.message}`); }
+      }
+    }
+  }
+
+
+  // 7) 13 | SOLICITAÇÃO DE PEÇAS EM GARANTIA (306873829) — WhatsApp à ATA
+  // espelhando os 3 e-mails do pipe (criada / concluída / cancelada).
+  if (pipeId === PIPE_GARANTIA_PECAS) {
+    let cfgs = null, gatilho = '';
+    if (action === 'card.create') { cfgs = GARPECAS_CREATE; gatilho = 'create'; }
+    else if (action === 'card.move' && GARPECAS_MOVE[faseId]) { cfgs = GARPECAS_MOVE[faseId]; gatilho = `move→${faseId}`; }
+
+    const lista = [].concat(cfgs || []);
+    if (lista.length) {
+      let ctx = null;
+      for (const cfg of lista) {
+        const tplId = TPL_GARPECAS[cfg.tpl];
+        if (!tplId) {
+          acoes.push(`GarPeças ${cfg.tpl}: template Suri não configurado (SURI_TPL_GARPECAS_${cfg.tpl.toUpperCase()}) — pulado`);
+          continue;
+        }
+        try {
+          if (!ctx) ctx = await garPecasContexto(card);
+          if (cfg.quando && !cfg.quando(ctx)) {
+            acoes.push(`GarPeças ${cfg.tpl}: condição do e-mail não atendida — não notifica`);
+            continue;
+          }
+          const fone = fonePHP(ctx.ataFone);
+          const params = await cfg.params(ctx, cardId);
+          if (await enfileirar(Pg, { fone, cardId, faseId, action, templateId: tplId, parametros: params }))
+            acoes.push(`GarPeças ${cfg.tpl} [${gatilho}] → ATA ${fone}`);
+          else acoes.push(`GarPeças ${cfg.tpl}: sem telefone válido da ATA ou já enviado a este número`);
+        } catch (e) { acoes.push(`GarPeças ${cfg.tpl}: ERRO ${e.message}`); }
       }
     }
   }
