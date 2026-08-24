@@ -44,13 +44,13 @@ async function linhasRazaoPorMes(Protheus, inicio, fim) {
       SELECT LEFT(CT2_DATA, 6) ymes
         FROM CT2010 WITH (NOLOCK)
        WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
-         AND LEFT(RTRIM(CT2_DEBITO), 1) IN ('4','5')
+         AND LEFT(RTRIM(CT2_DEBITO), 1) = '4'
          AND RTRIM(ISNULL(CT2_CCD, '')) <> ''
       UNION ALL
       SELECT LEFT(CT2_DATA, 6) ymes
         FROM CT2010 WITH (NOLOCK)
        WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
-         AND LEFT(RTRIM(CT2_CREDIT), 1) IN ('4','5')
+         AND LEFT(RTRIM(CT2_CREDIT), 1) = '4'
          AND RTRIM(ISNULL(CT2_CCC, '')) <> ''
     ) t GROUP BY ymes`, { inicio, fim });
   const m = new Map();
@@ -166,7 +166,7 @@ module.exports = (app) => ({
                    CT2_VALOR valor
               FROM CT2010 WITH (NOLOCK)
              WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
-               AND LEFT(RTRIM(CT2_DEBITO), 1) IN ('4','5')
+               AND LEFT(RTRIM(CT2_DEBITO), 1) = '4'
                AND RTRIM(ISNULL(CT2_CCD, '')) <> ''
             UNION ALL
             SELECT LEFT(CT2_DATA, 6) ymes, CT2_DATA data, RTRIM(CT2_CCC) cc,
@@ -176,8 +176,13 @@ module.exports = (app) => ({
                    -CT2_VALOR valor
               FROM CT2010 WITH (NOLOCK)
              WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
-               AND LEFT(RTRIM(CT2_CREDIT), 1) IN ('4','5')
-               AND RTRIM(ISNULL(CT2_CCC, '')) <> ''`, { inicio, fim });
+               AND LEFT(RTRIM(CT2_CREDIT), 1) = '4'
+               AND RTRIM(ISNULL(CT2_CCC, '')) <> ''
+               -- Ponto 3 (controladoria): desconsiderar CREDITOS de PIS/COFINS, que
+               -- reduziam a despesa (hist "CRED COFINS/PIS S/NF ..."). Sem eles a
+               -- despesa fica BRUTA. So no lado credito (e onde o credito tributario cai).
+               AND NOT (UPPER(RTRIM(ISNULL(CT2_HIST, ''))) LIKE '%CRED%COFINS%'
+                     OR UPPER(RTRIM(ISNULL(CT2_HIST, ''))) LIKE '%CRED%PIS%')`, { inicio, fim });
           candidatos.forEach(([ymes]) => mesesFechadosOk.add(ymes));
 
           // Nome do fornecedor do lancamento (CT2_CODFOR), quando houver.
@@ -467,9 +472,12 @@ module.exports = (app) => ({
       // 3c) RAZAO (CT2010) — fonte dos meses JA CONTABILIZADOS.
       // Substitui pedidos+titulos nesses meses (eles foram pulados acima), entao o
       // valor do CC passa a ser exatamente o que a contabilidade fechou, incluindo
-      // reclassificacao e ajuste manual. Contas 4*/5* (despesa/custo) com CC
-      // preenchido; o lado CREDITO entra negativo, que e como estorno reduz a
-      // despesa. Arvore: CC -> conta contabil -> historico -> lancamento.
+      // reclassificacao e ajuste manual. **Somente contas 4* (DESPESA)** com CC
+      // preenchido — a classe 5 (CUSTOS: salarios/INSS/FGTS/materiais indiretos da
+      // producao) foi EXCLUIDA por decisao da controladoria (21/08/2026): a analise
+      // de despesa e so pela conta 4. O lado CREDITO entra negativo (estorno reduz a
+      // despesa), mas os CREDITOS de PIS/COFINS foram excluidos na query (despesa
+      // bruta). Arvore: CC -> conta contabil -> historico -> lancamento.
       let qtdLancRazao = 0, valorRazao = 0, valorAjusteManual = 0;
       for (const r of razaoRows) {
         const ymes = trim(r.ymes);
