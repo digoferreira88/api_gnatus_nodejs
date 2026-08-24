@@ -15,7 +15,7 @@ module.exports = (app) => ({
       return res.status(503).json({ message: 'PIPEFY_TOKEN não configurado no servidor.' });
     }
     try {
-      const snap = await PipefyPainel.obterSnapshot();
+      const snap = await PipefyPainel.obterSnapshot(app.services.Pg);
       return res.json(snap);
     } catch (err) {
       console.error('gerencia/painel-vista:', err);

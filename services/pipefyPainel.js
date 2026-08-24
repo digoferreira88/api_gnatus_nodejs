@@ -1,26 +1,33 @@
 // services/pipefyPainel.js — snapshot org-wide do Pipefy pro Painel de Gestão à
-// Vista (TVs). Varre TODOS os pipes da organização e agrega os cards ABERTOS
-// (fases done ficam de fora): atrasados, responsáveis, gargalos, aging.
+// Vista (TVs). Varre os pipes CONSIDERADOS da organização e agrega os cards
+// ABERTOS (fases done ficam de fora): atrasados, responsáveis, SETORES,
+// gargalos, aging.
 //
-// CACHE EM MEMÓRIA com TTL (default 5 min) + single-flight: as TVs consultam à
-// vontade e o Pipefy só é varrido quando o snapshot venceu (a varredura completa
-// é ~35 requests GraphQL p/ ~1.300 cards — medido 19/08). pm2 roda 1 instância,
-// então o cache é efetivamente global.
+// CONFIG NO BANCO (migration 97, tela /gerencia/painel-vista/config):
+//   tab_painel_pipe          pipe considerar true/false (sem linha = considera —
+//                            pipe novo entra sozinho no painel)
+//   tab_painel_usuario_setor responsável (nome do assignee) -> setor
+//   tab_painel_setor         setores da empresa (seed fixo)
+// A visão "setores com maior índice de atraso" atribui cada card aberto ao(s)
+// setor(es) dos seus responsáveis; sem responsável ou sem vínculo cai em
+// "(SEM SETOR)" — aparece no painel de propósito, pra forçar o cadastro.
 //
-// "Atrasado" = card.late OU card.expired OU due_date < agora. O Pipefy marca
-// late/expired pelo SLA da fase mesmo sem due_date — os três sinais contam.
+// CACHE EM MEMÓRIA com TTL (default 5 min) + single-flight; a tela de config
+// invalida o cache ao salvar (invalidarCache) pro painel refletir rápido.
 //
-// Config (.env): PIPEFY_TOKEN (mesmo dos outros módulos),
-//   PAINEL_PIPEFY_EXCLUIR   CSV de pipe ids fora do painel (default: pipe de teste)
-//   PAINEL_PIPEFY_TTL_MIN   validade do snapshot em minutos (default 5)
+// "Atrasado" = card.late OU card.expired OU due_date < agora (o Pipefy marca
+// late/expired pelo SLA da fase mesmo sem due_date).
+//
+// Config (.env): PIPEFY_TOKEN, PAINEL_PIPEFY_EXCLUIR (CSV extra de pipe ids,
+// além da tabela), PAINEL_PIPEFY_TTL_MIN (default 5).
 
 const trim = (v) => String(v == null ? '' : v).trim();
 
 const TOKEN = () => trim(process.env.PIPEFY_TOKEN);
 const ORG_ID = () => trim(process.env.PIPEFY_ORG_ID || '301239355');
 const TTL_MS = () => Math.max(1, Number(process.env.PAINEL_PIPEFY_TTL_MIN || 5)) * 60000;
-const EXCLUIR = () => new Set(
-  (process.env.PAINEL_PIPEFY_EXCLUIR || '306929743').split(',').map(s => trim(s)).filter(Boolean)
+const EXCLUIR_ENV = () => new Set(
+  (process.env.PAINEL_PIPEFY_EXCLUIR || '').split(',').map(s => trim(s)).filter(Boolean)
 );
 
 const disponivel = () => !!TOKEN();
@@ -42,6 +49,35 @@ async function gql(query, variables) {
     }
     return j.data;
   } catch (e) { clearTimeout(timer); throw e; }
+}
+
+// Lista leve de pipes da org (pra config e pro sweep): id, nome, abertos estimados
+async function listarPipesOrg() {
+  const d = await gql(`query($org: ID!) { organization(id: $org) {
+    pipes { id name phases { done cards_count } } } }`, { org: ORG_ID() });
+  return (d.organization?.pipes || []).map(p => ({
+    id: trim(p.id), nome: trim(p.name),
+    abertosEstimados: p.phases.filter(f => !f.done).reduce((s, f) => s + (f.cards_count || 0), 0)
+  }));
+}
+
+// Config do banco (tolerante a migration 97 ausente)
+async function lerConfig(Pg) {
+  const cfg = { pipesDesconsiderados: new Set(), setorPorUsuario: new Map() };
+  if (!Pg) return cfg;
+  try {
+    const rows = await Pg.connectAndQuery(
+      `SELECT pipe_id FROM tab_painel_pipe WHERE NOT considerar`, {});
+    rows.forEach(r => cfg.pipesDesconsiderados.add(trim(r.pipe_id)));
+  } catch (e) { console.warn('[pipefy-painel] tab_painel_pipe indisponivel (migration 97?):', e.message); }
+  try {
+    const rows = await Pg.connectAndQuery(`
+      SELECT u.usuario_nome, s.nome setor
+        FROM tab_painel_usuario_setor u
+        JOIN tab_painel_setor s ON s.id = u.setor_id`, {});
+    rows.forEach(r => cfg.setorPorUsuario.set(trim(r.usuario_nome), trim(r.setor)));
+  } catch (e) { console.warn('[pipefy-painel] tab_painel_usuario_setor indisponivel:', e.message); }
+  return cfg;
 }
 
 const CARD_FIELDS = `id title due_date late expired createdAt assignees { name } current_phase { name }`;
@@ -72,7 +108,7 @@ async function cardsAbertosDoPipe(pipe) {
   return cards;
 }
 
-function montarSnapshot(pipesBrutos) {
+function montarSnapshot(pipesBrutos, cfg) {
   const agora = Date.now();
   const DIA = 864e5;
   const dias = (iso) => (iso ? Math.floor((agora - new Date(iso).getTime()) / DIA) : null);
@@ -80,7 +116,15 @@ function montarSnapshot(pipesBrutos) {
   const pipes = [];
   const topAtrasados = [];
   const porResp = new Map();
+  const porSetor = new Map();
+  const setorDe = (nome) => cfg.setorPorUsuario.get(nome) || null;
   let totalAbertos = 0, totalAtrasados = 0, semResponsavel = 0, maisAntigoGeral = null;
+
+  const addSetor = (setor, atrasado) => {
+    if (!porSetor.has(setor)) porSetor.set(setor, { setor, total: 0, atrasados: 0 });
+    const s = porSetor.get(setor);
+    s.total++; if (atrasado) s.atrasados++;
+  };
 
   for (const p of pipesBrutos) {
     const porFase = new Map();
@@ -101,10 +145,15 @@ function montarSnapshot(pipesBrutos) {
       const nomes = (c.assignees || []).map(a => trim(a.name)).filter(Boolean);
       if (!nomes.length) semResponsavel++;
       nomes.forEach(n => {
-        if (!porResp.has(n)) porResp.set(n, { nome: n, total: 0, atrasados: 0 });
+        if (!porResp.has(n)) porResp.set(n, { nome: n, total: 0, atrasados: 0, setor: setorDe(n) });
         const r = porResp.get(n);
         r.total++; if (atrasado) r.atrasados++;
       });
+
+      // Card conta 1x por setor distinto dos responsáveis; sem vínculo = (SEM SETOR)
+      const setores = [...new Set(nomes.map(setorDe).filter(Boolean))];
+      if (setores.length) setores.forEach(s => addSetor(s, atrasado));
+      else addSetor('(SEM SETOR)', atrasado);
 
       if (atrasado) {
         topAtrasados.push({
@@ -130,9 +179,16 @@ function montarSnapshot(pipesBrutos) {
     });
   }
 
-  // Ordena: atraso conhecido em dias primeiro (desc), depois idade
   topAtrasados.sort((a, b) => (b.diasAtraso ?? -1) - (a.diasAtraso ?? -1) || b.idadeDias - a.idadeDias);
   pipes.sort((a, b) => b.abertos - a.abertos);
+
+  // Índice de atraso por setor (o "(SEM SETOR)" fica por último no empate de pct
+  // não — ordena por pct desc; ele aparece onde o índice mandar)
+  const setores = [...porSetor.values()]
+    .map(s => ({ ...s, pctAtraso: s.total ? Math.round(s.atrasados / s.total * 100) : 0 }))
+    .sort((a, b) => b.pctAtraso - a.pctAtraso || b.atrasados - a.atrasados);
+
+  const responsaveis = [...porResp.values()].sort((a, b) => b.atrasados - a.atrasados || b.total - a.total);
 
   return {
     geradoEm: new Date().toISOString(),
@@ -146,24 +202,22 @@ function montarSnapshot(pipesBrutos) {
     },
     pipes,
     topAtrasados: topAtrasados.slice(0, 20),
-    porResponsavel: [...porResp.values()].sort((a, b) => b.atrasados - a.atrasados || b.total - a.total).slice(0, 15)
+    porSetor: setores,
+    porResponsavel: responsaveis.slice(0, 15),
+    // Universo completo (tela de config usa pra listar todo mundo)
+    responsaveis
   };
 }
 
 // ---------- cache single-flight ----------
-let cache = null;          // último snapshot bom
-let construindo = null;    // promise em voo (single-flight)
+let cache = null;
+let construindo = null;
 
-async function construir() {
-  const d = await gql(`query($org: ID!) { organization(id: $org) {
-    pipes { id name phases { done cards_count } } } }`, { org: ORG_ID() });
-  const excluir = EXCLUIR();
-  const alvos = (d.organization?.pipes || [])
-    .filter(p => !excluir.has(trim(p.id)))
-    .map(p => ({
-      id: trim(p.id), nome: trim(p.name),
-      abertosEstimados: p.phases.filter(f => !f.done).reduce((s, f) => s + (f.cards_count || 0), 0)
-    }));
+async function construir(Pg) {
+  const cfg = await lerConfig(Pg);
+  const excluirEnv = EXCLUIR_ENV();
+  const todos = await listarPipesOrg();
+  const alvos = todos.filter(p => !excluirEnv.has(p.id) && !cfg.pipesDesconsiderados.has(p.id));
 
   const pipesBrutos = [];
   for (const alvo of alvos) {
@@ -175,16 +229,15 @@ async function construir() {
       pipesBrutos.push({ ...alvo, cards: [], erro: true });
     }
   }
-  return montarSnapshot(pipesBrutos);
+  return montarSnapshot(pipesBrutos, cfg);
 }
 
-// Snapshot vigente. Se venceu, reconstrói (single-flight); se a reconstrução
-// falhar e houver snapshot velho, serve o velho com flag `desatualizado`.
-async function obterSnapshot() {
+// Snapshot vigente (cache + single-flight); em falha serve o último bom.
+async function obterSnapshot(Pg) {
   const fresco = cache && (Date.now() - new Date(cache.geradoEm).getTime()) < TTL_MS();
   if (fresco) return cache;
   if (!construindo) {
-    construindo = construir()
+    construindo = construir(Pg)
       .then(s => { cache = s; return s; })
       .finally(() => { construindo = null; });
   }
@@ -196,4 +249,7 @@ async function obterSnapshot() {
   }
 }
 
-module.exports = { disponivel, obterSnapshot };
+// Tela de config salva -> derruba o cache pro próximo GET refletir na hora
+function invalidarCache() { cache = null; }
+
+module.exports = { disponivel, obterSnapshot, listarPipesOrg, invalidarCache };
