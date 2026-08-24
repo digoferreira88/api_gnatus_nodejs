@@ -46,25 +46,34 @@ async function get(path, params) {
 }
 
 // Todas as ocorrências da janela [hoje-dias .. hoje], paginando até o fim.
+// A API limita cada busca a 5 DIAS ("O intervalo da busca não deve ser maior
+// que 5 dias!", medido 21/08) — janelas maiores são fatiadas em blocos de 5,
+// então dá pra pedir até 30 dias (recuperação pós-parada) em ~6 consultas.
 // Devolve { ok, http, eventos: [...], txt? }.
 async function consultarOcorrencias({ dias = 3 } = {}) {
-  const fim = new Date();
-  const ini = new Date(fim.getTime() - dias * 864e5);
-  const base = {
-    dt_inicio_ocorrencia: fmtDataHora(ini, false),
-    dt_fim_ocorrencia: fmtDataHora(fim, true)
-  };
+  const DIA = 864e5;
+  const totalDias = Math.min(Math.max(1, dias), 30);
+  const agora = new Date();
   const eventos = [];
-  let pagina = 1, totalPaginas = 1;
-  do {
-    const r = await get('/ocorrencias', { ...base, pagina });
-    if (!r.ok || !r.json?.evento) {
-      return { ok: false, http: r.http, eventos: [], txt: r.txt };
-    }
-    (r.json.evento.lista_evento || []).forEach(e => eventos.push(e));
-    totalPaginas = Number(r.json.evento.qtd_pagina || 1);
-    pagina++;
-  } while (pagina <= totalPaginas && pagina <= 40);   // trava de segurança
+
+  for (let offset = 0; offset < totalDias; offset += 5) {
+    const fimSlice = new Date(agora.getTime() - offset * DIA);
+    const iniSlice = new Date(agora.getTime() - Math.min(offset + 5, totalDias) * DIA + DIA);
+    const base = {
+      dt_inicio_ocorrencia: fmtDataHora(iniSlice, false),
+      dt_fim_ocorrencia: fmtDataHora(fimSlice, true)
+    };
+    let pagina = 1, totalPaginas = 1;
+    do {
+      const r = await get('/ocorrencias', { ...base, pagina });
+      if (!r.ok || !r.json?.evento) {
+        return { ok: false, http: r.http, eventos: [], txt: r.txt };
+      }
+      (r.json.evento.lista_evento || []).forEach(e => eventos.push(e));
+      totalPaginas = Number(r.json.evento.qtd_pagina || 1);
+      pagina++;
+    } while (pagina <= totalPaginas && pagina <= 40);   // trava de segurança
+  }
   return { ok: true, http: 200, eventos };
 }
 
