@@ -763,6 +763,9 @@ module.exports = (app) => ({
                       valorMoeda: d.valorMoeda,
                       valor: d.valor,
                       direto: d.direto === true,   // título FINA050 (sem pedido)
+                      razao: d.razao === true,          // lançamento do razão (mês contabilizado)
+                      historico: d.historico || '',     // CT2_HIST (só razão)
+                      ajusteManual: d.ajusteManual === true,   // CT2_MANUAL='1'
                       // Contexto do pedido completo (evita ler o valor do item como
                       // se fosse o valor do pedido/NF inteiro).
                       pedidoTotal: pt ? pt.total : null,
