@@ -35,6 +35,10 @@ const classificarDifal = (difal, uf, contrib) => {
 module.exports = (app) => ({
   verb: 'get',
   route: '/notas',
+  // Perm 12001 (mesma da tela) — estava sem requirePerm: qualquer logado listava
+  // todas as NFs com dados de cliente via API (verificado 21/08 no diagnóstico
+  // do "0 resultados"; a tela sempre exigiu 12001).
+  middlewares: [require('../../middlewares/requirePerm')(app)([12001])],
 
   handler: async (req, res) => {
     const { Protheus, Pg } = app.services;
