@@ -15,9 +15,8 @@
 //   DATAFRETE_SERVICES_KEY      client em services/datafreteTms.js
 //   DATAFRETE_OCO_JANELA_DIAS   janela de ocorrências (default 3)
 //
-// ⚠️ A consulta do Datafrete ainda falha no formato da faixa de data (aguardando
-// suporte). Com ATIVO=1 o robô roda, loga ERRO_DATAFRETE e não toca em nada —
-// quando o formato entrar (env DATAFRETE_OCO_FORMATO), o fluxo completa sozinho.
+// Contrato do Datafrete descoberto/validado em 21/08/2026 (ver datafreteTms.js):
+// entregue = cod_evento 1 ou 2. Match por chave NFe (SF2) com fallback numero.
 
 const Datafrete = require('./datafreteTms');
 
@@ -124,14 +123,14 @@ async function executar(app, origem = 'CRON') {
   const oco = await Datafrete.consultarOcorrencias({ dias: JANELA_DIAS() });
   if (!oco.ok) {
     resumo.erros++;
-    resumo.detalhes.push(`Datafrete HTTP ${oco.http}: ${oco.txt.slice(0, 200)}`);
+    resumo.detalhes.push(`Datafrete HTTP ${oco.http}: ${(oco.txt || '').slice(0, 200)}`);
     // loga UMA linha de erro por execução (não uma por card)
     await logar({ id: 'RUN', title: `${cards.length} card(s) na fase` }, {
-      resultado: 'ERRO_DATAFRETE', detalhe: `HTTP ${oco.http} — ${oco.txt.slice(0, 800)}`
+      resultado: 'ERRO_DATAFRETE', detalhe: `HTTP ${oco.http} — ${(oco.txt || '').slice(0, 800)}`
     });
     return resumo;
   }
-  const entregas = Datafrete.extrairEntregas(oco.json);
+  const entregas = Datafrete.extrairEntregas(oco.eventos);
 
   for (const card of cards) {
     const nf = campoDoCard(card, CAMPO_NF).replace(/\D/g, '');

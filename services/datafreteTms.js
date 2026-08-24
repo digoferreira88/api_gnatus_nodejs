@@ -1,34 +1,28 @@
 // services/datafreteTms.js — client do Datafrete TMS Services (X-api-key).
-// Host services.v1.datafreteapi.com, sondado em 18/08/2026:
-//   GET /conhecimento-transporte  OK (documentado)
-//   GET /ocorrencias              EXISTE (não documentado) — params de faixa
-//     descobertos: dt_ini_ocorrencia/dt_fim_ocorrencia (e o par _importacao).
-//     ⚠️ O FORMATO do valor ainda é recusado ("Faixa de data ocorrência
-//     invalida!") — aguardando resposta do suporte Datafrete. Por isso o
-//     formato é configurável via env (DATAFRETE_OCO_FORMATO) — quando vier a
-//     resposta, deve bastar ajustar o env, sem deploy.
+// Host services.v1.datafreteapi.com. CONTRATO do GET /ocorrencias DESCOBERTO e
+// VALIDADO em 21/08/2026 (não documentado no Postman público; formato confirmado
+// por sondagem após dica do suporte):
+//   GET /ocorrencias?dt_inicio_ocorrencia=Y-m-d H:i:s&dt_fim_ocorrencia=Y-m-d H:i:s[&pagina=N]
+//     -> { codigo_retorno: 1, evento: { pagina_atual, qtd_pagina, qtd_registro,
+//          lista_evento: [{ tp_doc:"NF", chave_doc(44), serie_doc, numero_doc,
+//                           cod_evento, ds_evento, ds_observacao_evento,
+//                           dt_evento, dt_importacao }] } }
+//   ⚠️ é `dt_INICIO_ocorrencia` (não dt_ini) e a data EXIGE hora (H:i:s).
+//   Eventos de ENTREGA: cod_evento "1" (Entrega Realizada Normalmente) e
+//   "2" (Entrega Fora da Data Programada) — ambos = entregue.
 //   POST /ocorrencias = fila de IMPORTAÇÃO (escrita) — NUNCA usar aqui.
 
 const trim = (v) => String(v == null ? '' : v).trim();
 
 const BASE = () => trim(process.env.DATAFRETE_SERVICES_URL || 'https://services.v1.datafreteapi.com').replace(/\/$/, '');
 const KEY = () => trim(process.env.DATAFRETE_SERVICES_KEY);
-// Formatos suportados: 'Y-m-d' | 'Y-m-d H:i:s' | 'd/m/Y' | 'd/m/Y H:i:s'
-const FORMATO = () => trim(process.env.DATAFRETE_OCO_FORMATO) || 'Y-m-d';
+const COD_ENTREGA = new Set(['1', '2']);
 
 const disponivel = () => !!KEY();
 
-const fmtData = (d, fim = false) => {
+const fmtDataHora = (d, fim = false) => {
   const p = (n) => String(n).padStart(2, '0');
-  const ymd = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  const dmy = `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
-  const hora = fim ? '23:59:59' : '00:00:00';
-  switch (FORMATO()) {
-    case 'Y-m-d H:i:s': return `${ymd} ${hora}`;
-    case 'd/m/Y':       return dmy;
-    case 'd/m/Y H:i:s': return `${dmy} ${hora}`;
-    default:            return ymd;
-  }
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${fim ? '23:59:59' : '00:00:00'}`;
 };
 
 async function get(path, params) {
@@ -51,45 +45,55 @@ async function get(path, params) {
   }
 }
 
-// Ocorrências numa janela de dias [hoje-dias .. hoje].
+// Todas as ocorrências da janela [hoje-dias .. hoje], paginando até o fim.
+// Devolve { ok, http, eventos: [...], txt? }.
 async function consultarOcorrencias({ dias = 3 } = {}) {
   const fim = new Date();
   const ini = new Date(fim.getTime() - dias * 864e5);
-  return get('/ocorrencias', {
-    dt_ini_ocorrencia: fmtData(ini, false),
-    dt_fim_ocorrencia: fmtData(fim, true)
-  });
+  const base = {
+    dt_inicio_ocorrencia: fmtDataHora(ini, false),
+    dt_fim_ocorrencia: fmtDataHora(fim, true)
+  };
+  const eventos = [];
+  let pagina = 1, totalPaginas = 1;
+  do {
+    const r = await get('/ocorrencias', { ...base, pagina });
+    if (!r.ok || !r.json?.evento) {
+      return { ok: false, http: r.http, eventos: [], txt: r.txt };
+    }
+    (r.json.evento.lista_evento || []).forEach(e => eventos.push(e));
+    totalPaginas = Number(r.json.evento.qtd_pagina || 1);
+    pagina++;
+  } while (pagina <= totalPaginas && pagina <= 40);   // trava de segurança
+  return { ok: true, http: 200, eventos };
 }
 
-// Extrai entregas do payload de ocorrências SEM conhecer o shape exato:
-// varre o JSON atrás de objetos que tenham identificador de NF (numero/chave) e
-// marca como entregue quando algum campo textual contém "entreg" sem negação
-// ("não entregue", "insucesso", "recusado", "devolvido" NÃO contam).
-// Devolve [{ numeroNf, chaveNf, descricao, entregue }].
-const NEGATIVOS = /n[aã]o\s+entreg|insucesso|recusad|devolvid|extravi/i;
-function extrairEntregas(payload) {
-  const achados = [];
-  const visita = (obj) => {
-    if (Array.isArray(obj)) { obj.forEach(visita); return; }
-    if (!obj || typeof obj !== 'object') return;
-    const chaves = Object.keys(obj);
-    const kNum = chaves.find(k => /^(numero_nf|nr_nf|doc_numero|numero_doc|nf)$/i.test(k));
-    const kChave = chaves.find(k => /^(chave_nf|chave_nfe|doc_chave|chave)$/i.test(k));
-    if (kNum || kChave) {
-      const textos = chaves
-        .filter(k => typeof obj[k] === 'string')
-        .map(k => obj[k]).join(' | ');
-      achados.push({
-        numeroNf: kNum ? trim(obj[kNum]) : '',
-        chaveNf: kChave ? trim(obj[kChave]) : '',
-        descricao: textos.slice(0, 400),
-        entregue: /entreg/i.test(textos) && !NEGATIVOS.test(textos)
+// Reduz os eventos a entregas por NF: [{ numeroNf, serieNf, chaveNf, descricao,
+// dtEvento, entregue }] — 1 linha por chave, entregue=true se QUALQUER evento da
+// NF for cod 1/2 (a última ocorrência pode ser posterior à entrega).
+function extrairEntregas(eventos) {
+  const porChave = new Map();
+  for (const e of (eventos || [])) {
+    const chave = trim(e.chave_doc);
+    const k = chave || `${trim(e.numero_doc)}|${trim(e.serie_doc)}`;
+    if (!porChave.has(k)) {
+      porChave.set(k, {
+        numeroNf: trim(e.numero_doc), serieNf: trim(e.serie_doc), chaveNf: chave,
+        descricao: '', dtEvento: '', entregue: false
       });
     }
-    chaves.forEach(k => visita(obj[k]));
-  };
-  visita(payload);
-  return achados;
+    const reg = porChave.get(k);
+    const entrega = COD_ENTREGA.has(trim(e.cod_evento));
+    if (entrega && !reg.entregue) {
+      reg.entregue = true;
+      reg.descricao = `${trim(e.ds_evento)}${trim(e.ds_observacao_evento) ? ` — ${trim(e.ds_observacao_evento)}` : ''}`.slice(0, 300);
+      reg.dtEvento = trim(e.dt_evento);
+    } else if (!reg.entregue) {
+      reg.descricao = `${trim(e.ds_evento)}${trim(e.ds_observacao_evento) ? ` — ${trim(e.ds_observacao_evento)}` : ''}`.slice(0, 300);
+      reg.dtEvento = trim(e.dt_evento);
+    }
+  }
+  return [...porChave.values()];
 }
 
 module.exports = { disponivel, consultarOcorrencias, extrairEntregas };
