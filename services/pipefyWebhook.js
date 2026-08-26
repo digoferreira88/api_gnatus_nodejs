@@ -8,6 +8,7 @@
 //   - G-CARE INTERNO (307050389): 4 fases notificam o CLIENTE (tabela CLIENTES)
 //   - Teste_TI (306929743): branch de teste preservado
 //   - 13 | SOLICITACAO DE PECAS EM GARANTIA (306873829): 3 e-mails -> WhatsApp p/ ATA
+//   - 07 | PAGAMENTO DE ATA (306879665): cancelada/concluido -> WhatsApp p/ ATA
 // Envio: services/suri (mesma API/canal do PHP). Fila com dedupe em
 // tab_pipefy_wh_fila (numero+card+fase+acao), eventos em tab_pipefy_wh_evento.
 
@@ -255,6 +256,30 @@ const GARPECAS_MOVE = {
     params: (c) => [c.ataNome, c.motivoProblemas, c.motivoNegativa] }
 };
 
+// ============ 07 | PAGAMENTO DE ATA (306879665) ============
+// Espelha em WhatsApp (Suri) 2 e-mails que o pipe envia à ATA (pedido 26/08/2026):
+//   307748093 SOLICITAÇÃO DE PAGAMENTO CANCELADA -> move p/ CANCELADO 343861125
+//   306374471 PAGAMENTO CONCLUÍDO                -> move p/ CONCLUÍDO 341471918
+// Destinatário = ATA (conector `ata` -> tabela ASSISTÊNCIA TÉCNICA AUTORIZADA
+// Kvl8bjo9, a MESMA do G-Care/GarPeças: nome_fantasia / telefone).
+const PIPE_PAGAMENTO_ATA = '306879665';
+
+// Templates informados pelo usuário (já cadastrados na Suri). Env sobrepõe sem deploy.
+const TPL_PAGATA = {
+  cancelada: process.env.SURI_TPL_PAGATA_CANCELADA || '1047088764890044',
+  concluido: process.env.SURI_TPL_PAGATA_CONCLUIDO || '1066525642627128'
+};
+
+// card.move -> fase de destino
+const PAGATA_MOVE = {
+  '343861125': { tpl: 'cancelada', destino: 'ata',   // CANCELADO
+    // {{1}} nome ATA · {{2}} nº solicitação de pagamento · {{3}} nº OS · {{4}} motivo
+    params: (c) => [c.ataNome, c.numeroSolic, c.numeroOS, c.motivoCancelamento] },
+  '341471918': { tpl: 'concluido', destino: 'ata',   // CONCLUÍDO
+    // {{1}} nome ATA · {{2}} nº OS
+    params: (c) => [c.ataNome, c.numeroOS] }
+};
+
 // ---- pré-filtro (economia de API) ----
 // Só estas ações têm branch. Qualquer outra (field_update, done, comment...) é
 // descartada ANTES de consultar o card, evitando 1 chamada dadosCard por evento.
@@ -459,6 +484,29 @@ async function garPecasContexto(card) {
   return { numero, ataNome, ataFone, cancelamentoNotificavel, motivoProblemas, motivoNegativa };
 }
 
+// ---------- contexto 07 | PAGAMENTO DE ATA ----------
+async function pagAtaContexto(card) {
+  // Nº da solicitação de pagamento: campo tipo 'id' do Pipefy — NÃO volta na API e o
+  // TÍTULO do card É o número (mesmo caso do GarPeças). O e-mail referencia o mesmo
+  // campo, então card.title reproduz o que a ATA vê. NÃO trocar por valorCampo (vazio).
+  const numeroSolic = trim(valorCampo(card, 'solicita_o_de_pagamento_n')) || trim(card.title);
+  const numeroOS = trim(valorCampo(card, 'ordem_de_servi_o_n'));
+  const motivoCancelamento = trim(valorCampo(card, 'motivo_do_cancelamento'));
+
+  // ATA = conector `ata` (tabela ASSISTÊNCIA TÉCNICA AUTORIZADA). Resolve por ID.
+  let ataNome = '', ataFone = '';
+  const ataIds = arrayCampo(card, 'ata');
+  if (ataIds.length) {
+    try {
+      const r = await dadosDatabasePorId(ataIds[0]);
+      ataNome = trim(valorRecord(r.record_fields, 'nome_fantasia')) || trim(valorRecord(r.record_fields, 'raz_o_social'));
+      ataFone = trim(valorRecord(r.record_fields, 'telefone'));
+    } catch (e) { /* segue com o que tem */ }
+  }
+
+  return { numeroSolic, numeroOS, motivoCancelamento, ataNome, ataFone };
+}
+
 
 // ---------- fila (dedupe identico ao PHP) ----------
 async function enfileirar(Pg, { fone, cardId, faseId, action, templateId, parametros }) {
@@ -534,7 +582,7 @@ async function processarEvento({ Pg }, payload) {
   if (!ACOES_TRATADAS.has(action)) return { acoes: [`ação "${action || '?'}" não tratada — ignorado (sem API)`] };
   const pipeHash = trim(d.card?.pipe_id);
   if (action === 'card.move' && faseId && PIPES_FASE_GATED.has(pipeHash)
-      && !MAPA_FASE_RESPONSAVEL[faseId] && !FASES_CLIENTES_GCARE[faseId] && !GCARE_MOVE[faseId] && !GARPECAS_MOVE[faseId]) {
+      && !MAPA_FASE_RESPONSAVEL[faseId] && !FASES_CLIENTES_GCARE[faseId] && !GCARE_MOVE[faseId] && !GARPECAS_MOVE[faseId] && !PAGATA_MOVE[faseId]) {
     return { acoes: [`fase ${faseId} sem gatilho no pipe ${pipeHash} — ignorado (sem API)`] };
   }
   // field_update: só interessa aos 2 campos-gatilho do G-Care novo — qualquer
@@ -683,6 +731,33 @@ async function processarEvento({ Pg }, payload) {
             acoes.push(`GarPeças ${cfg.tpl} [${gatilho}] → ATA ${fone}`);
           else acoes.push(`GarPeças ${cfg.tpl}: sem telefone válido da ATA ou já enviado a este número`);
         } catch (e) { acoes.push(`GarPeças ${cfg.tpl}: ERRO ${e.message}`); }
+      }
+    }
+  }
+
+  // 8) 07 | PAGAMENTO DE ATA (306879665) — WhatsApp à ATA espelhando os e-mails de
+  // cancelamento e pagamento concluído (move → CANCELADO / CONCLUÍDO).
+  if (pipeId === PIPE_PAGAMENTO_ATA) {
+    let cfgs = null, gatilho = '';
+    if (action === 'card.move' && PAGATA_MOVE[faseId]) { cfgs = PAGATA_MOVE[faseId]; gatilho = `move→${faseId}`; }
+
+    const lista = [].concat(cfgs || []);
+    if (lista.length) {
+      let ctx = null;
+      for (const cfg of lista) {
+        const tplId = TPL_PAGATA[cfg.tpl];
+        if (!tplId) {
+          acoes.push(`PagATA ${cfg.tpl}: template Suri não configurado (SURI_TPL_PAGATA_${cfg.tpl.toUpperCase()}) — pulado`);
+          continue;
+        }
+        try {
+          if (!ctx) ctx = await pagAtaContexto(card);
+          const fone = fonePHP(ctx.ataFone);
+          const params = await cfg.params(ctx, cardId);
+          if (await enfileirar(Pg, { fone, cardId, faseId, action, templateId: tplId, parametros: params }))
+            acoes.push(`PagATA ${cfg.tpl} [${gatilho}] → ATA ${fone}`);
+          else acoes.push(`PagATA ${cfg.tpl}: sem telefone válido da ATA ou já enviado a este número`);
+        } catch (e) { acoes.push(`PagATA ${cfg.tpl}: ERRO ${e.message}`); }
       }
     }
   }
