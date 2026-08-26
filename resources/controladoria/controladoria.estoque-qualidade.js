@@ -31,6 +31,10 @@ module.exports = (app) => ({
     const anoMesCorr = Calc.anoMesCorrente();
 
     try {
+      // Refresca o mês corrente (estoque de agora, não a foto das 03:00) antes de ler.
+      try { await require('../../services/estoqueSnapshot').refrescarMesCorrente(app, { maxIdadeMin: 10 }); }
+      catch (e) { console.warn('estoque-qualidade: refresh mes corrente falhou:', e.message); }
+
       // 1) Parametros: global + por tipo (vamos resolver fallback no JS)
       const paramRows = await Pg.connectAndQuery(
         `SELECT tipo_produto, lead_time_dias, nivel_servico, janela_demanda_meses

@@ -46,6 +46,11 @@ module.exports = (app) => ({
     const ymdFim  = `${anoMesFim}${String(ultimoDia).padStart(2, '0')}`;
 
     try {
+      // Refresca o mês corrente (estoque de agora, não a foto das 03:00) antes de ler.
+      // Rápido + guarda de frescor; meses passados intactos. Falha = segue com a foto.
+      try { await require('../../services/estoqueSnapshot').refrescarMesCorrente(app, { maxIdadeMin: 10 }); }
+      catch (e) { console.warn('estoque-tendencia: refresh mes corrente falhou:', e.message); }
+
       // 1) Snapshot: consumo + saldo por produto na janela
       const condTipo = tipo ? 'AND tipo_produto = @tipo' : '';
       const condArm  = armazem ? 'AND armazem = @armazem' : '';

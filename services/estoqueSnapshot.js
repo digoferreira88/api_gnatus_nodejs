@@ -245,4 +245,109 @@ async function atualizar(app, { meses = 1 } = {}) {
   return stats;
 }
 
-module.exports = { atualizar };
+// ===========================================================================
+// Refresh RÁPIDO e SOB DEMANDA do MÊS CORRENTE (26/08/2026).
+//
+// Motivo: os dashboards liam sempre a "foto" do cron das 03:00 — durante o dia o
+// estoque se move (vendas/consumo) e o valor exibido divergia do estoque real de
+// AGORA (Controladoria notou 29,9M na foto x 29,44M ao vivo). Aqui, ao abrir o
+// dashboard, refrescamos SÓ o mês corrente com o estoque atual — os meses passados
+// NUNCA são tocados (histórico congelado). O cron das 03:00 continua existindo.
+//
+// Diferenças pro atualizar() (que é o cron pesado):
+//   - Faz 1 upsert SET-BASED (via jsonb_to_recordset) em vez de milhares de
+//     inserts linha-a-linha → roda em ~1-2s, não em minutos.
+//   - Guarda de FRESCOR: se o mês corrente foi atualizado há < maxIdadeMin, não
+//     faz nada (evita reescrever a cada clique).
+//   - Coalescência: chamadas concorrentes (4 dashboards abrindo juntos) esperam
+//     o MESMO refresh, em vez de disparar 4.
+let _refreshInFlight = null;
+
+async function _doRefrescarMesCorrente(app, { maxIdadeMin }) {
+  const { Pg, Protheus } = app.services;
+  const anoMes = Calc.anoMesCorrente();
+
+  // Guarda de frescor: pula se o mês corrente já foi atualizado há pouco.
+  try {
+    const chk = await Pg.connectAndQuery(
+      `SELECT EXTRACT(EPOCH FROM (NOW() - MAX(snapshot_em)))/60 AS idade_min
+         FROM tab_estoque_snapshot_mensal WHERE ano_mes = @anoMes`, { anoMes });
+    const idade = chk[0] && chk[0].idade_min != null ? Number(chk[0].idade_min) : null;
+    if (idade != null && idade < maxIdadeMin) {
+      return { anoMes, atualizado: false, idadeMin: Number(idade.toFixed(1)) };
+    }
+  } catch (e) { /* tabela pode nao existir; deixa o insert falhar limpo abaixo */ }
+
+  // 1) Estoque atual (saldo/valor/custo) + saidas do mes corrente (vendas + producao)
+  const { ini, fim } = rangeDoMes(anoMes);
+  const [saldo, vendas, producao] = await Promise.all([
+    lerSaldoAtual(Protheus),
+    lerSaidasVendas(Protheus, ini, fim),
+    lerSaidasProducao(Protheus, ini, fim).catch(() => [])
+  ]);
+  if (!saldo.length) return { anoMes, atualizado: false, motivo: 'saldo vazio (nao sobrescreve)' };
+
+  const saidasMap = new Map();
+  const acumular = (rows) => rows.forEach(r => {
+    const k = `${String(r.cod_produto).trim()}|${String(r.armazem).trim()}`;
+    const cur = saidasMap.get(k) || { qtd: 0, valor: 0 };
+    cur.qtd += Number(r.qtd_saidas || 0); cur.valor += Number(r.valor_saidas || 0);
+    saidasMap.set(k, cur);
+  });
+  acumular(vendas); acumular(producao);
+
+  const rows = saldo.map(r => {
+    const cod = String(r.cod_produto).trim(), arm = String(r.armazem).trim();
+    const sa = saidasMap.get(`${cod}|${arm}`) || { qtd: 0, valor: 0 };
+    return {
+      cod_produto: cod, armazem: arm,
+      tipo_produto: String(r.tipo_produto || '').trim().slice(0, 5),
+      descricao: String(r.descricao || '').trim().slice(0, 120),
+      grupo: String(r.grupo || '').trim().slice(0, 10),
+      qtd_estoque: Number(r.qtd_estoque || 0),
+      custo_medio: Number(r.custo_medio || 0),
+      valor_estoque: Number(r.valor_estoque || 0),
+      qtd_saidas_mes: sa.qtd, valor_saidas_mes: sa.valor
+    };
+  });
+  const json = JSON.stringify(rows);
+
+  // 2) Upsert set-based do mes corrente (1 statement)
+  await Pg.connectAndQuery(`
+    INSERT INTO tab_estoque_snapshot_mensal
+      (ano_mes, cod_produto, armazem, tipo_produto, descricao, grupo,
+       qtd_estoque, custo_medio, valor_estoque, qtd_saidas_mes, valor_saidas_mes, snapshot_em)
+    SELECT @anoMes, x.cod_produto, x.armazem, x.tipo_produto, x.descricao, x.grupo,
+           x.qtd_estoque, x.custo_medio, x.valor_estoque, x.qtd_saidas_mes, x.valor_saidas_mes, NOW()
+      FROM jsonb_to_recordset(@json::jsonb) AS x(
+        cod_produto text, armazem text, tipo_produto text, descricao text, grupo text,
+        qtd_estoque numeric, custo_medio numeric, valor_estoque numeric,
+        qtd_saidas_mes numeric, valor_saidas_mes numeric)
+    ON CONFLICT (ano_mes, cod_produto, armazem) DO UPDATE SET
+      tipo_produto = EXCLUDED.tipo_produto, descricao = EXCLUDED.descricao, grupo = EXCLUDED.grupo,
+      qtd_estoque = EXCLUDED.qtd_estoque, custo_medio = EXCLUDED.custo_medio,
+      valor_estoque = EXCLUDED.valor_estoque, qtd_saidas_mes = EXCLUDED.qtd_saidas_mes,
+      valor_saidas_mes = EXCLUDED.valor_saidas_mes, snapshot_em = NOW()`,
+    { anoMes, json });
+
+  // 3) Remove do mes corrente os (cod, armazem) que sairam do estoque (saldo <= 0 agora)
+  await Pg.connectAndQuery(`
+    DELETE FROM tab_estoque_snapshot_mensal s
+     WHERE s.ano_mes = @anoMes
+       AND NOT EXISTS (
+         SELECT 1 FROM jsonb_to_recordset(@json::jsonb) AS x(cod_produto text, armazem text)
+          WHERE TRIM(x.cod_produto) = TRIM(s.cod_produto) AND TRIM(x.armazem) = TRIM(s.armazem))`,
+    { anoMes, json });
+
+  const valorTotal = rows.reduce((s, r) => s + r.valor_estoque, 0);
+  return { anoMes, atualizado: true, linhas: rows.length, valorTotal: Number(valorTotal.toFixed(2)) };
+}
+
+// Wrapper com coalescencia: chamadas concorrentes compartilham o mesmo refresh.
+async function refrescarMesCorrente(app, { maxIdadeMin = 10 } = {}) {
+  if (_refreshInFlight) return _refreshInFlight;
+  _refreshInFlight = _doRefrescarMesCorrente(app, { maxIdadeMin }).finally(() => { _refreshInFlight = null; });
+  return _refreshInFlight;
+}
+
+module.exports = { atualizar, refrescarMesCorrente };

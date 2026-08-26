@@ -19,6 +19,10 @@ module.exports = (app) => ({
     const { Pg, Protheus } = app.services;
 
     try {
+      // Refresca o mês corrente (estoque de agora) antes de listar os domínios/filtros.
+      try { await require('../../services/estoqueSnapshot').refrescarMesCorrente(app, { maxIdadeMin: 10 }); }
+      catch (e) { console.warn('estoque-dominios: refresh mes corrente falhou:', e.message); }
+
       const [tipos, anosMes, armazens] = await Promise.all([
         Pg.connectAndQuery(`
           SELECT DISTINCT tipo_produto

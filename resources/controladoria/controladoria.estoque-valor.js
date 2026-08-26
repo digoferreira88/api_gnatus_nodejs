@@ -37,8 +37,22 @@ module.exports = (app) => ({
     if (tipo)    { condsBase.push('tipo_produto = @tipo');   params.tipo = tipo; }
     if (armazem) { condsBase.push('armazem = @armazem');     params.armazem = armazem; }
     const where = condsBase.join(' AND ');
+    const ehMesCorrente = anoMes === Calc.anoMesCorrente();
 
     try {
+      // Se estamos vendo o MÊS CORRENTE, refresca a "foto" com o estoque de AGORA
+      // (não a das 03:00). Rápido (set-based) e com guarda de frescor (no máx ~10 min).
+      // Meses passados nunca são tocados. Falha aqui = segue com a última foto.
+      let atualizadoEm = null;
+      if (ehMesCorrente) {
+        try { await require('../../services/estoqueSnapshot').refrescarMesCorrente(app, { maxIdadeMin: 10 }); }
+        catch (e) { console.warn('estoque-valor: refresh mes corrente falhou (segue com a ultima foto):', e.message); }
+        try {
+          const fr = await Pg.connectAndQuery(`SELECT MAX(snapshot_em) em FROM tab_estoque_snapshot_mensal WHERE ano_mes = @anoMes`, { anoMes });
+          atualizadoEm = fr[0] && fr[0].em ? new Date(fr[0].em).toISOString() : null;
+        } catch { /* cosmético */ }
+      }
+
       // 1) Mes corrente do filtro: agregado por produto (somando armazens caso filtro vazio)
       const itensMes = await Pg.connectAndQuery(`
         SELECT cod_produto, MAX(descricao) descricao, MAX(tipo_produto) tipo_produto,
@@ -223,6 +237,8 @@ module.exports = (app) => ({
       return res.json({
         vazio: false,
         anoMes,
+        aoVivo: ehMesCorrente,              // mês corrente = estoque de agora (refrescado no load)
+        atualizadoEm,                        // quando o mês corrente foi refrescado (ISO) — null p/ meses passados
         filtros: { tipo, armazem, semGiroMeses },
         kpis,
         serie_12m,
