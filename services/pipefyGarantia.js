@@ -92,11 +92,16 @@ async function resolverNF(Protheus, nf) {
   return rows.length ? { serie: trim(rows[0].serie), chave: trim(rows[0].chave) } : null;
 }
 
-// Seta o status e move o card (a ordem importa: primeiro o campo, depois a fase)
+// Seta o status (BEST-EFFORT) e move o card. ⚠️ O `status_do_transporte` é um
+// label_select SEM options configuradas na API → o updateFieldsValues rejeita
+// ("Dado fornecido inválido") e NÃO pode bloquear o MOVE, que é a ação que
+// realmente importa (concluir o card destrava a fase dependente do G-Care).
 async function marcarEntregue(cardId) {
-  await gql(`mutation($card: ID!, $campo: ID!, $valor: [UndefinedInput]) {
-    updateFieldsValues(input: { nodeId: $card, values: [{ fieldId: $campo, value: $valor }] }) { success }
-  }`, { card: cardId, campo: CAMPO_STATUS, valor: ['ENTREGUE'] });
+  try {
+    await gql(`mutation($card: ID!, $campo: ID!, $valor: [UndefinedInput]) {
+      updateFieldsValues(input: { nodeId: $card, values: [{ fieldId: $campo, value: $valor }] }) { success }
+    }`, { card: cardId, campo: CAMPO_STATUS, valor: ['ENTREGUE'] });
+  } catch (e) { console.warn('[garantia-entrega] set status falhou (segue p/ o move):', e.message); }
   await gql(`mutation($card: ID!, $fase: ID!) {
     moveCardToPhase(input: { card_id: $card, destination_phase_id: $fase }) { card { id } }
   }`, { card: cardId, fase: FASE_CONCLUIDO });
