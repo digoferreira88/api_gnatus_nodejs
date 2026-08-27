@@ -396,8 +396,11 @@ async function gcareContexto(card) {
   const dataAgendada = trim(valorCampo(card, 'data_e_hora_agendada_para_o_servi_o'));
   const statusOrcamento = trim(valorCampo(card, 'status_do_or_amento_1')).toUpperCase();
 
-  // CLIENTE: fone direto do card (telefone_whatsapp); nome/fallback fone no conector
-  let cliNome = '', cliNomeCompleto = '', cliFone = trim(valorCampo(card, 'telefone_whatsapp'));
+  // CLIENTE: nome + telefone SEMPRE do conector (registro CLIENTES). ⚠️ NÃO usar o
+  // campo `telefone_whatsapp` do card — ele é o WhatsApp de "QUEM ACOMPANHARÁ" (o
+  // acompanhante da visita); quando = OUTRO, é o número de terceiro (ex.: PEDRO), e a
+  // mensagem do CLIENTE ia pra pessoa errada (relatado 27/08, card 1436504581).
+  let cliNome = '', cliNomeCompleto = '', cliFone = '';
   let endCadastrado = '';
   const cliIds = arrayCampo(card, 'cliente');
   if (cliIds.length) {
@@ -405,7 +408,7 @@ async function gcareContexto(card) {
       const r = await dadosDatabasePorId(cliIds[0]);
       cliNomeCompleto = trim(valorRecord(r.record_fields, 'nome'));
       cliNome = trim(valorRecord(r.record_fields, 'nome_fantasia')) || cliNomeCompleto;
-      if (!cliFone) cliFone = trim(valorRecord(r.record_fields, 'telefone'));
+      cliFone = trim(valorRecord(r.record_fields, 'telefone'));
       endCadastrado = montaEndereco(
         valorRecord(r.record_fields, 'endere_o'), valorRecord(r.record_fields, 'bairro'),
         valorRecord(r.record_fields, 'cidade'), valorRecord(r.record_fields, 'estado'),
