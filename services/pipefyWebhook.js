@@ -542,8 +542,12 @@ async function processarFila(Pg) {
          WHERE enviado = ''
             OR (enviado = 'P' AND enviado_em < NOW() - INTERVAL '2 minutes')
             -- RETRY de falhas transitórias (timeout da Suri etc.): reenvia até 5x,
-            -- espaçado ~1 min. Sem isso a ATA/técnico ficavam sem mensagem.
-            OR (enviado = '0' AND tentativas < 5 AND enviado_em < NOW() - INTERVAL '1 minute')
+            -- espaçado ~1 min. ⚠️ SÓ falhas RECENTES (últimas 2h) — senão o backlog
+            -- histórico de '0' (que nasceu com tentativas=0) seria ressuscitado e
+            -- reenviaria notificações velhas. Falha antiga fica '0' e não volta.
+            OR (enviado = '0' AND tentativas < 5
+                AND enviado_em > NOW() - INTERVAL '2 hours'
+                AND enviado_em < NOW() - INTERVAL '1 minute')
          ORDER BY id
          LIMIT 50
          FOR UPDATE SKIP LOCKED
