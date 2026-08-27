@@ -72,6 +72,9 @@ module.exports = (app) => ({
       // 2) UPDATE escopado. Só C7_DATPRF; o WHERE repete a chave inteira e ainda
       //    confere a data anterior (optimistic lock: se alguém mudou no Protheus
       //    entre a leitura e agora, não sobrescreve às cegas).
+      // ⚠️ A variável interna NÃO pode se chamar @n/@f/@i/@ant/@nova: o driver mssql
+      //    declara os parâmetros com esses nomes no mesmo batch e o SQL Server recusa
+      //    ("variable name has already been declared"). Daí @qtd.
       const upd = await Protheus.connectAndQuery(`
         SET NOCOUNT ON;
         SET LOCK_TIMEOUT 5000;
@@ -82,9 +85,9 @@ module.exports = (app) => ({
            WHERE D_E_L_E_T_ <> '*' AND RTRIM(C7_FILIAL) = @f
              AND RTRIM(C7_NUM) = @n AND RTRIM(C7_ITEM) = @i
              AND RTRIM(C7_DATPRF) = @ant;
-          DECLARE @n INT = @@ROWCOUNT;
+          DECLARE @qtd INT = @@ROWCOUNT;
           COMMIT TRAN;
-          SELECT @n AS afetados, '' AS erro;
+          SELECT @qtd AS afetados, '' AS erro;
         END TRY
         BEGIN CATCH
           IF @@TRANCOUNT > 0 ROLLBACK TRAN;
