@@ -40,7 +40,8 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Protheus } = app.services;
-    const { inicio, fim, status, fornecedor, comprador } = req.query;
+    const { inicio, fim, status, fornecedor, comprador, pedido } = req.query;
+    const numPedido = String(pedido || '').trim();
 
     const dtInicio = toProtheusDate(inicio);
     const dtFim = toProtheusDate(fim);
@@ -58,6 +59,12 @@ module.exports = (app) => ({
     if (comprador) {
       params.comprador = String(comprador);
       conds.push(`AND RTRIM(sc7.C7_USER) LIKE '%' + @comprador + '%'`);
+    }
+    // Nº do pedido: LIKE para aceitar tanto "025185" quanto "25185" (sem os
+    // zeros à esquerda) ou um trecho do número.
+    if (numPedido) {
+      params.pedido = numPedido;
+      conds.push(`AND RTRIM(sc7.C7_NUM) LIKE '%' + @pedido + '%'`);
     }
 
     const sql = `
@@ -97,7 +104,7 @@ module.exports = (app) => ({
        AND sa2.D_E_L_E_T_ <> '*'
       WHERE sc7.D_E_L_E_T_ <> '*'
         AND sc7.C7_FILIAL = '01'
-        AND sc7.C7_EMISSAO BETWEEN @inicio AND @fim
+        ${numPedido ? '' : 'AND sc7.C7_EMISSAO BETWEEN @inicio AND @fim'}
         ${conds.join(' ')}
       ORDER BY sc7.C7_EMISSAO DESC, sc7.C7_NUM DESC, sc7.C7_ITEM
     `;
