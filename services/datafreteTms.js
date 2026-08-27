@@ -16,7 +16,14 @@ const trim = (v) => String(v == null ? '' : v).trim();
 
 const BASE = () => trim(process.env.DATAFRETE_SERVICES_URL || 'https://services.v1.datafreteapi.com').replace(/\/$/, '');
 const KEY = () => trim(process.env.DATAFRETE_SERVICES_KEY);
-const COD_ENTREGA = new Set(['1', '2']);
+// Códigos de ENTREGA do Datafrete. 1 = Entrega Realizada Normalmente, 2 = Entrega
+// Fora da Data Programada (validados 21/08). ⚠️ 27/08: os CORREIOS usam cod_evento
+// **4** ("Objeto entregue ao destinatário") — sem ele, entregas dos Correios NÃO
+// eram detectadas (NF 090849). Fallback por descrição pega transportadoras com
+// outros códigos; é PRECISO pra NÃO casar "saiu para entrega" (tem "entrega", não
+// "entregue") nem "tentativa de entrega".
+const COD_ENTREGA = new Set(['1', '2', '4']);
+const RE_ENTREGA = /entregue ao destinat|entrega realizada|entrega efetuada/i;
 
 const disponivel = () => !!KEY();
 
@@ -92,7 +99,7 @@ function extrairEntregas(eventos) {
       });
     }
     const reg = porChave.get(k);
-    const entrega = COD_ENTREGA.has(trim(e.cod_evento));
+    const entrega = COD_ENTREGA.has(trim(e.cod_evento)) || RE_ENTREGA.test(trim(e.ds_evento));
     if (entrega && !reg.entregue) {
       reg.entregue = true;
       reg.descricao = `${trim(e.ds_evento)}${trim(e.ds_observacao_evento) ? ` — ${trim(e.ds_observacao_evento)}` : ''}`.slice(0, 300);

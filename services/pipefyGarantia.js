@@ -74,8 +74,11 @@ async function listarCards() {
   return cards;
 }
 
-const campoDoCard = (card, internalId) =>
-  trim((card.fields || []).find(f => f.field?.internal_id === internalId)?.value);
+// Casa pelo `id` (slug do campo, ex. 'n_mero_da_nota_fiscal') — NÃO pelo internal_id
+// (numérico). ⚠️ Bug 24→27/08: comparava internal_id com o slug → NF vazia em TODO
+// card → SEM_NF em toda execução (o robô nunca moveu nada desde o go-live).
+const campoDoCard = (card, fieldId) =>
+  trim((card.fields || []).find(f => f.field?.id === fieldId)?.value);
 
 // Série e chave NFe da NF na SF2 (a chave é o identificador exato no Datafrete).
 // F2_DOC pode ter padding de zeros — compara também com a NF preenchida.
