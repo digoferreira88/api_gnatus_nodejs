@@ -31,7 +31,10 @@ const CAMPO_STATUS = 'status_do_transporte';
 const TOKEN = () => trim(process.env.PIPEFY_TOKEN);
 const ATIVO = () => trim(process.env.GARANTIA_ENTREGA_ATIVO) === '1';
 const SIMULAR = () => trim(process.env.GARANTIA_ENTREGA_SIMULAR) !== '0';   // default: simula
-const JANELA_DIAS = () => Math.max(1, Number(process.env.DATAFRETE_OCO_JANELA_DIAS || 3));
+// Janela de ocorrências (dias). Default 7 (27/08, a pedido do usuário) p/ dar folga
+// caso um card fique alguns dias na fase após a entrega; env sobrepõe (máx 30, o
+// client fatia em blocos de 5). Antes era 3.
+const JANELA_DIAS = () => Math.max(1, Number(process.env.DATAFRETE_OCO_JANELA_DIAS || 7));
 
 const disponivel = () => ATIVO() && !!TOKEN() && Datafrete.disponivel();
 
