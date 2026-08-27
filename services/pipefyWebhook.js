@@ -542,11 +542,12 @@ async function processarFila(Pg) {
          WHERE enviado = ''
             OR (enviado = 'P' AND enviado_em < NOW() - INTERVAL '2 minutes')
             -- RETRY de falhas transitórias (timeout da Suri etc.): reenvia até 5x,
-            -- espaçado ~1 min. ⚠️ SÓ falhas RECENTES (últimas 2h) — senão o backlog
-            -- histórico de '0' (que nasceu com tentativas=0) seria ressuscitado e
-            -- reenviaria notificações velhas. Falha antiga fica '0' e não volta.
+            -- espaçado ~1 min. ⚠️ SÓ mensagens ENFILEIRADAS há pouco (criado_em < 2h)
+            -- — usar criado_em (não enviado_em) senão um row ANTIGO tocado agora teria
+            -- enviado_em recente e ressuscitaria notificação velha. Falha de mensagem
+            -- antiga fica '0' pra sempre (como era antes).
             OR (enviado = '0' AND tentativas < 5
-                AND enviado_em > NOW() - INTERVAL '2 hours'
+                AND criado_em > NOW() - INTERVAL '2 hours'
                 AND enviado_em < NOW() - INTERVAL '1 minute')
          ORDER BY id
          LIMIT 50
