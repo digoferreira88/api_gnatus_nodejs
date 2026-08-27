@@ -21,7 +21,9 @@ const CHANNEL  = process.env.SURI_CHANNEL_ID || 'wp800236266508332';
 
 const http = axios.create({
   baseURL: BASE,
-  timeout: 15000,
+  // A Suri às vezes responde devagar (>15s) e o envio estourava, marcando falha
+  // sem retry (ATA/técnico ficavam sem mensagem). 30s dá folga; env sobrepõe.
+  timeout: Number(process.env.SURI_TIMEOUT_MS) || 30000,
   headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' }
 });
 

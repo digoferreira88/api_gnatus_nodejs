@@ -541,6 +541,9 @@ async function processarFila(Pg) {
         SELECT id FROM tab_pipefy_wh_fila
          WHERE enviado = ''
             OR (enviado = 'P' AND enviado_em < NOW() - INTERVAL '2 minutes')
+            -- RETRY de falhas transitórias (timeout da Suri etc.): reenvia até 5x,
+            -- espaçado ~1 min. Sem isso a ATA/técnico ficavam sem mensagem.
+            OR (enviado = '0' AND tentativas < 5 AND enviado_em < NOW() - INTERVAL '1 minute')
          ORDER BY id
          LIMIT 50
          FOR UPDATE SKIP LOCKED
@@ -558,8 +561,10 @@ async function processarFila(Pg) {
     } catch (e) { resp = { ok: false, erro: e.message }; }
     if (resp.ok) ok++; else falha++;
     await Pg.connectAndQuery(
-      `UPDATE tab_pipefy_wh_fila SET enviado = @e, resposta = @r, enviado_em = NOW() WHERE id = @id`,
-      { e: resp.ok ? '1' : '0', r: JSON.stringify(resp.raw || resp.erro || '').slice(0, 800), id: item.id });
+      `UPDATE tab_pipefy_wh_fila SET enviado = @e, resposta = @r, enviado_em = NOW(),
+              tentativas = tentativas + @inc WHERE id = @id`,
+      { e: resp.ok ? '1' : '0', inc: resp.ok ? 0 : 1,
+        r: JSON.stringify(resp.raw || resp.erro || '').slice(0, 800), id: item.id });
   }
   return { ok, falha };
 }
