@@ -344,10 +344,16 @@ async function carregarPeriodo(Protheus, inicio, fim) {
   const saldos = new Map();
   razao.forEach((v, k) => saldos.set(k, { saldo: v.saldo, manual: v.manual }));
   notas.map.forEach((v, k) => {
+    const existiaNoRazao = razao.has(k);
     const cur = saldos.get(k) || { saldo: 0, manual: 0 };
     cur.saldo += v.saldo;
     if (v.bloco) { cur.bloco = v.bloco; cur.descricao = v.descricao; }
-    if (v.provisorio) cur.provisorio = true;
+    // Marca "provisorio" SO a folha 100% notas: sintetica (deducoes/CMV) ou conta que
+    // NAO existe no razao do periodo. Conta que aparece em mes fechado E no aberto
+    // (ex.: folha de pagamento no acumulado do ano) NAO recebe o selo — seria enganoso
+    // marcar como provisorio um valor majoritariamente ja contabilizado. O banner +
+    // fontePorMes cobrem a divulgacao do provisorio agregado.
+    if (v.bloco || !existiaNoRazao) cur.provisorio = true;
     saldos.set(k, cur);
   });
 
