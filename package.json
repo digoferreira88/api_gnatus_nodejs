@@ -32,7 +32,6 @@
     "he": "^1.2.0",
     "helmet": "^8.1.0",
     "isomorphic-fetch": "^3.0.0",
-    "jsonpath": "^1.1.1",
     "jsonwebtoken": "^9.0.1",
     "ldapts": "^8.1.7",
     "lodash": "^4.17.21",
@@ -55,7 +54,6 @@
     "pm2": "^6.0.8",
     "puppeteer": "^24.32.0",
     "qrcode": "^1.5.4",
-    "safe-eval": "^0.4.1",
     "socket.io": "^4.7.1",
     "string-mask": "^0.3.0",
     "xml-crypto": "^6.0.0"

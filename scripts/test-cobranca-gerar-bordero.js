@@ -3,7 +3,7 @@
 // Roda 10 cenarios contra o endpoint e imprime PASS/FAIL pra cada um.
 // Uso: `node test-cobranca-gerar-bordero.js [url] [user] [pass]`
 //      default: http://protheus.gnatus.com.br:8081/rest/Cobranca/gerar-bordero
-//               admin:Gn@tu5 (mesmas credenciais do AprovaCompras)
+//               credencial do .env (PROTHEUS_API_USER/PASS — mesma do AprovaCompras)
 //
 // Pre-requisito: Node 18+ (usa fetch nativo). Rodar da rede que tem rota pro
 // Protheus (PC interno ou VPS via NAT).
@@ -11,7 +11,7 @@
 const URL_DEFAULT = 'http://protheus.gnatus.com.br:8081/rest/Cobranca/gerar-bordero';
 const url  = process.argv[2] || URL_DEFAULT;
 const user = process.argv[3] || 'admin';
-const pass = process.argv[4] || 'Gn@tu5';
+const pass = process.argv[4] || process.env.PROTHEUS_API_PASS;   // nunca hardcodar
 
 const authValido = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
 const authInvalido = 'Basic ' + Buffer.from('wrong:credentials').toString('base64');

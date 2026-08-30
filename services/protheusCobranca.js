@@ -3,7 +3,7 @@
 // titulos no detalhes[].
 //
 // Endpoint: POST {PROTHEUS_API_URL}/Cobranca/gerar-bordero
-// Auth:     Basic admin:Gn@tu5 (PROTHEUS_API_USER / PROTHEUS_API_PASS — mesmas
+// Auth:     Basic (PROTHEUS_API_USER / PROTHEUS_API_PASS do .env — mesmas
 //           credenciais do AprovaCompras, lidas do .env)
 // Timeout:  60s (operacao write — sem retry pra nao duplicar bordero)
 // Limites:  ate 500 titulos por chamada (enforcado tambem no AdvPL)

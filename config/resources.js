@@ -129,8 +129,11 @@ let mapFolder = (app, currentPath, prefix) => {
               }
             }
           } catch (err) {
-            console.log("Err: " + err.message);
-            return res.status(500).send({ message: err.message });
+            // Fallback de TODAS as rotas. Não devolve err.message ao cliente:
+            // vazava nome de tabela/coluna/constraint do Postgres e detalhes
+            // internos (auditoria 30/08/2026). O detalhe fica no log do servidor.
+            console.error(`[${req.method} ${req.originalUrl}] erro nao tratado:`, err);
+            return res.status(500).send({ message: 'Erro interno ao processar a solicitação.' });
           }
         },
       });

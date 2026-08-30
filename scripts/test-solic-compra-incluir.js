@@ -3,7 +3,7 @@
 // Roda 10 cenarios contra o endpoint e imprime PASS/FAIL pra cada um.
 // Uso: `node test-solic-compra-incluir.js [url] [user] [pass] [produtoReal] [ccReal]`
 //      default url:  http://protheus.gnatus.com.br:8081/rest/SolicCompra/incluir
-//              auth: admin:Gn@tu5
+//              auth: credencial do .env (PROTHEUS_API_USER/PASS)
 //
 // IMPORTANTE: o cenario 10 (payload valido) PRECISA de codigo de produto
 // e centro de custo REAIS pra criar a SC com sucesso. Passe via argv:
@@ -19,7 +19,7 @@
 const URL_DEFAULT = 'http://protheus.gnatus.com.br:8081/rest/SolicCompra/incluir';
 const url  = process.argv[2] || URL_DEFAULT;
 const user = process.argv[3] || 'admin';
-const pass = process.argv[4] || 'Gn@tu5';
+const pass = process.argv[4] || process.env.PROTHEUS_API_PASS;   // nunca hardcodar
 const produtoReal = process.argv[5] || 'PRODUTO_REAL_1';
 const ccReal      = process.argv[6] || 'CC_REAL';
 

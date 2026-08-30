@@ -91,8 +91,14 @@ app.io.on('connection', socket => {
 });
 
 const port = process.env.PORT || 3000
+// Bind SÓ no loopback: o nginx é a única porta de entrada (TLS + HSTS). Sem o
+// host, o Express escutava em todas as interfaces e a API respondia HTTP puro
+// em :3000 direto da internet (auditoria 30/08/2026). BIND_HOST=0.0.0.0 fica
+// como override consciente (ex.: enquanto o nginx ainda aponta p/ "localhost",
+// que resolve ::1 e 127.0.0.1 — ajustar proxy_pass p/ 127.0.0.1:3000 e remover).
+const host = process.env.BIND_HOST || '127.0.0.1'
 
-server.listen(port, () => {
-  console.log(`API running on port: ${port}`);
+server.listen(port, host, () => {
+  console.log(`API running on port: ${port} (bind ${host})`);
 })
 

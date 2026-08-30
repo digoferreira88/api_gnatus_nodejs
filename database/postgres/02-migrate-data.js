@@ -37,7 +37,7 @@ const pg = new Pool({
     port: Number(process.env.PG_PORT || 5432),
     database: process.env.PG_DATABASE || 'intranet',
     user: process.env.PG_USER || 'intranet',
-    password: process.env.PG_PASSWORD || 'intranet_dev_2026'
+    password: process.env.PG_PASSWORD   // sem fallback: senha só no .env
 });
 
 // Tabelas em ordem topológica (FKs respeitadas).

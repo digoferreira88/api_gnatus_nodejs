@@ -14,3 +14,11 @@ scripts/_out/
 # Chaves privadas (TOTVS Identity .pk8, etc) — NUNCA versionar
 secrets/
 *.pk8
+
+# Certificados/chaves NUNCA no repo (auditoria 30/08/2026 — chave privada ficou rastreada por meses)
+certificados/
+*.key
+*.pem
+*.crt
+*.pfx
+*.p12

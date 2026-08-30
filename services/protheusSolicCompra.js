@@ -4,7 +4,7 @@
 // inconsistencia (hoje quebra com 500).
 //
 // Endpoint: POST {PROTHEUS_API_URL}/SolicCompra/incluir
-// Auth:     Basic admin:Gn@tu5 (mesmas creds do AprovaCompras / bordero)
+// Auth:     Basic (PROTHEUS_API_USER / PROTHEUS_API_PASS do .env — mesmas creds do AprovaCompras / bordero)
 // Timeout:  180s (operacao write — sem retry pra nao duplicar SC)
 //
 // Response (formato MIT072 padrao TOTVS):

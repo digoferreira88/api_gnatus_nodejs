@@ -122,7 +122,7 @@ Return .T.
 
 **Teste rápido após compilar + restart REST**:
 ```bash
-curl -u admin:Gn@tu5 "http://protheus.gnatus.com.br:8081/rest/gntnfe/xml?chave=35260409609356000100550010000872901442521059"
+curl -u admin:<PROTHEUS_API_PASS do .env> "http://protheus.gnatus.com.br:8081/rest/gntnfe/xml?chave=35260409609356000100550010000872901442521059"
 ```
 
 Se essa versão B funcionar e a versão A não, é confirmado que é incompatibilidade do path dinâmico. Pode ficar com a B mesmo — funciona igual.
@@ -258,7 +258,7 @@ Return cRet
 2. Compilar via SmartClient (ou linha de comando)
 3. Reiniciar o serviço REST do Protheus
 
-> **Sugestão de porta**: usar **8081** (mesma porta onde as APIs CRM/Documents custom já rodam — credenciais `admin:Gn@tu5` testadas e funcionais). O script de teste abaixo está com 8282; ajustar conforme onde o TI publicar.
+> **Sugestão de porta**: usar **8081** (mesma porta onde as APIs CRM/Documents custom já rodam — credenciais do usuário de integração (`PROTHEUS_API_USER/PASS` no .env) testadas e funcionais). O script de teste abaixo está com 8282; ajustar conforme onde o TI publicar.
 
 4. Rodar o script de teste abaixo:
 
