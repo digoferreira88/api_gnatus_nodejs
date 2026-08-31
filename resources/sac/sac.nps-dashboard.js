@@ -20,11 +20,13 @@ module.exports = (app) => ({
     //     segmentos e nuvem. É o que o cliente respondeu naquele mês, não
     //     importa quando o convite saiu. É o eixo do filtro da tela.
     //
-    //   SAFRA (c.criado_em) — enviados, pendentes e taxa de resposta.
-    //     Taxa de resposta só significa alguma coisa por safra: do que saiu
-    //     no mês, quanto voltou. Se contasse resposta por respondido_em e
-    //     envio por criado_em no mesmo denominador, um mês com muita resposta
-    //     atrasada passaria de 100%.
+    //   SAFRA (c.data_faturamento) — faturados, pendentes e taxa de resposta.
+    //     O universo é quem foi FATURADO no mês, e a conta é: desses, quantos
+    //     responderam — não importa quando responderam. É a leitura pós-venda
+    //     certa, e a única em que a taxa fecha: pelo eixo da resposta, agosto
+    //     daria 28 respostas sobre 23 faturados, ou seja mais de 100%.
+    //
+    //     data_faturamento é varchar 'YYYYMMDD', então compara como string.
     // ---------------------------------------------------------------------
     const p = {};
     let ini = trim(req.query.inicio);
@@ -43,13 +45,15 @@ module.exports = (app) => ({
     const condResp = [], condEnv = [];
     if (ini) {
       condResp.push('c.respondido_em >= @inicio');
-      condEnv.push('c.criado_em >= @inicio');
+      condEnv.push('c.data_faturamento >= @iniYmd');
       p.inicio = ini;
+      p.iniYmd = ini.replace(/-/g, '');
     }
     if (fim) {
       condResp.push('c.respondido_em < (@fim::date + 1)');
-      condEnv.push('c.criado_em < (@fim::date + 1)');
+      condEnv.push('c.data_faturamento <= @fimYmd');
       p.fim = fim;
+      p.fimYmd = fim.replace(/-/g, '');
     }
 
     // `conds`/`where` seguem com os nomes antigos, mas agora significam a
@@ -72,24 +76,41 @@ module.exports = (app) => ({
       const t = tot[0] || {};
       const respondidos = N(t.respondidos);
 
-      // Safra do período — eixo criado_em: do que saiu, quanto voltou.
+      // Safra do período — eixo data_faturamento: de quem foi faturado no mês,
+      // quantos responderam. O denominador é o faturado INTEIRO, não só o que
+      // conseguimos enviar: um convite que falhou no envio é um cliente
+      // faturado que não respondeu, e escondê-lo inflaria a taxa.
       const saf = await Pg.connectAndQuery(`
         SELECT
-          COUNT(*) FILTER (WHERE status IN ('ENVIADO','RESPONDIDO')) enviados,
+          COUNT(*) faturados,
           COUNT(*) FILTER (WHERE status = 'RESPONDIDO') respondidos
-        FROM tab_nps_convite c ${whereEnv}`, p);
+        FROM tab_nps_convite c
+        ${whereEnv ? whereEnv + ' AND' : 'WHERE'} COALESCE(c.data_faturamento,'') <> ''`, p);
       const s = saf[0] || {};
-      const safEnviados = N(s.enviados), safRespondidos = N(s.respondidos);
+      const safFaturados = N(s.faturados), safRespondidos = N(s.respondidos);
 
-      // Meses que têm resposta — alimenta o seletor da tela. Sempre completo,
+      // Meses do seletor. União dos dois eixos, porque um mês pode ter
+      // faturamento sem nenhuma resposta ainda (e precisa aparecer na lista)
+      // ou receber resposta de uma safra anterior. Sempre completo,
       // independente do filtro, senão o seletor perderia as outras opções.
       const mesesRows = await Pg.connectAndQuery(`
-        SELECT to_char(date_trunc('month', respondido_em), 'YYYY-MM') mes,
-               COUNT(*) qtd
-          FROM tab_nps_convite
-         WHERE respondido_em IS NOT NULL
-         GROUP BY 1 ORDER BY 1 DESC`, {});
-      const mesesDisponiveis = mesesRows.map(r => ({ mes: trim(r.mes), qtd: N(r.qtd) }));
+        WITH resp AS (
+          SELECT to_char(date_trunc('month', respondido_em), 'YYYY-MM') mes, COUNT(*) qtd
+            FROM tab_nps_convite WHERE respondido_em IS NOT NULL GROUP BY 1
+        ), fat AS (
+          SELECT LEFT(data_faturamento, 4) || '-' || SUBSTRING(data_faturamento, 5, 2) mes, COUNT(*) qtd
+            FROM tab_nps_convite WHERE COALESCE(data_faturamento,'') <> '' GROUP BY 1
+        )
+        SELECT m.mes,
+               COALESCE(r.qtd, 0) respostas,
+               COALESCE(f.qtd, 0) faturados
+          FROM (SELECT mes FROM resp UNION SELECT mes FROM fat) m
+          LEFT JOIN resp r ON r.mes = m.mes
+          LEFT JOIN fat  f ON f.mes = m.mes
+         ORDER BY m.mes DESC`, {});
+      const mesesDisponiveis = mesesRows.map(r => ({
+        mes: trim(r.mes), respostas: N(r.respostas), faturados: N(r.faturados)
+      }));
       const promotores = N(t.promotores), detratores = N(t.detratores), neutros = N(t.neutros);
       const npsScore = respondidos > 0 ? Math.round(((promotores - detratores) / respondidos) * 100) : null;
 
@@ -244,11 +265,12 @@ module.exports = (app) => ({
         periodo: { mes: /^\d{4}-\d{2}$/.test(mes) ? mes : null, inicio: ini || null, fim: fim || null },
         mesesDisponiveis,
         kpis: {
-          // Eixo SAFRA (criado_em) — o trio da taxa de resposta fecha entre si.
-          enviados: safEnviados,
+          // Eixo SAFRA (data_faturamento) — o trio fecha entre si: de quem foi
+          // faturado no mês, quantos responderam (quando quer que tenha sido).
+          faturados: safFaturados,
           respondidosSafra: safRespondidos,
-          pendentes: Math.max(0, safEnviados - safRespondidos),
-          taxaResposta: safEnviados > 0 ? +(safRespondidos / safEnviados * 100).toFixed(1) : 0,
+          pendentes: Math.max(0, safFaturados - safRespondidos),
+          taxaResposta: safFaturados > 0 ? +(safRespondidos / safFaturados * 100).toFixed(1) : 0,
           // Eixo RESPOSTA (respondido_em) — daqui para baixo é o que o cliente
           // respondeu no período.
           respondidos,
