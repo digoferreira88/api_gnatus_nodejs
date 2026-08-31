@@ -12,23 +12,84 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Pg } = app.services;
-    const conds = [], p = {};
-    if (trim(req.query.inicio)) { conds.push('c.criado_em >= @inicio'); p.inicio = trim(req.query.inicio); }
-    if (trim(req.query.fim))    { conds.push('c.criado_em < (@fim::date + 1)'); p.fim = trim(req.query.fim); }
+
+    // ---------------------------------------------------------------------
+    // DOIS EIXOS DE DATA, de propósito:
+    //
+    //   RESPOSTA (c.respondido_em) — CSAT, NPS, distribuição, causas,
+    //     segmentos e nuvem. É o que o cliente respondeu naquele mês, não
+    //     importa quando o convite saiu. É o eixo do filtro da tela.
+    //
+    //   SAFRA (c.criado_em) — enviados, pendentes e taxa de resposta.
+    //     Taxa de resposta só significa alguma coisa por safra: do que saiu
+    //     no mês, quanto voltou. Se contasse resposta por respondido_em e
+    //     envio por criado_em no mesmo denominador, um mês com muita resposta
+    //     atrasada passaria de 100%.
+    // ---------------------------------------------------------------------
+    const p = {};
+    let ini = trim(req.query.inicio);
+    let fim = trim(req.query.fim);
+
+    // ?mes=YYYY-MM é o atalho usado pela tela; inicio/fim continuam valendo
+    // para quem quiser um intervalo livre.
+    const mes = trim(req.query.mes);
+    if (/^\d{4}-\d{2}$/.test(mes)) {
+      const ano = Number(mes.slice(0, 4)), m = Number(mes.slice(5, 7));
+      const ultimo = new Date(ano, m, 0).getDate();   // dia 0 do mês seguinte
+      ini = `${mes}-01`;
+      fim = `${mes}-${String(ultimo).padStart(2, '0')}`;
+    }
+
+    const condResp = [], condEnv = [];
+    if (ini) {
+      condResp.push('c.respondido_em >= @inicio');
+      condEnv.push('c.criado_em >= @inicio');
+      p.inicio = ini;
+    }
+    if (fim) {
+      condResp.push('c.respondido_em < (@fim::date + 1)');
+      condEnv.push('c.criado_em < (@fim::date + 1)');
+      p.fim = fim;
+    }
+
+    // `conds`/`where` seguem com os nomes antigos, mas agora significam a
+    // janela da RESPOSTA — é o eixo de tudo que descreve o que o cliente disse.
+    const conds = condResp;
     const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    const whereEnv = condEnv.length ? 'WHERE ' + condEnv.join(' AND ') : '';
 
     try {
+      // Respostas do período — eixo respondido_em.
       const tot = await Pg.connectAndQuery(`
         SELECT
-          COUNT(*) FILTER (WHERE status IN ('ENVIADO','RESPONDIDO')) enviados,
           COUNT(*) FILTER (WHERE status = 'RESPONDIDO') respondidos,
           COUNT(*) FILTER (WHERE classificacao = 'PROMOTOR') promotores,
           COUNT(*) FILTER (WHERE classificacao = 'NEUTRO')   neutros,
           COUNT(*) FILTER (WHERE classificacao = 'DETRATOR') detratores,
           AVG(nota_nps) FILTER (WHERE nota_nps IS NOT NULL)  media
-        FROM tab_nps_convite c ${where}`, p);
+        FROM tab_nps_convite c
+        ${where ? where + ' AND' : 'WHERE'} c.respondido_em IS NOT NULL`, p);
       const t = tot[0] || {};
       const respondidos = N(t.respondidos);
+
+      // Safra do período — eixo criado_em: do que saiu, quanto voltou.
+      const saf = await Pg.connectAndQuery(`
+        SELECT
+          COUNT(*) FILTER (WHERE status IN ('ENVIADO','RESPONDIDO')) enviados,
+          COUNT(*) FILTER (WHERE status = 'RESPONDIDO') respondidos
+        FROM tab_nps_convite c ${whereEnv}`, p);
+      const s = saf[0] || {};
+      const safEnviados = N(s.enviados), safRespondidos = N(s.respondidos);
+
+      // Meses que têm resposta — alimenta o seletor da tela. Sempre completo,
+      // independente do filtro, senão o seletor perderia as outras opções.
+      const mesesRows = await Pg.connectAndQuery(`
+        SELECT to_char(date_trunc('month', respondido_em), 'YYYY-MM') mes,
+               COUNT(*) qtd
+          FROM tab_nps_convite
+         WHERE respondido_em IS NOT NULL
+         GROUP BY 1 ORDER BY 1 DESC`, {});
+      const mesesDisponiveis = mesesRows.map(r => ({ mes: trim(r.mes), qtd: N(r.qtd) }));
       const promotores = N(t.promotores), detratores = N(t.detratores), neutros = N(t.neutros);
       const npsScore = respondidos > 0 ? Math.round(((promotores - detratores) / respondidos) * 100) : null;
 
@@ -107,14 +168,17 @@ module.exports = (app) => ({
 
       // evolução mensal (últimos 12 meses respondidos)
       const evo = await Pg.connectAndQuery(`
+        -- A evolução IGNORA o filtro de mês de propósito: ela existe para
+        -- mostrar a tendência, e filtrada por um mês viraria um ponto só. A
+        -- tela destaca nela o mês selecionado.
         SELECT to_char(date_trunc('month', respondido_em), 'YYYY-MM') mes,
                COUNT(*) FILTER (WHERE classificacao='PROMOTOR') promotores,
                COUNT(*) FILTER (WHERE classificacao='NEUTRO')   neutros,
                COUNT(*) FILTER (WHERE classificacao='DETRATOR') detratores,
                COUNT(*) total
           FROM tab_nps_convite c
-         WHERE respondido_em IS NOT NULL ${conds.length ? 'AND ' + conds.join(' AND ') : ''}
-         GROUP BY 1 ORDER BY 1 DESC LIMIT 12`, p);
+         WHERE respondido_em IS NOT NULL
+         GROUP BY 1 ORDER BY 1 DESC LIMIT 12`, {});
       const evolucao = evo.map(e => {
         const total = N(e.total);
         const nps = total > 0 ? Math.round(((N(e.promotores) - N(e.detratores)) / total) * 100) : 0;
@@ -175,10 +239,19 @@ module.exports = (app) => ({
 
       return res.json({
         segmentos: { porBu, porVendedor, porTransportadora, porLinha },
+        // Período efetivamente aplicado, para a tela rotular os blocos sem
+        // recalcular a data por conta própria.
+        periodo: { mes: /^\d{4}-\d{2}$/.test(mes) ? mes : null, inicio: ini || null, fim: fim || null },
+        mesesDisponiveis,
         kpis: {
-          enviados: N(t.enviados), respondidos,
-          pendentes: Math.max(0, N(t.enviados) - respondidos),
-          taxaResposta: N(t.enviados) > 0 ? +(respondidos / N(t.enviados) * 100).toFixed(1) : 0,
+          // Eixo SAFRA (criado_em) — o trio da taxa de resposta fecha entre si.
+          enviados: safEnviados,
+          respondidosSafra: safRespondidos,
+          pendentes: Math.max(0, safEnviados - safRespondidos),
+          taxaResposta: safEnviados > 0 ? +(safRespondidos / safEnviados * 100).toFixed(1) : 0,
+          // Eixo RESPOSTA (respondido_em) — daqui para baixo é o que o cliente
+          // respondeu no período.
+          respondidos,
           promotores, neutros, detratores,
           // CSAT (top-box): % de clientes satisfeitos (PROMOTOR) sobre os respondidos.
           csat: respondidos > 0 ? Math.round((promotores / respondidos) * 100) : null,

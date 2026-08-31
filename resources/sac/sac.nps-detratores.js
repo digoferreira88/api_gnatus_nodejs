@@ -13,8 +13,19 @@ module.exports = (app) => ({
   handler: async (req, res) => {
     const { Pg } = app.services;
     const conds = ["c.classificacao = 'DETRATOR'"], p = {};
-    if (trim(req.query.inicio)) { conds.push('c.respondido_em >= @inicio'); p.inicio = trim(req.query.inicio); }
-    if (trim(req.query.fim))    { conds.push('c.respondido_em < (@fim::date + 1)'); p.fim = trim(req.query.fim); }
+    let ini = trim(req.query.inicio), fim = trim(req.query.fim);
+
+    // ?mes=YYYY-MM — mesmo atalho do dashboard, para os dois responderem ao
+    // mesmo seletor da tela. O eixo já era respondido_em.
+    const mes = trim(req.query.mes);
+    if (/^\d{4}-\d{2}$/.test(mes)) {
+      const ultimo = new Date(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)), 0).getDate();
+      ini = `${mes}-01`;
+      fim = `${mes}-${String(ultimo).padStart(2, '0')}`;
+    }
+
+    if (ini) { conds.push('c.respondido_em >= @inicio'); p.inicio = ini; }
+    if (fim) { conds.push('c.respondido_em < (@fim::date + 1)'); p.fim = fim; }
 
     try {
       const rows = await Pg.connectAndQuery(`
