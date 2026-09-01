@@ -6,7 +6,7 @@
 // CUSTOMOEDA1 = D1_CUSTO (Custo de Entrada Moeda 1 — líquido, deduzindo impostos).
 // Perm 4001/4002/4003.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([11002, 0]);
+const requirePerm = (app) => require("../../middlewares/requirePerm")(app)([11005, 11002, 0]);
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 
