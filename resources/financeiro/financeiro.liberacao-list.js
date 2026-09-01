@@ -164,12 +164,15 @@ module.exports = (app) => ({
       const anotMap = new Map();
       try {
         const anot = await Pg.connectAndQuery(
-          `SELECT pedido, acoes, observacoes, atualizado_por_nome, atualizado_em
+          `SELECT pedido, acoes, observacoes, data_acao, valor_atraso, atualizado_por_nome, atualizado_em
              FROM tab_lib_financeira_anotacao WHERE filial = '01'`, {}
         );
         anot.forEach(a => anotMap.set(trim(a.pedido), {
           acoes: a.acoes || '',
           observacoes: a.observacoes || '',
+          // data_acao vem como Date; normaliza p/ 'YYYY-MM-DD' (input date do front)
+          dataAcao: a.data_acao ? new Date(a.data_acao).toISOString().slice(0, 10) : '',
+          valorAtraso: a.valor_atraso != null ? Number(a.valor_atraso) : null,
           atualizadoPorNome: trim(a.atualizado_por_nome),
           atualizadoEm: a.atualizado_em
         }));
@@ -238,6 +241,8 @@ module.exports = (app) => ({
           // anotações da operadora
           acoes: anot ? anot.acoes : '',
           observacoes: anot ? anot.observacoes : '',
+          dataAcao: anot ? anot.dataAcao : '',
+          valorAtraso: anot ? anot.valorAtraso : null,
           anotadoPor: anot ? anot.atualizadoPorNome : '',
           anotadoEm: anot ? anot.atualizadoEm : null
         };
