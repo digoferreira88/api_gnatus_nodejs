@@ -33,7 +33,7 @@ app.use(helmet({
 // (so cross-origin). Entao `!origin` = same-origin do nginx OU server-to-server.
 // Em qualquer caso eh seguro liberar — a auth do JWT cobre.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ||
-  'http://localhost:5173,http://localhost:3000,https://intranew.gnatus.com.br'
+  'http://localhost:5173,http://localhost:3000,https://intranew.gnatus.com.br,https://intranet.gnatus.com.br'
 ).split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
   origin: (origin, cb) => {
