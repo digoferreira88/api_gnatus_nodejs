@@ -91,6 +91,7 @@ module.exports = (app) => ({
 
       // 3) Pra cada item: SELECT R_E_C_N_O_ -> UPDATE ou INSERT
       const stats = { atualizados: 0, inseridos: 0, erros: 0 };
+      let primeiroErro = null;   // mensagem do 1º item que falhou (surfaça ao usuário)
 
       // Proximo R_E_C_N_O_ pra INSERT (so consulta 1 vez, incrementa local)
       const maxRow = await Protheus.connectAndQuery(
@@ -129,17 +130,21 @@ module.exports = (app) => ({
             );
             stats.atualizados++;
           } else {
+            // R_E_C_D_E_L_ REMOVIDO (03/09/2026): a SZ1010 foi alterada no Protheus
+            // e não tem mais essa coluna (ganhou Z1_ETIQ). Referenciá-la fazia
+            // TODA primeira expedição de uma NF falhar ("Invalid column name
+            // 'R_E_C_D_E_L_'") — só re-expedições (UPDATE) passavam.
             await Protheus.connectAndQuery(`
               INSERT INTO SZ1010 (
                 Z1_FILIAL, Z1_DOC, Z1_SERIE, Z1_ITEM, Z1_PEDIDO,
                 Z1_CLIENTE, Z1_LOJA, Z1_COD, Z1_QUANT, Z1_ZNUMSER,
                 Z1_EMISSAO, Z1_EXPEDIC, Z1_ENTREGA, Z1_RASTREI,
-                Z1_EMAIL, Z1_TRANSP, D_E_L_E_T_, R_E_C_N_O_, R_E_C_D_E_L_
+                Z1_EMAIL, Z1_TRANSP, D_E_L_E_T_, R_E_C_N_O_
               ) VALUES (
                 '01', @doc, @serie, @item, @pedido,
                 @cliente, @loja, @cod, @quant, @znum,
                 @emis, @exp, @exp, @rast,
-                'N', @transp, ' ', @rec, 0
+                'N', @transp, ' ', @rec
               )`,
               {
                 doc, serie, item,
@@ -161,6 +166,7 @@ module.exports = (app) => ({
           }
         } catch (e) {
           console.error(`expedicao/expedir item ${item}:`, e.message);
+          if (!primeiroErro) primeiroErro = e.message;
           stats.erros++;
         }
       }
@@ -181,11 +187,24 @@ module.exports = (app) => ({
         }
       });
 
+      // Se NENHUM item foi gravado e houve erro, isso é FALHA — não devolve 200
+      // "ok:false" silencioso (o front tratava como sucesso e o usuário achava
+      // que expediu). Surfaça a mensagem real do Protheus.
+      if (stats.erros > 0 && stats.inseridos === 0 && stats.atualizados === 0) {
+        return res.status(422).json({
+          ok: false, doc, serie,
+          message: `Não foi possível expedir a NF ${doc}/${serie}: ${primeiroErro || 'erro ao gravar no Protheus.'}`,
+          ...stats
+        });
+      }
+
       return res.json({
         ok: stats.erros === 0,
         doc, serie,
         expedicao: dtExpedic,
         rastreio,
+        // avisa se gravou parcial (alguns itens falharam)
+        message: stats.erros > 0 ? `Expedido parcialmente — ${stats.erros} item(ns) falharam: ${primeiroErro || ''}` : undefined,
         ...stats
       });
     } catch (err) {
