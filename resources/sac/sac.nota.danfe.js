@@ -27,7 +27,11 @@ const esc = (s) => String(s || '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6001, 6002]);
+// Perm ampliada 04/09/2026: além do SAC (6001/6002), Expedição (12001),
+// Contas a Receber (8002) e Fiscal (16001) — o DANFE espelho lê só SF2/SD2
+// (dados que essas telas já mostram) e ajuda a conferência/financeiro enquanto
+// o Transmite está instável.
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6001, 6002, 12001, 8002, 16001]);
 
 module.exports = (app) => ({
   verb: 'get',
