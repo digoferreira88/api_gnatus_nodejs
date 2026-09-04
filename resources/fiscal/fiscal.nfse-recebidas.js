@@ -37,7 +37,8 @@ module.exports = (app) => ({
                toma_cnpj, toma_nome, direcao, valor, valor_iss, aliq, desc_servico,
                dh_emi, competencia, cstat, situacao, conferido_em, criado_em
           FROM tab_nfse_recebida
-         WHERE (@dir = 'todas' OR direcao = @dir)
+         WHERE COALESCE(tipo_doc, 'NFSE') = 'NFSE'
+           AND (@dir = 'todas' OR direcao = @dir)
            AND COALESCE(dh_emi, criado_em) >= @ini::timestamptz
            AND COALESCE(dh_emi, criado_em) < ((@fim)::date + 1)
          ORDER BY COALESCE(dh_emi, criado_em) DESC`,
