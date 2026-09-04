@@ -199,20 +199,6 @@ module.exports = (app) => ({
         fe.z1_expedic        zExpedic,
         RTRIM(fe.z1_rastrei) zRastrei,
         f2.F2_VALMERC        total,
-        ISNULL(imp.difal, 0) difal,
-        ISNULL(imp.fcp, 0)   fcp,
-        -- Pedido(s) de venda da NF (SD2.D2_PEDIDO). Normalmente 1 por NF; se houver
-        -- mais de um, concatena os distintos ("123, 124"). Ignora itens sem pedido.
-        STUFF((SELECT DISTINCT ', ' + RTRIM(sd2p.D2_PEDIDO)
-                 FROM SD2010 sd2p WITH (NOLOCK)
-                WHERE sd2p.D2_FILIAL  = f2.F2_FILIAL
-                  AND sd2p.D2_DOC     = f2.F2_DOC
-                  AND sd2p.D2_SERIE   = f2.F2_SERIE
-                  AND sd2p.D2_CLIENTE = f2.F2_CLIENTE
-                  AND sd2p.D2_LOJA    = f2.F2_LOJA
-                  AND sd2p.D_E_L_E_T_ <> '*'
-                  AND RTRIM(sd2p.D2_PEDIDO) <> ''
-                FOR XML PATH('')), 1, 2, '') pedido,
         f2.R_E_C_N_O_        id
       FROM SF2010 f2 WITH (NOLOCK)
       LEFT JOIN SA1010 sa1 WITH (NOLOCK)
@@ -224,19 +210,6 @@ module.exports = (app) => ({
        AND fe.z1_serie  = f2.F2_SERIE
       LEFT JOIN SA4010 sa4 WITH (NOLOCK)
         ON f2.F2_TRANSP = sa4.A4_COD AND sa4.D_E_L_E_T_ <> '*'
-      LEFT JOIN (
-        SELECT D2_FILIAL, D2_DOC, D2_SERIE, D2_CLIENTE, D2_LOJA,
-               SUM(D2_DIFAL)   difal,
-               SUM(D2_VALFECP) fcp
-          FROM SD2010 WITH (NOLOCK)
-         WHERE D_E_L_E_T_ <> '*'
-         GROUP BY D2_FILIAL, D2_DOC, D2_SERIE, D2_CLIENTE, D2_LOJA
-      ) imp
-        ON imp.D2_FILIAL  = f2.F2_FILIAL
-       AND imp.D2_DOC     = f2.F2_DOC
-       AND imp.D2_SERIE   = f2.F2_SERIE
-       AND imp.D2_CLIENTE = f2.F2_CLIENTE
-       AND imp.D2_LOJA    = f2.F2_LOJA
       WHERE f2.F2_FILIAL = '01'
         AND f2.D_E_L_E_T_ <> '*'
         AND f2.F2_SERIE = '1'
@@ -288,6 +261,69 @@ module.exports = (app) => ({
     try {
       const rows = await Protheus.connectAndQuery(sql, params);
 
+      // ------------------------------------------------------------------
+      // Enriquecimento em LOTE (impostos e pedido de venda).
+      //
+      // Antes isto vinha junto da consulta principal: um LEFT JOIN com
+      // GROUP BY sobre a SD2 INTEIRA (347 mil linhas) mais um STUFF/FOR XML
+      // correlacionado por linha. Na aba "pendentes" (~140 notas) passava
+      // despercebido; na aba "expedidas" a mesma consulta levava 29,7s.
+      //
+      // Agora a principal traz só as notas, e o cálculo sai em duas varreduras
+      // de uma FATIA da SD2 — limitada pela menor emissão que voltou, então
+      // nenhum item fica de fora.
+      // ------------------------------------------------------------------
+      const chave = (r) => `${trim(r.nfe)}|${trim(r.serie)}|${trim(r.clienteCod)}|${trim(r.clienteLoja)}`;
+      const impostos = new Map();
+      const pedidos = new Map();
+
+      if (rows.length) {
+        const minEmissao = rows.reduce(
+          (min, r) => (trim(r.emissao) && trim(r.emissao) < min ? trim(r.emissao) : min),
+          '99991231'
+        );
+
+        try {
+          const agg = await Protheus.connectAndQuery(`
+            SELECT RTRIM(D2_DOC) doc, RTRIM(D2_SERIE) serie,
+                   RTRIM(D2_CLIENTE) cli, RTRIM(D2_LOJA) loja,
+                   SUM(D2_DIFAL) difal, SUM(D2_VALFECP) fcp
+              FROM SD2010 WITH (NOLOCK)
+             WHERE D_E_L_E_T_ <> '*' AND D2_FILIAL = '01'
+               AND D2_EMISSAO >= @desde
+             GROUP BY D2_DOC, D2_SERIE, D2_CLIENTE, D2_LOJA`,
+            { desde: minEmissao });
+          agg.forEach(a => impostos.set(
+            `${trim(a.doc)}|${trim(a.serie)}|${trim(a.cli)}|${trim(a.loja)}`,
+            { difal: toN(a.difal), fcp: toN(a.fcp) }
+          ));
+        } catch (e) {
+          // Sem impostos a tela ainda serve para expedir; o DIFAL fica zerado.
+          console.warn('Expedição/notas: falha ao somar impostos —', e.message);
+        }
+
+        try {
+          const peds = await Protheus.connectAndQuery(`
+            SELECT DISTINCT RTRIM(D2_DOC) doc, RTRIM(D2_SERIE) serie,
+                   RTRIM(D2_CLIENTE) cli, RTRIM(D2_LOJA) loja,
+                   RTRIM(D2_PEDIDO) pedido
+              FROM SD2010 WITH (NOLOCK)
+             WHERE D_E_L_E_T_ <> '*' AND D2_FILIAL = '01'
+               AND D2_EMISSAO >= @desde
+               AND RTRIM(D2_PEDIDO) <> ''`,
+            { desde: minEmissao });
+          peds.forEach(pd => {
+            const k = `${trim(pd.doc)}|${trim(pd.serie)}|${trim(pd.cli)}|${trim(pd.loja)}`;
+            if (!pedidos.has(k)) pedidos.set(k, []);
+            const lista = pedidos.get(k);
+            const v = trim(pd.pedido);
+            if (v && !lista.includes(v)) lista.push(v);
+          });
+        } catch (e) {
+          console.warn('Expedição/notas: falha ao buscar pedidos —', e.message);
+        }
+      }
+
       // Coleta as NFs que já estão no bordero
       const nfsNoBordero = new Set();
       try {
@@ -298,14 +334,16 @@ module.exports = (app) => ({
       } catch (e) { console.warn('Expedição/notas: falha ao ler bordero', e.message); }
 
       const notas = rows.map(r => {
-        const difal = toN(r.difal);
+        const k = chave(r);
+        const imp = impostos.get(k) || { difal: 0, fcp: 0 };
+        const difal = imp.difal;
         const uf    = trim(r.clienteUf);
         const contrib = trim(r.clienteContrib);
         return {
           id: r.id,
           nfe: trim(r.nfe),
           serie: trim(r.serie),
-          pedido: trim(r.pedido),
+          pedido: (pedidos.get(k) || []).join(', '),
           emissao: trim(r.emissao),
           clienteCod: trim(r.clienteCod),
           clienteLoja: trim(r.clienteLoja),
@@ -326,7 +364,7 @@ module.exports = (app) => ({
           zRastrei: trim(r.zRastrei),
           total: toN(r.total),
           difal,
-          fcp: toN(r.fcp),
+          fcp: imp.fcp,
           difalCategoria: classificarDifal(difal, uf, contrib),
           noBordero: nfsNoBordero.has(trim(r.nfe))
         };
