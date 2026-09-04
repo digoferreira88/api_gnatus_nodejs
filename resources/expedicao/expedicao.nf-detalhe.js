@@ -8,6 +8,9 @@ const toN  = (v) => Number(v || 0);
 module.exports = (app) => ({
   verb: 'get',
   route: '/notas/:doc/:serie',
+  // Estava SEM checagem de permissão: qualquer usuário logado abria o detalhe
+  // da NF com nome, CNPJ, endereço e e-mail do cliente. Mesma perm da tela.
+  middlewares: [require('../../middlewares/requirePerm')(app)([12001])],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;

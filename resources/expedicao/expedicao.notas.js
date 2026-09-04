@@ -42,8 +42,34 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Protheus, Pg } = app.services;
-    const dataMinima = trim(req.query.dataMinima) || '20200301';
+
+    // Default de 6 anos atrás era uma armadilha: qualquer chamada sem
+    // dataMinima varria a base inteira (a aba "expedidas" sem data devolve
+    // ~57 mil notas / ~24 MB de JSON). O default passa a ser o dia 1º do mês
+    // anterior — a mesma janela que a tela abre.
+    const dataMinima = trim(req.query.dataMinima) || (() => {
+      const d = new Date();
+      d.setDate(1);
+      d.setMonth(d.getMonth() - 1);
+      return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}01`;
+    })();
+
     const busca = trim(req.query.busca).toUpperCase();
+    // Só os dígitos do termo — usado na comparação de CNPJ, que no cadastro
+    // vem sem máscara.
+    const buscaNum = busca.replace(/\D/g, '');
+
+    // Rede de segurança contra a consulta que volta gigante. Não é paginação:
+    // a tela soma volumes, valor e DIFAL sobre a lista inteira, então cortar
+    // silenciosamente deixaria os totalizadores errados. Aqui o corte é alto,
+    // só para a tela nunca receber 24 MB, e vem sinalizado para o usuário
+    // saber que precisa estreitar o filtro.
+    const LIMITE_PADRAO = 2000;
+    const LIMITE_MAX = 5000;
+    const limite = Math.min(
+      LIMITE_MAX,
+      Math.max(1, Number(req.query.limite) || LIMITE_PADRAO)
+    );
     // 3 abas:
     //   pendentes     -> sem expedicao registrada (default, comportamento legado)
     //   sem_rastreio  -> expedida mas sem numero de rastreio
@@ -51,12 +77,83 @@ module.exports = (app) => ({
     const ABAS_VALIDAS = new Set(['pendentes', 'sem_rastreio', 'expedidas']);
     const aba = ABAS_VALIDAS.has(req.query.aba) ? req.query.aba : 'pendentes';
 
-    const params = { dataMinima };
+    const params = { dataMinima, limite };
     const conds = [];
+
+    // Quando o termo pode ser um pedido de venda, resolve pedido -> NFs numa
+    // consulta própria e leve, ANTES da principal. Um EXISTS correlacionado
+    // sobre a SD2 aqui dentro custava ~1s; o par de consultas fica em ~260ms,
+    // porque o lookup roda uma vez em vez de por linha candidata.
+    let docsDoPedido = [];
+    if (busca && /^\d+$/.test(busca) && buscaNum.length <= 6) {
+      try {
+        const achados = await Protheus.connectAndQuery(`
+          SELECT DISTINCT RTRIM(D2_DOC) doc
+            FROM SD2010 WITH (NOLOCK)
+           WHERE D_E_L_E_T_ <> '*' AND D2_FILIAL = '01'
+             AND RTRIM(D2_PEDIDO) = @ped`,
+          { ped: buscaNum.padStart(6, '0') });
+        docsDoPedido = (achados || []).map(r => trim(r.doc)).filter(Boolean).slice(0, 200);
+      } catch (e) {
+        // Busca por pedido é um extra: se falhar, a busca por NF/cliente/nome
+        // continua valendo em vez de derrubar a tela inteira.
+        console.warn('Expedição/notas: lookup de pedido falhou —', e.message);
+      }
+    }
+
     if (busca) {
       params.busca = busca;
-      conds.push(`AND (UPPER(sa1.A1_NOME) LIKE '%' + @busca + '%' OR f2.F2_DOC LIKE @busca + '%' OR f2.F2_CLIENTE LIKE @busca + '%')`);
+      const alvos = [];
+
+      // Termo só de dígitos = NF, pedido ou código de cliente. Os três campos
+      // são char(6) com zero à esquerda ('091548'), e o operador digita sem
+      // ('91548') — o LIKE de prefixo que existia aqui não achava nada, e era
+      // a causa das "notas que não retornam".
+      //
+      // A comparação é EXATA sobre o termo preenchido de zeros, não "contém":
+      // contém traria a nota certa junto de um punhado de falsos positivos
+      // (o número aparecendo no meio de um CNPJ, de outro pedido) e ainda
+      // obrigaria a varrer a SD2 inteira com LIKE '%...%'.
+      const soDigitos = /^\d+$/.test(busca);
+      if (soDigitos && buscaNum.length <= 6) {
+        params.cod6 = buscaNum.padStart(6, '0');
+        // Sem RTRIM na coluna: o '=' do SQL Server já ignora espaço à direita,
+        // e a função em volta do campo derrubava o índice (177ms -> 33ms).
+        alvos.push(`f2.F2_DOC = @cod6`);
+        alvos.push(`f2.F2_CLIENTE = @cod6`);
+
+        // NFs que vieram do pedido resolvido acima.
+        if (docsDoPedido.length) {
+          const marcas = docsDoPedido.map((d, i) => {
+            params[`pd${i}`] = d;
+            return `@pd${i}`;
+          });
+          alvos.push(`RTRIM(f2.F2_DOC) IN (${marcas.join(',')})`);
+        }
+      }
+
+      // CPF/CNPJ: só a partir de 11 dígitos. Abaixo disso o "contém" casaria
+      // com o pedaço de qualquer documento e poluiria o resultado.
+      if (buscaNum.length >= 11) {
+        params.buscaNum = buscaNum;
+        alvos.push(`RTRIM(sa1.A1_CGC) LIKE '%' + @buscaNum + '%'`);
+      }
+
+      // Texto: nome do cliente e da transportadora.
+      if (!soDigitos) {
+        alvos.push(`UPPER(sa1.A1_NOME) LIKE '%' + @busca + '%'`);
+        alvos.push(`UPPER(RTRIM(sa4.A4_NOME)) LIKE '%' + @busca + '%'`);
+      }
+
+      // Nada reconhecido (ex.: só símbolos) — não filtra por nada em vez de
+      // devolver a base toda.
+      conds.push(alvos.length ? `AND (${alvos.join(' OR ')})` : `AND 1 = 0`);
     }
+
+    // Procurando por um termo, a data deixa de limitar: quem digita o número
+    // da nota quer achar a nota, não descobrir que ela é anterior ao período
+    // aberto na tela. Era o segundo motivo de "não retorna dados".
+    const periodoIgnorado = !!busca;
 
     // Filtro principal por aba
     let condAba;
@@ -71,14 +168,16 @@ module.exports = (app) => ({
     // Eixo da data "a partir de" muda por aba:
     //   pendentes                 -> EMISSAO da NF (ainda nao foi expedida)
     //   sem_rastreio / expedidas  -> data de EXPEDICAO (fluxo de quem expede)
-    const dateCond = (aba === 'pendentes')
-      ? `AND f2.F2_EMISSAO >= @dataMinima`
-      : `AND fe.z1_expedic >= @dataMinima`;
+    const dateCond = periodoIgnorado
+      ? ''
+      : (aba === 'pendentes')
+        ? `AND f2.F2_EMISSAO >= @dataMinima`
+        : `AND fe.z1_expedic >= @dataMinima`;
 
     // SX3 da Gnatus: DIFAL = SD2.D2_DIFAL ; FCP Proprio = SD2.D2_VALFECP.
     // Nao ha campo agregado em SF2 — somamos por NF via subquery.
     const sql = `
-      SELECT
+      SELECT TOP (@limite)
         RTRIM(f2.F2_DOC)     nfe,
         RTRIM(f2.F2_SERIE)   serie,
         f2.F2_EMISSAO        emissao,
@@ -159,6 +258,33 @@ module.exports = (app) => ({
       ORDER BY f2.F2_EMISSAO DESC, f2.F2_DOC DESC
     `;
 
+    // Mesmos filtros da lista, sem as colunas caras (impostos e a subquery de
+    // pedido). Só roda quando a lista bate no teto.
+    const sqlContagem = `
+      SELECT COUNT(*) total
+        FROM SF2010 f2 WITH (NOLOCK)
+        LEFT JOIN SA1010 sa1 WITH (NOLOCK)
+          ON f2.F2_CLIENTE = sa1.A1_COD AND f2.F2_LOJA = sa1.A1_LOJA
+         AND sa1.D_E_L_E_T_ <> '*'
+        LEFT JOIN faturamento_expedicao fe
+          ON fe.z1_filial = f2.F2_FILIAL AND fe.z1_doc = f2.F2_DOC AND fe.z1_serie = f2.F2_SERIE
+        LEFT JOIN SA4010 sa4 WITH (NOLOCK)
+          ON f2.F2_TRANSP = sa4.A4_COD AND sa4.D_E_L_E_T_ <> '*'
+       WHERE f2.F2_FILIAL = '01'
+         AND f2.D_E_L_E_T_ <> '*'
+         AND f2.F2_SERIE = '1'
+         ${dateCond}
+         ${condAba}
+         AND (sa1.A1_COD IS NULL OR sa1.D_E_L_E_T_ <> '*')
+         AND EXISTS (
+           SELECT 1 FROM faturamento_cfop fc
+            WHERE fc.d2_filial = f2.F2_FILIAL AND fc.d2_doc = f2.F2_DOC
+              AND fc.d2_serie = f2.F2_SERIE
+              AND fc.d2_cf NOT IN ('5118','6118','5119','6119','5934','5905','5922','6922')
+         )
+         ${conds.join(' ')}
+    `;
+
     try {
       const rows = await Protheus.connectAndQuery(sql, params);
 
@@ -206,10 +332,32 @@ module.exports = (app) => ({
         };
       });
 
+      // A lista bateu no teto? Só então paga o COUNT, para descobrir o total
+      // real e avisar quem está na tela. No uso normal (algumas centenas de
+      // notas) esta consulta nem roda.
+      const truncado = rows.length >= limite;
+      let totalDisponivel = notas.length;
+      if (truncado) {
+        try {
+          const c = await Protheus.connectAndQuery(
+            sqlContagem, { ...params });
+          totalDisponivel = toN(c[0]?.total) || notas.length;
+        } catch (e) {
+          console.warn('Expedição/notas: falha ao contar o total', e.message);
+          totalDisponivel = null;   // desconhecido — a tela avisa mesmo assim
+        }
+      }
+
       return res.json({
         aba,
         totalRegistros: notas.length,
         totalNoBordero: notas.filter(n => n.noBordero).length,
+        // Sinalizações para a tela ser honesta com quem está olhando:
+        truncado,                 // a lista foi cortada no teto
+        limite,                   // qual foi o teto
+        totalDisponivel,          // quantas existem de verdade (null = não deu p/ contar)
+        periodoIgnorado,          // a busca desconsiderou o filtro de data
+        dataMinima,
         notas,
         geradoEm: new Date().toISOString()
       });

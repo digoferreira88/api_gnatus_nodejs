@@ -4,6 +4,9 @@ const trim = (v) => String(v || '').trim();
 module.exports = (app) => ({
   verb: 'get',
   route: '/bordero',
+  // Estava SEM checagem de permissão. Mesmas perms de quem monta o borderô
+  // (bordero-add / bordero-clear).
+  middlewares: [require('../../middlewares/requirePerm')(app)([12001, 12002])],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

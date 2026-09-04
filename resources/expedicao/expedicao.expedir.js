@@ -93,11 +93,6 @@ module.exports = (app) => ({
       const stats = { atualizados: 0, inseridos: 0, erros: 0 };
       let primeiroErro = null;   // mensagem do 1º item que falhou (surfaça ao usuário)
 
-      // Proximo R_E_C_N_O_ pra INSERT (so consulta 1 vez, incrementa local)
-      const maxRow = await Protheus.connectAndQuery(
-        `SELECT ISNULL(MAX(R_E_C_N_O_), 0) maxr FROM SZ1010`, {}
-      );
-      let nextRecno = N(maxRow[0]?.maxr) + 1;
 
       for (const it of itens) {
         const item = trim(it.item);
@@ -134,18 +129,32 @@ module.exports = (app) => ({
             // e não tem mais essa coluna (ganhou Z1_ETIQ). Referenciá-la fazia
             // TODA primeira expedição de uma NF falhar ("Invalid column name
             // 'R_E_C_D_E_L_'") — só re-expedições (UPDATE) passavam.
+            //
+            // O R_E_C_N_O_ é calculado DENTRO da transação, com UPDLOCK +
+            // HOLDLOCK no MAX. Antes ele era lido uma vez no começo e
+            // incrementado em memória: dois operadores expedindo ao mesmo
+            // tempo pegavam o mesmo número e o segundo INSERT quebrava.
+            // Agora a leitura do MAX bloqueia a faixa até o INSERT terminar,
+            // então quem chegar junto espera e recebe o próximo.
             await Protheus.connectAndQuery(`
-              INSERT INTO SZ1010 (
-                Z1_FILIAL, Z1_DOC, Z1_SERIE, Z1_ITEM, Z1_PEDIDO,
-                Z1_CLIENTE, Z1_LOJA, Z1_COD, Z1_QUANT, Z1_ZNUMSER,
-                Z1_EMISSAO, Z1_EXPEDIC, Z1_ENTREGA, Z1_RASTREI,
-                Z1_EMAIL, Z1_TRANSP, D_E_L_E_T_, R_E_C_N_O_
-              ) VALUES (
-                '01', @doc, @serie, @item, @pedido,
-                @cliente, @loja, @cod, @quant, @znum,
-                @emis, @exp, @exp, @rast,
-                'N', @transp, ' ', @rec
-              )`,
+              SET NOCOUNT ON;
+              SET LOCK_TIMEOUT 8000;
+              BEGIN TRAN;
+                DECLARE @novoRec INT =
+                  (SELECT ISNULL(MAX(R_E_C_N_O_), 0) + 1
+                     FROM SZ1010 WITH (UPDLOCK, HOLDLOCK));
+                INSERT INTO SZ1010 (
+                  Z1_FILIAL, Z1_DOC, Z1_SERIE, Z1_ITEM, Z1_PEDIDO,
+                  Z1_CLIENTE, Z1_LOJA, Z1_COD, Z1_QUANT, Z1_ZNUMSER,
+                  Z1_EMISSAO, Z1_EXPEDIC, Z1_ENTREGA, Z1_RASTREI,
+                  Z1_EMAIL, Z1_TRANSP, D_E_L_E_T_, R_E_C_N_O_
+                ) VALUES (
+                  '01', @doc, @serie, @item, @pedido,
+                  @cliente, @loja, @cod, @quant, @znum,
+                  @emis, @exp, @exp, @rast,
+                  'N', @transp, ' ', @novoRec
+                );
+              COMMIT TRAN;`,
               {
                 doc, serie, item,
                 pedido:  trim(it.pedido),
@@ -157,11 +166,9 @@ module.exports = (app) => ({
                 emis:    trim(nf.emissao),
                 exp:     dtExpedic,
                 rast:    rastreio,
-                transp:  trim(nf.transp),
-                rec:     nextRecno
+                transp:  trim(nf.transp)
               }
             );
-            nextRecno++;
             stats.inseridos++;
           }
         } catch (e) {
