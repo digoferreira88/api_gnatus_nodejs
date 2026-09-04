@@ -386,9 +386,51 @@ module.exports = (app) => ({
         }
       }
 
+      // Buscou e não veio nada? A nota pode existir e estar em OUTRA aba — é o
+      // caso clássico de "pesquisei e não retornou": procura-se na aba
+      // Pendentes uma nota que já foi expedida. Em vez de devolver vazio mudo,
+      // conta onde ela está para a tela dizer.
+      let outrasAbas = null;
+      if (busca && notas.length === 0) {
+        try {
+          const onde = await Protheus.connectAndQuery(`
+            SELECT
+              SUM(CASE WHEN fe.z1_expedic IS NULL THEN 1 ELSE 0 END) pendentes,
+              SUM(CASE WHEN fe.z1_expedic IS NOT NULL
+                        AND (fe.z1_rastrei IS NULL OR RTRIM(fe.z1_rastrei) = '')
+                       THEN 1 ELSE 0 END) sem_rastreio,
+              SUM(CASE WHEN fe.z1_expedic IS NOT NULL
+                        AND fe.z1_rastrei IS NOT NULL AND RTRIM(fe.z1_rastrei) <> ''
+                       THEN 1 ELSE 0 END) expedidas
+              FROM SF2010 f2 WITH (NOLOCK)
+              LEFT JOIN SA1010 sa1 WITH (NOLOCK)
+                ON f2.F2_CLIENTE = sa1.A1_COD AND f2.F2_LOJA = sa1.A1_LOJA AND sa1.D_E_L_E_T_ <> '*'
+              LEFT JOIN faturamento_expedicao fe
+                ON fe.z1_filial = f2.F2_FILIAL AND fe.z1_doc = f2.F2_DOC AND fe.z1_serie = f2.F2_SERIE
+              LEFT JOIN SA4010 sa4 WITH (NOLOCK)
+                ON f2.F2_TRANSP = sa4.A4_COD AND sa4.D_E_L_E_T_ <> '*'
+             WHERE f2.F2_FILIAL = '01' AND f2.D_E_L_E_T_ <> '*' AND f2.F2_SERIE = '1'
+               ${conds.join(' ')}`, params);
+          const o = onde[0] || {};
+          const achou = {
+            pendentes: toN(o.pendentes),
+            sem_rastreio: toN(o.sem_rastreio),
+            expedidas: toN(o.expedidas)
+          };
+          // Só devolve se realmente existe em alguma aba diferente da atual.
+          const total = achou.pendentes + achou.sem_rastreio + achou.expedidas;
+          if (total > 0) outrasAbas = achou;
+        } catch (e) {
+          console.warn('Expedição/notas: falha ao localizar em outras abas —', e.message);
+        }
+      }
+
       return res.json({
         aba,
         totalRegistros: notas.length,
+        // Onde a nota buscada está, quando não está na aba aberta (null = não
+        // se aplica ou não foi encontrada em lugar nenhum).
+        outrasAbas,
         totalNoBordero: notas.filter(n => n.noBordero).length,
         // Sinalizações para a tela ser honesta com quem está olhando:
         truncado,                 // a lista foi cortada no teto
