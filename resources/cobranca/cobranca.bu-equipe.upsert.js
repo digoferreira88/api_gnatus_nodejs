@@ -3,6 +3,17 @@
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002]);
 
+// Deriva o PERFIL de meta de inadimplencia a partir da equipe — MESMA regra da
+// migration 40. Sem isso, BU adicionada pela tela ficava com perfil NULL e o
+// dashboard nao conseguia colorir o status (meta). Default = Varejo.
+function perfilFromEquipe(equipe) {
+  const e = String(equipe || '').trim();
+  if (e === 'Corporativo') return 'Corporativo';
+  if (['Comercial Atacado', 'Franquias', 'Taxa de Franquia'].includes(e)) return 'Atacado';
+  if (e === 'Assistência Técnica') return 'Assistência Técnica';
+  return 'Varejo';   // Comercial Varejo/Online/Digital/Licitação/Representantes/... e desconhecido
+}
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/bu-equipe',
@@ -19,15 +30,17 @@ module.exports = (app) => ({
     if (!equipe)   return res.status(400).json({ message: 'equipe é obrigatória.' });
 
     try {
+      const perfil = perfilFromEquipe(equipe);
       const r = await Pg.connectAndQuery(
-        `INSERT INTO tab_cobranca_bu_equipe (bu_codigo, equipe, atualizado_por, atualizado_em)
-         VALUES (@cod, @equipe, @uid, NOW())
+        `INSERT INTO tab_cobranca_bu_equipe (bu_codigo, equipe, perfil, atualizado_por, atualizado_em)
+         VALUES (@cod, @equipe, @perfil, @uid, NOW())
          ON CONFLICT (bu_codigo) DO UPDATE SET
            equipe = EXCLUDED.equipe,
+           perfil = EXCLUDED.perfil,
            atualizado_por = EXCLUDED.atualizado_por,
            atualizado_em  = NOW()
-         RETURNING bu_codigo, equipe, atualizado_em`,
-        { cod: buCodigo, equipe, uid: user.ID }
+         RETURNING bu_codigo, equipe, perfil, atualizado_em`,
+        { cod: buCodigo, equipe, perfil, uid: user.ID }
       );
       return res.json({ ok: true, mapeamento: r[0] });
     } catch (err) {
