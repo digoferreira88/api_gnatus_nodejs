@@ -270,6 +270,11 @@ const CRON_EXPEDICAO_AVISO = '50 7-20 * * 1-5';  // :50, 07h-20h, seg-sex
 // certificado configurado (NFSE_CERT_PATH). SUBSTITUIU de vez o TOTVS Transmite.
 const CRON_DFE = '25 * * * *';  // todo :25
 
+// ADN NFS-e: puxa NOTAS DE SERVIÇO recebidas (Gnatus tomadora) do Ambiente de
+// Dados Nacional (mTLS A1), por NSU. A cada 2h no horário comercial. Só roda com o
+// certificado (NFSE_CERT_PATH) E com NFSE_ADN_ATIVO=1 (fica OFF até liberarem).
+const CRON_NFSE_ADN = process.env.CRON_NFSE_ADN || '35 8-19/2 * * 1-5';  // :35, 08h-19h de 2 em 2h, seg-sex
+
 // (Transmite REMOVIDO em 28/07/2026: o SEFAZ DF-e passou a ser a fonte da Visão 3
 //  do Painel Fiscal, então o adapter, a tela e o token de sessão foram retirados.
 //  O alerta por e-mail já havia saído em 07/2026.)
@@ -402,6 +407,23 @@ function start(app) {
     console.log(`[scheduler] sefaz-dfe agendado: cron "${CRON_DFE}"`);
   } else {
     console.log('[scheduler] sefaz-dfe: NFSE_CERT_PATH ausente — não agendado');
+  }
+
+  // ADN NFS-e — ingestão de NOTAS DE SERVIÇO recebidas (só liga com A1 + flag).
+  if (jobs.nfseAdn) jobs.nfseAdn.cancel();
+  if (String(process.env.NFSE_CERT_PATH || '').trim() && String(process.env.NFSE_ADN_ATIVO || '') === '1') {
+    jobs.nfseAdn = schedule.scheduleJob(CRON_NFSE_ADN, async () => {
+      try {
+        const Adn = require('./nfseDistribuicaoAdn');
+        const r = await Adn.ingerir(app);
+        if (r && r.novos) console.log('[scheduler] nfse-adn:', JSON.stringify(r));
+      } catch (err) {
+        console.error('[scheduler] erro no nfse-adn:', err.message);
+      }
+    });
+    console.log(`[scheduler] nfse-adn agendado: cron "${CRON_NFSE_ADN}"`);
+  } else {
+    console.log('[scheduler] nfse-adn: NFSE_CERT_PATH ausente ou NFSE_ADN_ATIVO!=1 — não agendado');
   }
 }
 
