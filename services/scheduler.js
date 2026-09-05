@@ -253,6 +253,12 @@ const CRON_PIPEFY_OP = '0 7-20 * * 1-5';    // 07:00..20:00, de hora em hora, se
 // meia hora em horário comercial — entrega não muda mais rápido que isso.
 const CRON_GARANTIA_ENTREGA = '10,40 7-20 * * 1-5';
 
+// RHP: reconcilia o link do PDF que o Zap externo deixou como "Erro no upload"
+// (corrida de tempo — PDF chegou no OneDrive depois, sem retry). Dormente sem
+// RHP_RECON_ATIVO=1 (+ PIPEFY_TOKEN e M365_*). Duas vezes por hora no horário
+// comercial — a produção sobe o PDF ao longo do dia.
+const CRON_RHP_RECON = '20,50 7-20 * * 1-5';
+
 // Reservas de estoque vencidas (SC0010) -> libera B2_RESERVA. De hora em hora.
 const CRON_RESERVAS_VENCIDAS = '15 * * * *';  // todo :15
 
@@ -345,6 +351,21 @@ function start(app) {
     }
   });
   console.log(`[scheduler] garantia-entrega agendado: cron "${CRON_GARANTIA_ENTREGA}"`);
+
+  // RHP × OneDrive: conserta o link do PDF que o Zap externo deixou como "Erro no
+  // upload" (corrida de tempo). Dormente sem RHP_RECON_ATIVO=1 (+ PIPEFY_TOKEN e M365_*).
+  if (jobs.rhpRecon) jobs.rhpRecon.cancel();
+  jobs.rhpRecon = schedule.scheduleJob(CRON_RHP_RECON, async () => {
+    try {
+      const RhpRecon = require('./rhpReconciliar');
+      if (!RhpRecon.disponivel()) return;   // inativo/sem credenciais: silêncio
+      const r = await RhpRecon.executar(app, 'CRON');
+      if (r.corrigidos > 0 || r.ausentes > 0 || r.erros > 0) console.log('[scheduler] rhp-recon:', JSON.stringify(r));
+    } catch (err) {
+      console.error('[scheduler] erro no rhp-recon:', err.message);
+    }
+  });
+  console.log(`[scheduler] rhp-recon agendado: cron "${CRON_RHP_RECON}"`);
 
   // Reservas de estoque VENCIDAS -> devolve o saldo a B2_RESERVA e remove da
   // SC0010 (regra do sistema antigo: 2 dias apos a validade). A intranet antiga
