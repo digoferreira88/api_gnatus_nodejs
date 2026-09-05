@@ -23,6 +23,21 @@ const toN  = (v) => Number(v || 0);
 // Se mudar, atualizar aqui e fazer deploy (não há tabela de config ainda).
 const UFS_IE_GNATUS = new Set(['AM', 'CE', 'DF', 'PR', 'MA', 'MG', 'RJ', 'SC']);
 
+// CFOPs que NÃO representam remessa física saindo da Gnatus — a nota existe e
+// está correta, mas não é da expedição. Mesma lista usada no EXISTS da consulta;
+// aqui ela serve para EXPLICAR ao operador por que a nota não aparece.
+const CFOPS_FORA = new Set(['5118', '6118', '5119', '6119', '5934', '5905', '5922', '6922']);
+const CFOP_ROTULO = {
+  '5118': 'venda à ordem — a entrega é feita por conta e ordem',
+  '6118': 'venda à ordem — a entrega é feita por conta e ordem',
+  '5119': 'venda à ordem — a entrega é feita por conta e ordem',
+  '6119': 'venda à ordem — a entrega é feita por conta e ordem',
+  '5922': 'simples faturamento — entrega futura',
+  '6922': 'simples faturamento — entrega futura',
+  '5905': 'remessa para depósito/armazém',
+  '5934': 'remessa simbólica de mercadoria em depósito'
+};
+
 const classificarDifal = (difal, uf, contrib) => {
   if (!(Number(difal) > 0)) return 'SEM_DIFAL';
   if (UFS_IE_GNATUS.has(trim(uf).toUpperCase())) return 'ST_MENSAL';
@@ -410,6 +425,15 @@ module.exports = (app) => ({
               LEFT JOIN SA4010 sa4 WITH (NOLOCK)
                 ON f2.F2_TRANSP = sa4.A4_COD AND sa4.D_E_L_E_T_ <> '*'
              WHERE f2.F2_FILIAL = '01' AND f2.D_E_L_E_T_ <> '*' AND f2.F2_SERIE = '1'
+               -- MESMA regra de CFOP da listagem. Sem ela a contagem apontava
+               -- notas que a lista nunca mostra, e o aviso mandava o operador
+               -- para a aba onde ele já estava — um looping.
+               AND EXISTS (
+                 SELECT 1 FROM faturamento_cfop fc
+                  WHERE fc.d2_filial = f2.F2_FILIAL AND fc.d2_doc = f2.F2_DOC
+                    AND fc.d2_serie = f2.F2_SERIE
+                    AND fc.d2_cf NOT IN ('5118','6118','5119','6119','5934','5905','5922','6922')
+               )
                ${conds.join(' ')}`, params);
           const o = onde[0] || {};
           const achou = {
@@ -425,12 +449,60 @@ module.exports = (app) => ({
         }
       }
 
+      // Continua sem achar em aba nenhuma? Então ou a nota não existe, ou ela
+      // existe e o módulo a exclui de propósito. Vale explicar qual dos dois:
+      // "nenhuma nota" faz o operador achar que o sistema perdeu a nota.
+      let diagnostico = null;
+      if (busca && notas.length === 0 && !outrasAbas && /^\d+$/.test(busca) && buscaNum.length <= 6) {
+        try {
+          const doc = buscaNum.padStart(6, '0');
+          const achado = await Protheus.connectAndQuery(`
+            SELECT TOP 1 RTRIM(f2.F2_DOC) doc, RTRIM(f2.F2_SERIE) serie,
+                   f2.F2_EMISSAO emissao, RTRIM(f2.F2_FILIAL) filial,
+                   f2.D_E_L_E_T_ del
+              FROM SF2010 f2 WITH (NOLOCK)
+             WHERE f2.F2_DOC = @doc`, { doc });
+
+          if (achado.length) {
+            const a = achado[0];
+            const cfops = await Protheus.connectAndQuery(`
+              SELECT DISTINCT RTRIM(d2_cf) cfop
+                FROM faturamento_cfop
+               WHERE d2_doc = @doc AND RTRIM(d2_serie) = @serie`,
+              { doc, serie: trim(a.serie) });
+
+            const lista = cfops.map(c => trim(c.cfop)).filter(Boolean);
+            const todosExcluidos = lista.length > 0 && lista.every(c => CFOPS_FORA.has(c));
+
+            diagnostico = {
+              doc: trim(a.doc),
+              serie: trim(a.serie),
+              emissao: trim(a.emissao),
+              cfops: lista,
+              motivo:
+                trim(a.del) === '*' ? 'EXCLUIDA_PROTHEUS'
+                : trim(a.filial) !== '01' ? 'OUTRA_FILIAL'
+                : trim(a.serie) !== '1' ? 'OUTRA_SERIE'
+                : !lista.length ? 'SEM_ITENS'
+                : todosExcluidos ? 'CFOP_SEM_REMESSA'
+                : 'DESCONHECIDO',
+              // Rótulo do CFOP, para a tela não obrigar ninguém a decorar código
+              cfopRotulo: lista.map(c => CFOP_ROTULO[c] || null).filter(Boolean)[0] || null
+            };
+          }
+        } catch (e) {
+          console.warn('Expedição/notas: falha ao diagnosticar a nota —', e.message);
+        }
+      }
+
       return res.json({
         aba,
         totalRegistros: notas.length,
         // Onde a nota buscada está, quando não está na aba aberta (null = não
         // se aplica ou não foi encontrada em lugar nenhum).
         outrasAbas,
+        // Por que a nota existe no Protheus mas não aparece em aba nenhuma.
+        diagnostico,
         totalNoBordero: notas.filter(n => n.noBordero).length,
         // Sinalizações para a tela ser honesta com quem está olhando:
         truncado,                 // a lista foi cortada no teto
