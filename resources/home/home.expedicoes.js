@@ -36,6 +36,7 @@ module.exports = (app) => ({
     try {
       const rows = await Protheus.connectAndQuery(`
         SELECT RTRIM(ISNULL(sa1.A1_EST,'')) uf, RTRIM(ISNULL(sa1.A1_PAIS,'')) pais,
+               RTRIM(ISNULL(sa1.A1_MUN,'')) cidade,
                COUNT(DISTINCT RTRIM(sf2.F2_DOC)+'|'+RTRIM(sf2.F2_SERIE)) notas
           FROM SF2010 sf2 WITH (NOLOCK)
           INNER JOIN SD2010 sd2 WITH (NOLOCK)
@@ -45,18 +46,19 @@ module.exports = (app) => ({
             ON sa1.A1_COD=sf2.F2_CLIENTE AND sa1.A1_LOJA=sf2.F2_LOJA AND sa1.D_E_L_E_T_<>'*'
          WHERE sf2.D_E_L_E_T_<>'*' AND sf2.F2_FILIAL='01' AND sf2.F2_EMISSAO BETWEEN @ini AND @fim
            AND RTRIM(sd2.D2_CF) IN (${cvKeys})
-         GROUP BY sa1.A1_EST, sa1.A1_PAIS`, { ini, fim, ...cvP });
+         GROUP BY sa1.A1_EST, sa1.A1_PAIS, sa1.A1_MUN`, { ini, fim, ...cvP });
 
-      const ufs = new Set(), paises = new Set();
+      const ufs = new Set(), paises = new Set(), cidades = new Set();
       let pedidos = 0;
       const porUf = new Map(), porPais = new Map();
       rows.forEach(r => {
-        const uf = trim(r.uf), pais = trim(r.pais), n = Number(r.notas) || 0;
+        const uf = trim(r.uf), pais = trim(r.pais), cidade = trim(r.cidade), n = Number(r.notas) || 0;
         pedidos += n;
+        if (cidade) cidades.add(cidade + '|' + uf);
         // país 105 = Brasil (ou vazio = tratamos como nacional)
         const nacional = !pais || pais === '105';
         if (nacional) { if (uf) { ufs.add(uf); porUf.set(uf, (porUf.get(uf) || 0) + n); } }
-        else { paises.add(pais); porPais.set(pais, (porPais.get(pais) || 0) + n); }
+        else { porPais.set(pais, (porPais.get(pais) || 0) + n); }
         if (pais) paises.add(pais);
       });
 
@@ -80,7 +82,7 @@ module.exports = (app) => ({
 
       return res.json({
         periodo, inicio: ini, fim,
-        totais: { estados: ufs.size, paises: paises.size, pedidos },
+        totais: { estados: ufs.size, cidades: cidades.size, paises: paises.size, pedidos },
         destinos,
         recentes,
         geradoEm: new Date().toISOString()
