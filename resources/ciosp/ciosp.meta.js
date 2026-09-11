@@ -13,17 +13,25 @@ module.exports = (app) => ({
     const { Pg } = app.services;
     const b = req.body || {};
     const edicao = String(b.edicao || 'CIOSP 2026').trim().slice(0, 40);
+    // Período do evento (migration 105) — habilita ritmo e projeção no painel.
+    // Vazio vira NULL: o painel trata "não configurado" sem estimar nada.
+    const dt = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '').trim()) ? String(v).trim() : null;
     const campos = {
       ed: edicao,
       geral: num(b.metaGeral), sup: num(b.superMeta),
-      eq: num(b.metaEquip), dg: num(b.metaDigital), at: num(b.metaAt)
+      eq: num(b.metaEquip), dg: num(b.metaDigital), at: num(b.metaAt),
+      ini: dt(b.dataInicio), fim: dt(b.dataFim)
     };
+    if (campos.ini && campos.fim && campos.fim < campos.ini) {
+      return res.status(400).json({ message: 'A data final do evento não pode ser anterior à inicial.' });
+    }
     try {
       await Pg.connectAndQuery(
-        `INSERT INTO tab_ciosp_meta (edicao, meta_geral, super_meta, meta_equip, meta_digital, meta_at, atualizado_em)
-         VALUES (@ed,@geral,@sup,@eq,@dg,@at,NOW())
+        `INSERT INTO tab_ciosp_meta (edicao, meta_geral, super_meta, meta_equip, meta_digital, meta_at, data_inicio, data_fim, atualizado_em)
+         VALUES (@ed,@geral,@sup,@eq,@dg,@at,@ini::date,@fim::date,NOW())
          ON CONFLICT (edicao) DO UPDATE SET
-           meta_geral=@geral, super_meta=@sup, meta_equip=@eq, meta_digital=@dg, meta_at=@at, atualizado_em=NOW()`,
+           meta_geral=@geral, super_meta=@sup, meta_equip=@eq, meta_digital=@dg, meta_at=@at,
+           data_inicio=@ini::date, data_fim=@fim::date, atualizado_em=NOW()`,
         campos);
       Auditoria.registrar(app, {
         modulo: 'CIOSP', submodulo: 'Meta', acao: 'CONFIGURAR', severidade: 'INFO',
