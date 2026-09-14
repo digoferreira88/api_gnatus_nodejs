@@ -56,11 +56,15 @@ module.exports = (app) => ({
                o.id AS id_operadora, o.nome AS operadora,
                c.id AS id_conta, c.numero_conta, c.numero_cliente, c.razao_social,
                d.id AS id_departamento, d.nome AS departamento,
+               l.id_equipamento_atual,
+               ea.marca AS equip_marca, ea.modelo AS equip_modelo,
+               NULLIF(TRIM(CONCAT_WS(' ', ea.marca, ea.modelo)), '') AS equipamento,
                (l.data_vencimento IS NOT NULL AND l.data_vencimento <= CURRENT_DATE + INTERVAL '30 days')::int AS vencendo_30d
           FROM tab_telefonia_linha l
           JOIN tab_operadora o          ON o.id = l.id_operadora
           LEFT JOIN tab_telefonia_conta c        ON c.id = l.id_conta
           LEFT JOIN tab_telefonia_departamento d ON d.id = l.id_departamento
+          LEFT JOIN tab_equipamento_atual ea     ON ea.id = l.id_equipamento_atual
           ${where}
          ORDER BY o.nome, l.numero_telefone
          LIMIT @lim OFFSET @off`, params);

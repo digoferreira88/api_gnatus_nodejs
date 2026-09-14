@@ -19,6 +19,7 @@ const CAMPOS = [
   ['pessoa',          'pessoa',          (v) => trim(v) || null],
   ['codigo_protheus', 'codigo_protheus', (v) => trim(v) || null],
   ['documento_colaborador', 'documento_colaborador', (v) => trim(v) || null],
+  ['id_equipamento_atual', 'id_equipamento_atual', (v) => v == null || v === '' ? null : Number(v)],
   ['filial',          'filial',          (v) => trim(v) || null],
   ['centro_custo',    'centro_custo',    (v) => trim(v) || null],
   ['data_ativacao',   'data_ativacao',   (v) => trim(v) || null],
