@@ -1,11 +1,11 @@
 // Contas a Receber (titulos em aberto) vs Inadimplencia (VENCIDO 30-360 dias) por
 // MES de emissao do titulo. % inadimplencia = inadimplencia / contas a receber.
 // - Base = SE1 (saldo > 0), nao mais o faturamento (SF2). (decisao 20/08)
-// - Inadimplencia = atraso 30..360 dias; >360 so entra com ?incluir360mais=1.
+// - Inadimplencia = atraso 30..360 dias; >360 so com ?incluir360mais=1; 1-29 so com ?incluir1a29=1.
 // - Filtro escondido (status flagados pela gestora) SEMPRE aplicado.
 // - Equipes = B2B / B2C (B2C = Comercial Varejo, Digital, Representantes).
 //
-// GET /cobranca/faturamento-vs-inadimplencia?anoMin&anoMax&metaPct&equipe(B2B|B2C)&incluir360mais
+// GET /cobranca/faturamento-vs-inadimplencia?anoMin&anoMax&metaPct&equipe(B2B|B2C)&incluir360mais&incluir1a29
 
 const trim = (v) => String(v || '').trim();
 const toN  = (v) => Number(v || 0);
@@ -60,16 +60,18 @@ module.exports = (app) => ({
 
     const equipe = trim(req.query.equipe);   // '', 'B2B' ou 'B2C'
     const inc360 = /^(1|true|sim|on)$/i.test(String(req.query.incluir360mais || '')) ? 1 : 0;
+    const inc1a29 = /^(1|true|sim|on)$/i.test(String(req.query.incluir1a29 || '')) ? 1 : 0;
 
     const inicioStr = `${anoMin}0101`;
     const fimStr    = `${anoMax}1231`;
 
     const ATRASO = `DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), CONVERT(date, GETDATE()))`;
-    // Inadimplencia = 30..360 dias de atraso (default). >360 so com o checkbox.
-    const INAD_COND = `(${ATRASO} >= 30 AND (${ATRASO} <= 360 OR @inc360 = 1))`;
+    // Inadimplencia = 30..360 dias de atraso (default). Piso baixa p/ 1 dia com
+    // @inc1a29=1 e teto sobe p/ >360 com @inc360=1 (checkboxes da tela).
+    const INAD_COND = `(${ATRASO} >= (CASE WHEN @inc1a29 = 1 THEN 1 ELSE 30 END) AND (${ATRASO} <= 360 OR @inc360 = 1))`;
     const BU_EXPR = `COALESCE(NULLIF(RTRIM(bu_sx5.X5_DESCRI), ''), RTRIM(sc5.C5_ZTIPO) + ' (Desconhecido)')`;
 
-    const sqlParams = { ini: inicioStr, fim: fimStr, inc360 };
+    const sqlParams = { ini: inicioStr, fim: fimStr, inc360, inc1a29 };
 
     // ===== Equipe B2B/B2C (pra topClientes / aging / por-equipe) =====
     let condBuInad = '', joinSx5 = false;
@@ -252,6 +254,7 @@ module.exports = (app) => ({
 
       // Aging (30-60 ... >360). Faixa 1-29 removida; >360 so aparece se inc360.
       const FAIXA_CASE = `CASE
+            WHEN ${ATRASO} <= 29  THEN 'A_1_29'
             WHEN ${ATRASO} <= 60  THEN 'B_30_60'
             WHEN ${ATRASO} <= 90  THEN 'C_61_90'
             WHEN ${ATRASO} <= 180 THEN 'D_91_180'
@@ -271,7 +274,7 @@ module.exports = (app) => ({
          GROUP BY ${FAIXA_CASE}`,
         sqlParams
       );
-      const FAIXAS_LABEL = { B_30_60: '30-60 dias', C_61_90: '61-90 dias', D_91_180: '91-180 dias', E_181_360: '181-360 dias', F_360_MAIS: '>360 dias' };
+      const FAIXAS_LABEL = { A_1_29: '1-29 dias', B_30_60: '30-60 dias', C_61_90: '61-90 dias', D_91_180: '91-180 dias', E_181_360: '181-360 dias', F_360_MAIS: '>360 dias' };
       const aging = agingRows.map(r => ({
         faixa: trim(r.faixa), label: FAIXAS_LABEL[trim(r.faixa)] || trim(r.faixa),
         saldo: Number(toN(r.saldo).toFixed(2)), qtd: toN(r.qtd),
@@ -363,6 +366,7 @@ module.exports = (app) => ({
         formaPgto: formaSel || null,
         formas_pgto_disponiveis: formasDisponiveis,
         incluir360mais: !!inc360,
+        incluir1a29: !!inc1a29,
         meta: {
           pct: metaPct,
           inadimplencia_alvo: Number(inadAlvo.toFixed(2)),
