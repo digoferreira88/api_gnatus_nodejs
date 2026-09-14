@@ -50,7 +50,7 @@ module.exports = (app) => ({
     try {
       const linhas = await Pg.connectAndQuery(`
         SELECT l.id, l.numero_telefone, l.plano, l.franquia_gb, l.valor_mensal,
-               l.pessoa, l.codigo_protheus, l.filial, l.centro_custo,
+               l.pessoa, l.codigo_protheus, l.documento_colaborador, l.filial, l.centro_custo,
                l.data_ativacao, l.data_vencimento, l.status, l.observacoes,
                l.criado_em, l.atualizado_em,
                o.id AS id_operadora, o.nome AS operadora,

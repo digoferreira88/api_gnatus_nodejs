@@ -18,6 +18,7 @@ const CAMPOS = [
   ['valor_mensal',    'valor_mensal',    (v) => v == null || v === '' ? null : Number(v)],
   ['pessoa',          'pessoa',          (v) => trim(v) || null],
   ['codigo_protheus', 'codigo_protheus', (v) => trim(v) || null],
+  ['documento_colaborador', 'documento_colaborador', (v) => trim(v) || null],
   ['filial',          'filial',          (v) => trim(v) || null],
   ['centro_custo',    'centro_custo',    (v) => trim(v) || null],
   ['data_ativacao',   'data_ativacao',   (v) => trim(v) || null],
