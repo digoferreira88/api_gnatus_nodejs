@@ -47,11 +47,11 @@ module.exports = (app) => ({
       const novo = await Pg.connectAndQuery(`
         INSERT INTO tab_equipamento_atual (
           documento, nome, matricula_protheus, cargo,
-          marca, modelo, cor, novo, acessorios, condicoes,
+          marca, modelo, cor, novo, acessorios, condicoes, imei, numero_serie,
           data_entrega, status, registrado_por
         ) VALUES (
           @doc, @nome, @mat, @cargo,
-          @marca, @modelo, @cor, @novo, @ace, @cond,
+          @marca, @modelo, @cor, @novo, @ace, @cond, @imei, @serie,
           @data, 'ATIVO', @uid
         )
         RETURNING id
@@ -61,6 +61,7 @@ module.exports = (app) => ({
         marca: trim(eq.marca), modelo: trim(eq.modelo), cor: trim(eq.cor),
         novo: typeof eq.novo === 'boolean' ? eq.novo : null,
         ace: trim(eq.acessorios), cond: trim(eq.condicoes),
+        imei: trim(eq.imei), serie: trim(eq.numeroSerie),
         data: dataEntrega, uid: user.ID
       });
       const novoId = novo[0]?.id;
