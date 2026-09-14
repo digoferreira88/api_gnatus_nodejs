@@ -66,7 +66,8 @@ module.exports = (app) => ({
       cond: primeiro.condicoes,
       cidade: trim(b.cidade) || null,
       dt: dataTermo,
-      ip
+      ip,
+      idLinha: b.idLinha ? Number(b.idLinha) : null
     };
 
     try {
@@ -74,11 +75,11 @@ module.exports = (app) => ({
         `INSERT INTO tab_termo_equipamento
            (id_emissor, modo, matricula_protheus, nome, documento, cargo,
             marca, modelo, cor, novo, acessorios, condicoes,
-            cidade, data_termo, ip_origem)
+            cidade, data_termo, ip_origem, id_linha)
          VALUES
            (@uid, @modo, @mat, @nome, @doc, @cargo,
             @marca, @modelo, @cor, @novo, @acess, @cond,
-            @cidade, @dt, @ip)
+            @cidade, @dt, @ip, @idLinha)
          RETURNING id, criado_em`,
         params
       );

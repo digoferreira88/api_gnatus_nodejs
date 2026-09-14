@@ -34,7 +34,7 @@ module.exports = (app) => ({
 
       // Equipamentos (estado atual) do colaborador
       const equipamentos = await Pg.connectAndQuery(`
-        SELECT id, marca, modelo, cor, status, data_entrega, motivo_remocao, data_remocao,
+        SELECT id, marca, modelo, cor, imei, numero_serie, status, data_entrega, motivo_remocao, data_remocao,
                CASE WHEN data_remocao IS NOT NULL THEN (data_remocao - data_entrega)
                     WHEN status='ATIVO' THEN (CURRENT_DATE - data_entrega) ELSE NULL END AS dias_de_uso
           FROM tab_equipamento_atual
@@ -61,12 +61,17 @@ module.exports = (app) => ({
          ORDER BY criado_em DESC LIMIT 1`, p);
       const c0 = colabRow[0] || termoNome[0] || {};
 
-      const fmtEquip = (e) => ({
-        id: e.id, marca: trim(e.marca), modelo: trim(e.modelo), cor: trim(e.cor),
-        status: trim(e.status), dataEntrega: e.data_entrega, dataRemocao: e.data_remocao,
-        motivoRemocao: trim(e.motivo_remocao), diasDeUso: e.dias_de_uso != null ? Number(e.dias_de_uso) : null,
-        label: [trim(e.marca), trim(e.modelo), trim(e.cor)].filter(Boolean).join(' ') || `Equipamento #${e.id}`
-      });
+      const fmtEquip = (e) => {
+        const base = [trim(e.marca), trim(e.modelo), trim(e.cor)].filter(Boolean).join(' ') || `Equipamento #${e.id}`;
+        const imei = trim(e.imei);
+        return {
+          id: e.id, marca: trim(e.marca), modelo: trim(e.modelo), cor: trim(e.cor),
+          imei, numeroSerie: trim(e.numero_serie),
+          status: trim(e.status), dataEntrega: e.data_entrega, dataRemocao: e.data_remocao,
+          motivoRemocao: trim(e.motivo_remocao), diasDeUso: e.dias_de_uso != null ? Number(e.dias_de_uso) : null,
+          label: imei ? `${base} · IMEI ${imei}` : base
+        };
+      };
 
       return res.json({
         documento: doc,

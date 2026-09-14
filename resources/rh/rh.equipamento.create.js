@@ -24,11 +24,11 @@ module.exports = (app) => ({
       const r = await Pg.connectAndQuery(`
         INSERT INTO tab_equipamento_atual (
           documento, nome, matricula_protheus, cargo,
-          marca, modelo, cor, novo, acessorios, condicoes,
+          marca, modelo, cor, novo, acessorios, condicoes, imei, numero_serie,
           data_entrega, status, registrado_por
         ) VALUES (
           @doc, @nome, @mat, @cargo,
-          @marca, @modelo, @cor, @novo, @ace, @cond,
+          @marca, @modelo, @cor, @novo, @ace, @cond, @imei, @serie,
           @data, 'ATIVO', @uid
         )
         RETURNING id
@@ -38,6 +38,7 @@ module.exports = (app) => ({
         marca: trim(b.marca), modelo: trim(b.modelo), cor: trim(b.cor),
         novo: typeof b.novo === 'boolean' ? b.novo : null,
         ace: trim(b.acessorios), cond: trim(b.condicoes),
+        imei: trim(b.imei), serie: trim(b.numeroSerie),
         data: dataEntrega, uid: user.ID
       });
 

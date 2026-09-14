@@ -12,7 +12,7 @@ module.exports = (app) => ({
       const rows = await Pg.connectAndQuery(`
         SELECT
           e.id, e.documento, e.nome, e.matricula_protheus, e.cargo,
-          e.marca, e.modelo, e.cor, e.novo, e.acessorios, e.condicoes,
+          e.marca, e.modelo, e.cor, e.novo, e.acessorios, e.condicoes, e.imei, e.numero_serie,
           e.data_entrega, e.status, e.data_remocao, e.motivo_remocao, e.obs_remocao,
           e.id_termo_origem, e.id_substituicao, e.criado_em,
           u.nome AS registrado_por_nome,
@@ -41,6 +41,8 @@ module.exports = (app) => ({
           novo: r.novo,
           acessorios: r.acessorios,
           condicoes: r.condicoes,
+          imei: r.imei,
+          numeroSerie: r.numero_serie,
           dataEntrega: r.data_entrega,
           status: r.status,
           dataRemocao: r.data_remocao,
