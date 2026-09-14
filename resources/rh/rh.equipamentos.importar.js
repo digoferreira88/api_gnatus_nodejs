@@ -136,7 +136,7 @@ module.exports = (app) => ({
         linhas.push({
           linha: r, documento, nome, matricula: matricula ? (soDig(matricula) || matricula) : null, cargo,
           marca, modelo, cor: get(row, 'cor'), imei, numeroSerie: get(row, 'serie'),
-          dataEntrega: toISO(cellVal(row.getCell(M.dataEntrega))) || new Date().toISOString().slice(0, 10),
+          dataEntrega: (M.dataEntrega ? toISO(cellVal(row.getCell(M.dataEntrega))) : null) || new Date().toISOString().slice(0, 10),
           acessorios: get(row, 'acessorios'), condicoes: get(row, 'condicoes')
         });
       }
