@@ -190,7 +190,7 @@ module.exports = (app) => ({
                r.cliente_cod, r.cliente_loja, r.nosso_numero,
                r.status_banco, r.disparado_em, r.canais_disparo,
                t.cliente_nome, t.valor, t.vencimento, t.tipo,
-               l.banco_cod, l.banco_nome
+               l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta
           FROM tab_boleto_envio_lote_retorno r
           JOIN tab_boleto_envio_lote l ON l.id = r.id_lote
           -- COALESCE em prefixo/parcela porque o INSERT do sincronizar grava ''
@@ -301,6 +301,16 @@ module.exports = (app) => ({
         const bko = PortadorCessao.dadosBoleto({
           banco: trim(r.banco_cod), agencia: trim(r.banco_agencia), conta: trim(r.banco_conta)
         });
+        // TRAVA: sem agencia/conta o campo livre do codigo de barras sai ZERADO
+        // (codigo do beneficiario em branco) e o boleto fica impagavel. NAO envia.
+        if (!trim(bko.agencia) || !trim(bko.conta)) {
+          falhaCount++;
+          resultados.push({
+            ...ref, status: 'LINHA_INDISPONIVEL', codigo_erro: 'SEM_AG_CONTA',
+            mensagem: `Agencia/conta do banco ${trim(r.banco_cod)} nao configuradas no lote — boleto NAO enviado (evita codigo de barras invalido). Reprocesse o lote/borderô.`
+          });
+          continue;
+        }
         const lin = await ProtheusBoleto.linhaDigitavel({
           banco: bko.banco,
           agencia: bko.agencia,
