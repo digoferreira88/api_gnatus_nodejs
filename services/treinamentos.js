@@ -237,9 +237,12 @@ ${linhasSessoes ? `<tr><td style="padding:12px 32px 0;font-size:13px;color:#6474
 async function enviarConvite(app, { treinamento, sessoes, email, nome, mensagem }) {
   if (!EMAIL_ATIVO() || !email) return { ok: false, skip: true };
   try {
-    const from = ORGANIZADOR();
+    // Remetente do convite: por padrão usa o remetente global (Mail.Send comprovado);
+    // defina TREINA_CONVITE_REMETENTE=educacional@gnatus.com.br para enviar pelo
+    // Educacional DEPOIS que a caixa estiver liberada na Application Access Policy.
+    const from = trim(process.env.TREINA_CONVITE_REMETENTE) || undefined;
     const m = emailConvite({ nome, treinamento, sessoes, mensagem });
-    await Email.sendEmail({ to: email, from, ...m });
+    await Email.sendEmail({ to: email, ...(from ? { from } : {}), ...m });
     return { ok: true };
   } catch (e) { return { ok: false, erro: e.message }; }
 }
