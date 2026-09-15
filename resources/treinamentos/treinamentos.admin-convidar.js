@@ -44,13 +44,22 @@ module.exports = (app) => ({
 
       for (const email of emails) {
         const ins = await Pg.connectAndQuery(
-          `INSERT INTO tab_treina_convite (treinamento_id, email, convidado_por)
-           VALUES (@id, @email, @uid)
+          `INSERT INTO tab_treina_convite (treinamento_id, email, convidado_por, token)
+           VALUES (@id, @email, @uid, @token)
            ON CONFLICT (treinamento_id, lower(email)) DO NOTHING
-           RETURNING id`, { id, email, uid });
-        if (ins.length) adicionados++; else jaExistiam++;
+           RETURNING id, token, nome`, { id, email, uid, token: Treina.novoToken() });
+        let convite = ins[0];
+        if (convite) { adicionados++; }
+        else {
+          jaExistiam++;
+          const ex = await Pg.connectAndQuery(
+            `SELECT id, token, nome FROM tab_treina_convite WHERE treinamento_id=@id AND lower(email)=lower(@email)`,
+            { id, email });
+          convite = ex[0];
+        }
 
-        const r = await Treina.enviarConvite(app, { treinamento, sessoes, email, mensagem });
+        const link = convite?.token ? Treina.linkConvite(convite.token) : undefined;
+        const r = await Treina.enviarConvite(app, { treinamento, sessoes, email, nome: convite?.nome, mensagem, link });
         if (r.ok) {
           enviados++;
           await Pg.connectAndQuery(

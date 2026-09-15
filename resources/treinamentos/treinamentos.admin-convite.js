@@ -21,7 +21,7 @@ module.exports = (app) => ({
 
     try {
       const cv = await Pg.connectAndQuery(
-        `SELECT id, treinamento_id, email, nome FROM tab_treina_convite WHERE id=@id`, { id });
+        `SELECT id, treinamento_id, email, nome, token FROM tab_treina_convite WHERE id=@id`, { id });
       if (!cv.length) return res.status(404).json({ message: 'Convite não encontrado.' });
       const convite = cv[0];
 
@@ -47,7 +47,8 @@ module.exports = (app) => ({
           ORDER BY data, hora_inicio`, { tid: convite.treinamento_id });
 
       const r = await Treina.enviarConvite(app, {
-        treinamento: tr[0], sessoes, email: convite.email, nome: convite.nome, mensagem
+        treinamento: tr[0], sessoes, email: convite.email, nome: convite.nome, mensagem,
+        link: convite.token ? Treina.linkConvite(convite.token) : undefined
       });
       if (!r.ok && !r.skip) return res.status(502).json({ message: 'Falha ao enviar: ' + (r.erro || 'erro') });
       await Pg.connectAndQuery(`UPDATE tab_treina_convite SET reenviado_em=NOW() WHERE id=@id`, { id });

@@ -2,6 +2,7 @@
 // status de lotação da sessão + efeitos colaterais (calendário M365 + e-mail),
 // sempre BEST-EFFORT (nunca quebram a inscrição). Os endpoints ficam finos.
 
+const crypto = require('crypto');
 const Email = require('./emailService');
 const M365 = require('./m365');
 
@@ -206,9 +207,14 @@ async function excluirReuniaoSessao(app, sessao) {
   } catch (e) { /* best-effort */ }
 }
 
-// ---- (B) E-mail de convite ao convidado (escolher a data na intranet) ----
-function emailConvite({ nome, treinamento, sessoes, mensagem }) {
-  const link = `${BASE_URL()}/treinamentos`;
+// Token forte (48 hex) p/ links públicos de inscrição.
+const novoToken = () => crypto.randomBytes(24).toString('hex');
+const linkConvite = (token) => `${BASE_URL()}/convite/${token}`;
+const linkPublico = (ptoken) => `${BASE_URL()}/inscricao/${ptoken}`;
+
+// ---- (B) E-mail de convite ao convidado (escolher a data — PÁGINA PÚBLICA, sem login) ----
+function emailConvite({ nome, treinamento, sessoes, mensagem, link: linkParam }) {
+  const link = linkParam || `${BASE_URL()}/treinamentos`;
   const subject = `Convite: ${treinamento.titulo} — escolha sua data`;
   const linhasSessoes = (sessoes || []).slice(0, 12).map(s => {
     const h = horario(s);
@@ -225,26 +231,117 @@ ${treinamento.objetivo ? `<tr><td style="padding:4px 32px;font-size:14px;color:#
 ${mensagem ? `<tr><td style="padding:8px 32px;"><div style="background:#f8fafc;border-left:3px solid #2E86DE;border-radius:6px;padding:12px 14px;font-size:14px;color:#334155;line-height:1.6;">${esc(mensagem)}</div></td></tr>` : ''}
 ${linhasSessoes ? `<tr><td style="padding:12px 32px 0;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.6px;font-weight:600;">Datas disponíveis</td></tr>
 <tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${linhasSessoes}</table></td></tr>` : ''}
-<tr><td style="padding:22px 32px 6px;font-size:14px;line-height:1.6;color:#334155;">Acesse a intranet para <b>escolher a data de participação</b> e garantir sua vaga:</td></tr>
+<tr><td style="padding:22px 32px 6px;font-size:14px;line-height:1.6;color:#334155;">Clique abaixo para <b>escolher a data de participação</b> e garantir sua vaga — <b>não é preciso login</b>:</td></tr>
 <tr><td style="padding:8px 32px 4px;"><a href="${esc(link)}" style="display:inline-block;background:#17457e;color:#fff;text-decoration:none;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:600;">Escolher minha data</a></td></tr>
-<tr><td style="padding:12px 32px 6px;font-size:12px;color:#94a3b8;line-height:1.6;">Ou copie o endereço: ${esc(link)}</td></tr>
+<tr><td style="padding:12px 32px 6px;font-size:12px;color:#94a3b8;line-height:1.6;">Ou copie o endereço: ${esc(link)}<br>Este link é pessoal e intransferível.</td></tr>
 <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 32px;font-size:11px;color:#94a3b8;text-align:center;">Setor Educacional · Gnatus — e-mail automático.</td></tr>
 </table></td></tr></table></body></html>`;
-  const text = `Convite: ${treinamento.titulo}\n\nVocê foi convidado(a) para este treinamento.${mensagem ? '\n\n' + mensagem : ''}\n\nDatas: ${(sessoes || []).map(s => fmtDataBR(iso(s.data)) + (horario(s) ? ' ' + horario(s) : '')).join('; ')}\n\nEscolha sua data em: ${link}\n\nSetor Educacional Gnatus`;
+  const text = `Convite: ${treinamento.titulo}\n\nVocê foi convidado(a) para este treinamento.${mensagem ? '\n\n' + mensagem : ''}\n\nDatas: ${(sessoes || []).map(s => fmtDataBR(iso(s.data)) + (horario(s) ? ' ' + horario(s) : '')).join('; ')}\n\nEscolha sua data (não é preciso login): ${link}\n\nSetor Educacional Gnatus`;
   return { subject, html, text };
 }
 
-async function enviarConvite(app, { treinamento, sessoes, email, nome, mensagem }) {
+async function enviarConvite(app, { treinamento, sessoes, email, nome, mensagem, link }) {
   if (!EMAIL_ATIVO() || !email) return { ok: false, skip: true };
   try {
     // Remetente do convite: por padrão usa o remetente global (Mail.Send comprovado);
     // defina TREINA_CONVITE_REMETENTE=educacional@gnatus.com.br para enviar pelo
     // Educacional DEPOIS que a caixa estiver liberada na Application Access Policy.
     const from = trim(process.env.TREINA_CONVITE_REMETENTE) || undefined;
-    const m = emailConvite({ nome, treinamento, sessoes, mensagem });
+    const m = emailConvite({ nome, treinamento, sessoes, mensagem, link });
     await Email.sendEmail({ to: email, ...(from ? { from } : {}), ...m });
     return { ok: true };
   } catch (e) { return { ok: false, erro: e.message }; }
+}
+
+// View pública (sem login) de um treinamento + sessões com status de lotação.
+// NÃO expõe o link do Teams das sessões (revelado só após inscrever + no e-mail).
+async function viewPublica(app, treinamentoId) {
+  const { Pg } = app.services;
+  const tr = await Pg.connectAndQuery(`
+    SELECT id, titulo, descricao, objetivo, instrutor, setor_responsavel, local_padrao,
+           modalidades, status, permite_cancelamento, permite_troca_sessao
+      FROM tab_treina_treinamento WHERE id=@id`, { id: treinamentoId });
+  if (!tr.length) return null;
+  const t = tr[0];
+  const hoje = new Date().toISOString().slice(0, 10);
+  const ss = await Pg.connectAndQuery(`
+    SELECT id, data, hora_inicio, hora_fim, local, capacidade, ocupadas, status
+      FROM tab_treina_sessao WHERE treinamento_id=@id ORDER BY data, hora_inicio`, { id: treinamentoId });
+  const sessoes = ss.map(s => {
+    const st = statusSessao(s, hoje);
+    return {
+      id: s.id, data: iso(s.data), horaInicio: trim(s.hora_inicio), horaFim: trim(s.hora_fim),
+      local: trim(s.local), capacidade: st.capacidade, disponiveis: st.disponiveis, statusSessao: st.status
+    };
+  });
+  return {
+    hoje,
+    treinamento: {
+      id: t.id, titulo: t.titulo, descricao: t.descricao, objetivo: t.objetivo,
+      instrutor: trim(t.instrutor), setorResponsavel: trim(t.setor_responsavel),
+      localPadrao: trim(t.local_padrao), modalidades: trim(t.modalidades), status: trim(t.status),
+      permiteCancelamento: t.permite_cancelamento !== false, permiteTrocaSessao: t.permite_troca_sessao !== false
+    },
+    sessoes
+  };
+}
+
+// ---- Núcleo de inscrição do CONVIDADO (público, sem login) ----
+// Amarra a inscrição ao convite (convite_id, colaborador_id NULL). Mantém o mesmo
+// controle de vaga à prova de concorrência (CTE atômico). Dedup por convite ativo
+// (índice ux_treina_insc_convite_ativa). Retorna { ok, codigo?, inscricaoId, capacidade, ocupadas }.
+async function inscreverConvidado(app, { convite, treinamento, sessao, modalidade }) {
+  const { Pg } = app.services;
+  const tid = Number(treinamento.id);
+  const sid = Number(sessao.id);
+  const cid = Number(convite.id);
+  const nome = trim(convite.nome) || null;
+  const email = trim(convite.email) || null;
+
+  if (modalidade === 'presencial') {
+    let out;
+    try {
+      out = await Pg.connectAndQuery(`
+        WITH s AS (
+          UPDATE tab_treina_sessao SET ocupadas = ocupadas + 1
+           WHERE id=@sid AND treinamento_id=@tid AND status='agendada' AND ocupadas < capacidade
+          RETURNING id, treinamento_id, capacidade, ocupadas
+        ),
+        ins AS (
+          INSERT INTO tab_treina_inscricao
+            (treinamento_id, sessao_id, colaborador_id, colaborador_nome, colaborador_email, modalidade, status, convite_id)
+          SELECT treinamento_id, id, NULL, @nome, @email, 'presencial', 'ativa', @cid FROM s
+          RETURNING id
+        )
+        SELECT ins.id inscricao_id, s.capacidade, s.ocupadas FROM ins, s`,
+        { sid, tid, nome, email, cid });
+    } catch (e) {
+      if (e.code === '23505') return { ok: false, codigo: 'JA_INSCRITO' };
+      throw e;
+    }
+    if (!out.length) {
+      const chk = await Pg.connectAndQuery(`SELECT capacidade, ocupadas FROM tab_treina_sessao WHERE id=@sid`, { sid });
+      const lot = chk[0] && Number(chk[0].ocupadas) >= Number(chk[0].capacidade);
+      return { ok: false, codigo: lot ? 'LOTADA' : 'INDISPONIVEL' };
+    }
+    return { ok: true, inscricaoId: out[0].inscricao_id, capacidade: Number(out[0].capacidade), ocupadas: Number(out[0].ocupadas) };
+  }
+
+  // ONLINE — não consome vaga
+  let out;
+  try {
+    out = await Pg.connectAndQuery(`
+      INSERT INTO tab_treina_inscricao
+        (treinamento_id, sessao_id, colaborador_id, colaborador_nome, colaborador_email, modalidade, status, convite_id)
+      SELECT @tid, @sid, NULL, @nome, @email, 'online', 'ativa', @cid
+       WHERE EXISTS (SELECT 1 FROM tab_treina_sessao WHERE id=@sid AND treinamento_id=@tid AND status='agendada')
+      RETURNING id`, { sid, tid, nome, email, cid });
+  } catch (e) {
+    if (e.code === '23505') return { ok: false, codigo: 'JA_INSCRITO' };
+    throw e;
+  }
+  if (!out.length) return { ok: false, codigo: 'INDISPONIVEL' };
+  return { ok: true, inscricaoId: out[0].id };
 }
 
 module.exports = {
@@ -252,5 +349,6 @@ module.exports = {
   efeitosInscricao, removerEventoInscricao, avisarPorEmail,
   emailConfirmacao, emailAviso, htmlEvento,
   parseEmails, garantirReuniaoSessao, excluirReuniaoSessao,
-  emailConvite, enviarConvite, TEAMS_ATIVO, ORGANIZADOR
+  emailConvite, enviarConvite, TEAMS_ATIVO, ORGANIZADOR,
+  novoToken, linkConvite, linkPublico, inscreverConvidado, viewPublica
 };

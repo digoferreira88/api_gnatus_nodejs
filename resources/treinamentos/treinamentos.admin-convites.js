@@ -3,6 +3,7 @@
 // Perm 20001.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([20001, 0]);
+const Treina = require('../../services/treinamentos');
 const trim = (v) => String(v == null ? '' : v).trim();
 const isoDate = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 
@@ -18,7 +19,7 @@ module.exports = (app) => ({
 
     try {
       const rows = await Pg.connectAndQuery(`
-        SELECT c.id, c.email, c.nome, c.convidado_em, c.reenviado_em,
+        SELECT c.id, c.email, c.nome, c.token, c.convidado_em, c.reenviado_em,
                i.id AS inscricao_id, i.sessao_id, i.modalidade, i.status AS insc_status,
                s.data AS sessao_data, s.hora_inicio, s.hora_fim
           FROM tab_treina_convite c
@@ -32,6 +33,7 @@ module.exports = (app) => ({
 
       const convites = rows.map(r => ({
         id: r.id, email: trim(r.email), nome: trim(r.nome),
+        link: r.token ? Treina.linkConvite(trim(r.token)) : '',
         convidadoEm: r.convidado_em, reenviadoEm: r.reenviado_em,
         inscrito: !!r.inscricao_id,
         inscricao: r.inscricao_id ? {

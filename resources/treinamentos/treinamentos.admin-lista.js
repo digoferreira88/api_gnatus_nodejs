@@ -16,7 +16,8 @@ module.exports = (app) => ({
     try {
       const treinos = await Pg.connectAndQuery(`
         SELECT id, titulo, descricao, objetivo, instrutor, setor_responsavel, local_padrao,
-               teams_link, modalidades, status, permite_cancelamento, permite_troca_sessao, criado_em
+               teams_link, modalidades, status, permite_cancelamento, permite_troca_sessao, criado_em,
+               public_token
           FROM tab_treina_treinamento ORDER BY id DESC`, {});
       const sessoes = await Pg.connectAndQuery(`
         SELECT s.id, s.treinamento_id, s.data, s.hora_inicio, s.hora_fim, s.local, s.teams_link,
@@ -63,6 +64,7 @@ module.exports = (app) => ({
           localPadrao: trim(t.local_padrao), teamsLink: trim(t.teams_link), modalidades: trim(t.modalidades),
           status: trim(t.status), permiteCancelamento: t.permite_cancelamento !== false, permiteTrocaSessao: t.permite_troca_sessao !== false,
           sessoes: ss,
+          linkPublico: t.public_token ? Treina.linkPublico(trim(t.public_token)) : '',
           convidados: (mapConv.get(t.id) || { convidados: 0, inscritos: 0 }),
           totais: { sessoes: ss.length, presenciais, online, capacidade, inscritos: presenciais + online, lotadas: ss.filter(x => x.statusSessao === 'lotada').length }
         };
