@@ -6,6 +6,7 @@
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([20001, 0]);
 const Auditoria = require('../../services/auditoria');
+const Treina = require('../../services/treinamentos');
 const trim = (v) => { const s = String(v == null ? '' : v).trim(); return s || null; };
 const N = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const dataOk = (v) => /^\d{4}-\d{2}-\d{2}$/.test(trim(v) || '');
@@ -84,6 +85,24 @@ module.exports = (app) => ({
             INSERT INTO tab_treina_sessao (treinamento_id, data, hora_inicio, hora_fim, local, teams_link, capacidade)
             VALUES (@id,@data::date,@hi,@hf,@loc,@tl,@cap)`, { ...sc, id });
         }
+      }
+
+      // ----- (A) Reunião Teams no calendário do organizador (educacional@) -----
+      // Best-effort + gated (TEAMS_ATIVO). Gera o link do Teams por sessão online-capaz,
+      // pra que já exista/atualize e possa ser compartilhado. Nunca quebra o salvar.
+      if (Treina.TEAMS_ATIVO() && modalidades !== 'presencial') {
+        try {
+          const t = (await Pg.connectAndQuery(
+            `SELECT id, titulo, objetivo, descricao, instrutor, setor_responsavel, local_padrao, teams_link, modalidades
+               FROM tab_treina_treinamento WHERE id=@id`, { id }))[0];
+          const ss = await Pg.connectAndQuery(
+            `SELECT id, data, hora_inicio, hora_fim, local, teams_link, status, educacional_event_id
+               FROM tab_treina_sessao WHERE treinamento_id=@id AND status='agendada'`, { id });
+          for (const s of ss) {
+            const r = await Treina.garantirReuniaoSessao(app, { treinamento: t, sessao: s });
+            if (r && r.erro) avisos.push(`Teams (sessão #${s.id}): ${r.erro}`);
+          }
+        } catch (e) { avisos.push('Teams: ' + e.message); }
       }
 
       Auditoria.registrar(app, {

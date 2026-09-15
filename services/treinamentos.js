@@ -8,6 +8,23 @@ const M365 = require('./m365');
 const trim = (v) => String(v == null ? '' : v).trim();
 const CALENDAR_ATIVO = () => String(process.env.TREINA_CALENDAR_ATIVO || '') === '1';
 const EMAIL_ATIVO = () => String(process.env.TREINA_EMAIL_ATIVO || '1') !== '0';
+// Geração da reunião Teams no calendário do organizador. Herda de CALENDAR_ATIVO
+// (mesma permissão Calendars.ReadWrite), mas pode ser ligada isoladamente.
+const TEAMS_ATIVO = () => String(process.env.TREINA_TEAMS_ATIVO || '') === '1' || CALENDAR_ATIVO();
+const ORGANIZADOR = () => trim(process.env.TREINA_ORGANIZADOR_EMAIL) || 'educacional@gnatus.com.br';
+const BASE_URL = () => (process.env.INTRANET_URL || process.env.FRONTEND_URL || 'https://intranew.gnatus.com.br').replace(/\/$/, '');
+// Aceita textarea/lista com separadores , ; espaço e quebras de linha → e-mails únicos (lower).
+const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function parseEmails(v) {
+  const arr = Array.isArray(v) ? v : String(v || '').split(/[\s,;]+/);
+  const out = []; const seen = new Set();
+  for (const raw of arr) {
+    const e = String(raw || '').trim().toLowerCase();
+    if (!e || seen.has(e) || !EMAIL_RX.test(e)) continue;
+    seen.add(e); out.push(e);
+  }
+  return out;
+}
 
 const fmtDataBR = (v) => {
   const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -139,8 +156,98 @@ async function avisarPorEmail(email, payload) {
   try { const m = emailAviso(payload); await Email.sendEmail({ to: email, ...m }); } catch (e) { /* best-effort */ }
 }
 
+// ---- (A) Reunião Teams por sessão no calendário do organizador (educacional@) ----
+// Garante que a sessão tenha uma reunião Teams criada na agenda do organizador,
+// de modo que o link do Teams JÁ EXISTA. Grava educacional_event_id + teams_link
+// (joinUrl) na sessão. Best-effort e gated (TEAMS_ATIVO). Devolve o joinUrl ou ''.
+// Só faz sentido p/ treinamentos com modalidade online/ambas.
+async function garantirReuniaoSessao(app, { treinamento, sessao }) {
+  if (!TEAMS_ATIVO()) return { joinUrl: linkOnline(treinamento, sessao), skip: 'gate' };
+  const mod = trim(treinamento?.modalidades);
+  if (mod === 'presencial') return { joinUrl: '', skip: 'presencial' };
+  if (trim(sessao?.status) === 'cancelada') return { joinUrl: trim(sessao.teams_link), skip: 'cancelada' };
+  const organizer = ORGANIZADOR();
+  try {
+    if (trim(sessao.educacional_event_id)) {
+      // já existe — só remarca subject/horário (joinUrl é estável); mantém teams_link.
+      await M365.atualizarEventoCalendario(organizer, trim(sessao.educacional_event_id), {
+        subject: `Treinamento: ${treinamento.titulo}`,
+        data: iso(sessao.data), horaInicio: trim(sessao.hora_inicio), horaFim: trim(sessao.hora_fim),
+        local: localSessao(treinamento, sessao) || 'Online (Teams)'
+      });
+      return { joinUrl: trim(sessao.teams_link) };
+    }
+    const ev = await M365.criarReuniaoTeams(organizer, {
+      subject: `Treinamento: ${treinamento.titulo}`,
+      htmlBody: htmlEvento({ treinamento, sessao, modalidade: 'online' }),
+      data: iso(sessao.data), horaInicio: trim(sessao.hora_inicio), horaFim: trim(sessao.hora_fim),
+      local: localSessao(treinamento, sessao) || 'Online (Teams)'
+    });
+    const joinUrl = trim(ev.joinUrl);
+    // Guarda o event_id sempre; teams_link só se veio o joinUrl e a sessão não tem link fixo próprio.
+    await app.services.Pg.connectAndQuery(
+      `UPDATE tab_treina_sessao
+          SET educacional_event_id=@e,
+              teams_link = CASE WHEN COALESCE(NULLIF(TRIM(teams_link),''),'')='' AND @j<>'' THEN @j ELSE teams_link END
+        WHERE id=@sid`,
+      { e: ev.id || null, j: joinUrl, sid: sessao.id });
+    return { joinUrl: joinUrl || trim(sessao.teams_link), eventId: ev.id };
+  } catch (e) {
+    return { joinUrl: linkOnline(treinamento, sessao), erro: e.message };
+  }
+}
+
+async function excluirReuniaoSessao(app, sessao) {
+  if (!TEAMS_ATIVO() || !sessao || !trim(sessao.educacional_event_id)) return;
+  try {
+    await M365.excluirEventoCalendario(ORGANIZADOR(), trim(sessao.educacional_event_id));
+    await app.services.Pg.connectAndQuery(
+      `UPDATE tab_treina_sessao SET educacional_event_id=NULL WHERE id=@sid`, { sid: sessao.id });
+  } catch (e) { /* best-effort */ }
+}
+
+// ---- (B) E-mail de convite ao convidado (escolher a data na intranet) ----
+function emailConvite({ nome, treinamento, sessoes, mensagem }) {
+  const link = `${BASE_URL()}/treinamentos`;
+  const subject = `Convite: ${treinamento.titulo} — escolha sua data`;
+  const linhasSessoes = (sessoes || []).slice(0, 12).map(s => {
+    const h = horario(s);
+    return `<tr><td style="padding:8px 0;border-top:1px solid #f1f5f9;font-size:14px;color:#0f172a;">📅 ${esc(fmtDataBR(iso(s.data)))}${h ? ' · ' + esc(h) : ''}</td></tr>`;
+  }).join('');
+  const html = `<!DOCTYPE html><html lang="pt-BR"><body style="margin:0;background:#f1f5f9;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#0f172a;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;"><tr><td align="center">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
+<tr><td style="background:linear-gradient(135deg,#17457e,#2E86DE);padding:26px 32px;color:#fff;">
+<div style="font-size:12px;letter-spacing:1.4px;text-transform:uppercase;opacity:.85;font-weight:600;">Treinamentos · Gnatus</div>
+<div style="font-size:22px;font-weight:700;margin-top:4px;">Você foi convidado(a) 🎓</div></td></tr>
+<tr><td style="padding:22px 32px 4px;font-size:15px;line-height:1.6;">Olá${nome ? ', <b>' + esc(nome) + '</b>' : ''}. Você foi convidado(a) para o treinamento <b>${esc(treinamento.titulo)}</b>.</td></tr>
+${treinamento.objetivo ? `<tr><td style="padding:4px 32px;font-size:14px;color:#475569;line-height:1.6;">${esc(treinamento.objetivo)}</td></tr>` : ''}
+${mensagem ? `<tr><td style="padding:8px 32px;"><div style="background:#f8fafc;border-left:3px solid #2E86DE;border-radius:6px;padding:12px 14px;font-size:14px;color:#334155;line-height:1.6;">${esc(mensagem)}</div></td></tr>` : ''}
+${linhasSessoes ? `<tr><td style="padding:12px 32px 0;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.6px;font-weight:600;">Datas disponíveis</td></tr>
+<tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${linhasSessoes}</table></td></tr>` : ''}
+<tr><td style="padding:22px 32px 6px;font-size:14px;line-height:1.6;color:#334155;">Acesse a intranet para <b>escolher a data de participação</b> e garantir sua vaga:</td></tr>
+<tr><td style="padding:8px 32px 4px;"><a href="${esc(link)}" style="display:inline-block;background:#17457e;color:#fff;text-decoration:none;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:600;">Escolher minha data</a></td></tr>
+<tr><td style="padding:12px 32px 6px;font-size:12px;color:#94a3b8;line-height:1.6;">Ou copie o endereço: ${esc(link)}</td></tr>
+<tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 32px;font-size:11px;color:#94a3b8;text-align:center;">Setor Educacional · Gnatus — e-mail automático.</td></tr>
+</table></td></tr></table></body></html>`;
+  const text = `Convite: ${treinamento.titulo}\n\nVocê foi convidado(a) para este treinamento.${mensagem ? '\n\n' + mensagem : ''}\n\nDatas: ${(sessoes || []).map(s => fmtDataBR(iso(s.data)) + (horario(s) ? ' ' + horario(s) : '')).join('; ')}\n\nEscolha sua data em: ${link}\n\nSetor Educacional Gnatus`;
+  return { subject, html, text };
+}
+
+async function enviarConvite(app, { treinamento, sessoes, email, nome, mensagem }) {
+  if (!EMAIL_ATIVO() || !email) return { ok: false, skip: true };
+  try {
+    const from = ORGANIZADOR();
+    const m = emailConvite({ nome, treinamento, sessoes, mensagem });
+    await Email.sendEmail({ to: email, from, ...m });
+    return { ok: true };
+  } catch (e) { return { ok: false, erro: e.message }; }
+}
+
 module.exports = {
   statusSessao, linkOnline, localSessao, horario, fmtDataBR, iso,
   efeitosInscricao, removerEventoInscricao, avisarPorEmail,
-  emailConfirmacao, emailAviso, htmlEvento
+  emailConfirmacao, emailAviso, htmlEvento,
+  parseEmails, garantirReuniaoSessao, excluirReuniaoSessao,
+  emailConvite, enviarConvite, TEAMS_ATIVO, ORGANIZADOR
 };
