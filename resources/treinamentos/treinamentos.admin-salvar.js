@@ -48,9 +48,9 @@ module.exports = (app) => ({
         const ins = await Pg.connectAndQuery(`
           INSERT INTO tab_treina_treinamento
             (titulo, descricao, objetivo, instrutor, setor_responsavel, local_padrao, teams_link, modalidades,
-             permite_cancelamento, permite_troca_sessao, status, criado_por)
-          VALUES (@titulo,@descricao,@objetivo,@instrutor,@setor,@local,@tlink,@mod,@pc,@pt,'rascunho',@uid)
-          RETURNING id`, { ...campos, uid: user?.id ? Number(user.id) : null });
+             permite_cancelamento, permite_troca_sessao, status, criado_por, public_token)
+          VALUES (@titulo,@descricao,@objetivo,@instrutor,@setor,@local,@tlink,@mod,@pc,@pt,'rascunho',@uid,@ptoken)
+          RETURNING id`, { ...campos, uid: user?.id ? Number(user.id) : null, ptoken: Treina.novoToken() });
         id = ins[0].id;
       }
 
