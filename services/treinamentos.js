@@ -164,25 +164,28 @@ async function avisarPorEmail(email, payload) {
 // Só faz sentido p/ treinamentos com modalidade online/ambas.
 async function garantirReuniaoSessao(app, { treinamento, sessao }) {
   if (!TEAMS_ATIVO()) return { joinUrl: linkOnline(treinamento, sessao), skip: 'gate' };
-  const mod = trim(treinamento?.modalidades);
-  if (mod === 'presencial') return { joinUrl: '', skip: 'presencial' };
   if (trim(sessao?.status) === 'cancelada') return { joinUrl: trim(sessao.teams_link), skip: 'cancelada' };
+  const online = trim(treinamento?.modalidades) !== 'presencial';
+  const salaEmail = trim(sessao?.sala_email);
+  const salaNome = localSessao(treinamento, sessao); // nome exibido (sala 365 ou texto)
+  // Só precisa de evento no organizador se for online-capaz OU tiver sala p/ reservar.
+  if (!online && !salaEmail) return { joinUrl: '', skip: 'sem-evento' };
   const organizer = ORGANIZADOR();
   try {
     if (trim(sessao.educacional_event_id)) {
-      // já existe — só remarca subject/horário (joinUrl é estável); mantém teams_link.
+      // já existe — remarca horário e sincroniza a sala reservada (joinUrl é estável).
       await M365.atualizarEventoCalendario(organizer, trim(sessao.educacional_event_id), {
         subject: `Treinamento: ${treinamento.titulo}`,
         data: iso(sessao.data), horaInicio: trim(sessao.hora_inicio), horaFim: trim(sessao.hora_fim),
-        local: localSessao(treinamento, sessao) || 'Online (Teams)'
+        salaEmail, salaNome: salaNome || (online ? 'Online (Teams)' : '')
       });
       return { joinUrl: trim(sessao.teams_link) };
     }
     const ev = await M365.criarReuniaoTeams(organizer, {
       subject: `Treinamento: ${treinamento.titulo}`,
-      htmlBody: htmlEvento({ treinamento, sessao, modalidade: 'online' }),
+      htmlBody: htmlEvento({ treinamento, sessao, modalidade: online ? 'online' : 'presencial' }),
       data: iso(sessao.data), horaInicio: trim(sessao.hora_inicio), horaFim: trim(sessao.hora_fim),
-      local: localSessao(treinamento, sessao) || 'Online (Teams)'
+      online, salaEmail, salaNome
     });
     const joinUrl = trim(ev.joinUrl);
     // Guarda o event_id sempre; teams_link só se veio o joinUrl e a sessão não tem link fixo próprio.

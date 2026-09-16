@@ -71,38 +71,38 @@ module.exports = (app) => ({
         }
         if (!dataOk(s.data)) { avisos.push(`Sessão sem data válida ignorada.`); continue; }
         const cap = Math.max(0, N(s.capacidade));
-        const sc = { data: trim(s.data), hi: trim(s.horaInicio), hf: trim(s.horaFim), loc: trim(s.local), tl: trim(s.teamsLink), cap };
+        const sc = { data: trim(s.data), hi: trim(s.horaInicio), hf: trim(s.horaFim), loc: trim(s.local), tl: trim(s.teamsLink), se: trim(s.salaEmail), cap };
         if (sid) {
           const cur = await Pg.connectAndQuery(`SELECT ocupadas FROM tab_treina_sessao WHERE id=@sid AND treinamento_id=@id`, { sid, id });
           if (!cur.length) { avisos.push(`Sessão #${sid} não pertence a este treinamento — ignorada.`); continue; }
           if (cap < Number(cur[0].ocupadas)) { avisos.push(`Sessão de ${sc.data}: capacidade (${cap}) menor que inscritos (${cur[0].ocupadas}) — capacidade NÃO alterada.`); }
           const capFinal = cap < Number(cur[0].ocupadas) ? Number(cur[0].ocupadas) : cap;
           await Pg.connectAndQuery(`
-            UPDATE tab_treina_sessao SET data=@data::date, hora_inicio=@hi, hora_fim=@hf, local=@loc, teams_link=@tl, capacidade=@cap
+            UPDATE tab_treina_sessao SET data=@data::date, hora_inicio=@hi, hora_fim=@hf, local=@loc, teams_link=@tl, sala_email=@se, capacidade=@cap
              WHERE id=@sid AND treinamento_id=@id`, { ...sc, cap: capFinal, sid, id });
         } else {
           await Pg.connectAndQuery(`
-            INSERT INTO tab_treina_sessao (treinamento_id, data, hora_inicio, hora_fim, local, teams_link, capacidade)
-            VALUES (@id,@data::date,@hi,@hf,@loc,@tl,@cap)`, { ...sc, id });
+            INSERT INTO tab_treina_sessao (treinamento_id, data, hora_inicio, hora_fim, local, teams_link, sala_email, capacidade)
+            VALUES (@id,@data::date,@hi,@hf,@loc,@tl,@se,@cap)`, { ...sc, id });
         }
       }
 
-      // ----- (A) Reunião Teams no calendário do organizador (educacional@) -----
-      // Best-effort + gated (TEAMS_ATIVO). Gera o link do Teams por sessão online-capaz,
-      // pra que já exista/atualize e possa ser compartilhado. Nunca quebra o salvar.
-      if (Treina.TEAMS_ATIVO() && modalidades !== 'presencial') {
+      // ----- (A) Evento no calendário do organizador (educacional@): link do Teams +
+      // reserva da sala/recurso. Best-effort + gated (TEAMS_ATIVO). Por sessão, cria/atualiza
+      // o evento quando é online-capaz OU tem sala a reservar. Nunca quebra o salvar.
+      if (Treina.TEAMS_ATIVO()) {
         try {
           const t = (await Pg.connectAndQuery(
             `SELECT id, titulo, objetivo, descricao, instrutor, setor_responsavel, local_padrao, teams_link, modalidades
                FROM tab_treina_treinamento WHERE id=@id`, { id }))[0];
           const ss = await Pg.connectAndQuery(
-            `SELECT id, data, hora_inicio, hora_fim, local, teams_link, status, educacional_event_id
+            `SELECT id, data, hora_inicio, hora_fim, local, teams_link, sala_email, status, educacional_event_id
                FROM tab_treina_sessao WHERE treinamento_id=@id AND status='agendada'`, { id });
           for (const s of ss) {
             const r = await Treina.garantirReuniaoSessao(app, { treinamento: t, sessao: s });
-            if (r && r.erro) avisos.push(`Teams (sessão #${s.id}): ${r.erro}`);
+            if (r && r.erro) avisos.push(`Agenda (sessão #${s.id}): ${r.erro}`);
           }
-        } catch (e) { avisos.push('Teams: ' + e.message); }
+        } catch (e) { avisos.push('Agenda: ' + e.message); }
       }
 
       Auditoria.registrar(app, {

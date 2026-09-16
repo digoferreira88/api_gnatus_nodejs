@@ -21,7 +21,7 @@ module.exports = (app) => ({
           FROM tab_treina_treinamento ORDER BY id DESC`, {});
       const sessoes = await Pg.connectAndQuery(`
         SELECT s.id, s.treinamento_id, s.data, s.hora_inicio, s.hora_fim, s.local, s.teams_link,
-               s.capacidade, s.ocupadas, s.status, s.educacional_event_id,
+               s.sala_email, s.capacidade, s.ocupadas, s.status, s.educacional_event_id,
                COALESCE(o.online,0) online
           FROM tab_treina_sessao s
           LEFT JOIN (SELECT sessao_id, COUNT(*) online FROM tab_treina_inscricao WHERE modalidade='online' AND status='ativa' GROUP BY sessao_id) o ON o.sessao_id=s.id
@@ -47,6 +47,7 @@ module.exports = (app) => ({
         porTreino.get(s.treinamento_id).push({
           id: s.id, data: s.data ? new Date(s.data).toISOString().slice(0, 10) : '',
           horaInicio: trim(s.hora_inicio), horaFim: trim(s.hora_fim), local: trim(s.local), teamsLink: trim(s.teams_link),
+          salaEmail: trim(s.sala_email),
           capacidade: st.capacidade, ocupadas: st.ocupadas, disponiveis: st.disponiveis,
           online: Number(s.online || 0), statusSessao: st.status, status: trim(s.status),
           teamsGerado: !!trim(s.educacional_event_id)
