@@ -60,6 +60,9 @@ module.exports = (app) => ({
       for (const s of sessoes) {
         const sid = Number(s.id) || 0;
         if (s._delete && sid) {
+          // Libera o evento/reserva de sala no calendário do organizador antes de remover/cancelar.
+          const evrow = await Pg.connectAndQuery(`SELECT id, educacional_event_id FROM tab_treina_sessao WHERE id=@sid AND treinamento_id=@id`, { sid, id });
+          if (evrow.length) await Treina.excluirReuniaoSessao(app, evrow[0]);
           const cnt = await Pg.connectAndQuery(`SELECT COUNT(*) n FROM tab_treina_inscricao WHERE sessao_id=@sid`, { sid });
           if (Number(cnt[0].n) > 0) {
             await Pg.connectAndQuery(`UPDATE tab_treina_sessao SET status='cancelada' WHERE id=@sid AND treinamento_id=@id`, { sid, id });

@@ -35,6 +35,9 @@ module.exports = (app) => ({
       } else if (acao === 'excluir') {
         const cnt = await Pg.connectAndQuery(`SELECT COUNT(*) n FROM tab_treina_inscricao WHERE treinamento_id=@id`, { id });
         if (Number(cnt[0].n) > 0) return res.status(409).json({ message: 'Treinamento tem inscrições — use "Cancelar" em vez de excluir.' });
+        // Remove eventos/reservas de sala no calendário do organizador antes de apagar.
+        const sessEv = await Pg.connectAndQuery(`SELECT id, educacional_event_id FROM tab_treina_sessao WHERE treinamento_id=@id AND educacional_event_id IS NOT NULL`, { id });
+        for (const s of sessEv) await Treina.excluirReuniaoSessao(app, s);
         await Pg.connectAndQuery(`DELETE FROM tab_treina_treinamento WHERE id=@id`, { id });   // cascade sessões
       } else if (acao === 'cancelar') {
         // Notifica + remove calendário de cada inscrito ativo, depois cancela tudo.
@@ -47,6 +50,9 @@ module.exports = (app) => ({
           await Treina.avisarPorEmail(trim(a.colaborador_email), { nome: trim(a.colaborador_nome), tipo: 'treinamento_cancelado', treinamento: { titulo: t.titulo }, sessao: { data: a.data, hora_inicio: a.hora_inicio, hora_fim: a.hora_fim } });
         }
         await Pg.connectAndQuery(`UPDATE tab_treina_inscricao SET status='cancelada', cancelado_em=NOW(), cancelado_por=@uid WHERE treinamento_id=@id AND status='ativa'`, { id, uid: user?.id ? Number(user.id) : null });
+        // Remove eventos/reservas de sala no calendário do organizador (libera as salas).
+        const sessEv = await Pg.connectAndQuery(`SELECT id, educacional_event_id FROM tab_treina_sessao WHERE treinamento_id=@id AND educacional_event_id IS NOT NULL`, { id });
+        for (const s of sessEv) await Treina.excluirReuniaoSessao(app, s);
         await Pg.connectAndQuery(`UPDATE tab_treina_sessao SET status='cancelada', ocupadas=0 WHERE treinamento_id=@id`, { id });
         await Pg.connectAndQuery(`UPDATE tab_treina_treinamento SET status='cancelado', atualizado_em=NOW() WHERE id=@id`, { id });
       }
