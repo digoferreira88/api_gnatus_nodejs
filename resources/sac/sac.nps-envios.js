@@ -4,8 +4,12 @@
 // pesquisa (token) para o CX copiar e enviar por e-mail/ligação. Perm 6003.
 //
 // status: filtra c.status. Default = os "acionáveis" (ENVIADO/RESPONDIDO/ERRO);
-//   'nao_respondido' = enviados sem resposta e não expirados (foco da tratativa).
+//   'nao_respondido' = enviados sem resposta e não expirados (foco da tratativa);
+//   'expirado'       = enviados cujo prazo venceu (candidatos a revalidar).
 // DESCARTADO (não-COV) e PENDENTE ficam de fora por padrão.
+//
+// mes=YYYY-MM filtra pela data do DISPARO (enviado_em), caindo para criado_em
+// em quem nunca foi enviado (ERRO/REVISAO) — senão esses sumiriam do filtro.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6003]);
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -30,10 +34,25 @@ module.exports = (app) => ({
     const status = trim(q.status).toUpperCase();
     if (status === 'NAO_RESPONDIDO') {
       conds.push("c.status = 'ENVIADO' AND (c.expira_em IS NULL OR c.expira_em > NOW())");
+    } else if (status === 'EXPIRADO') {
+      // EXPIRADO nao e' um status gravado: o convite segue 'ENVIADO' e o que
+      // vence e' a data. Sem este filtro o CX nao conseguia achar quem precisa
+      // de revalidacao.
+      conds.push("c.status = 'ENVIADO' AND c.expira_em IS NOT NULL AND c.expira_em <= NOW()");
     } else if (['ENVIADO', 'RESPONDIDO', 'ERRO', 'REVISAO'].includes(status)) {
       conds.push('c.status = @status'); p.status = status;
     } else {
       conds.push("c.status IN ('ENVIADO','RESPONDIDO','ERRO','REVISAO')");   // acionáveis (REVISAO = travado pelo SAC)
+    }
+    // ?mes=YYYY-MM — mesmo atalho do dashboard e dos detratores, mas aqui o eixo
+    // e' a data do DISPARO. inicio/fim continuam valendo (sobre criado_em).
+    const mes = trim(q.mes);
+    if (/^\d{4}-\d{2}$/.test(mes)) {
+      const ultimo = new Date(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)), 0).getDate();
+      conds.push('COALESCE(c.enviado_em, c.criado_em) >= @mesIni::date');
+      conds.push('COALESCE(c.enviado_em, c.criado_em) < (@mesFim::date + 1)');
+      p.mesIni = `${mes}-01`;
+      p.mesFim = `${mes}-${String(ultimo).padStart(2, '0')}`;
     }
     if (trim(q.inicio)) { conds.push('c.criado_em >= @inicio'); p.inicio = trim(q.inicio); }
     if (trim(q.fim))    { conds.push('c.criado_em < (@fim::date + 1)'); p.fim = trim(q.fim); }
@@ -79,6 +98,8 @@ module.exports = (app) => ({
         produtoDesc: trim(r.produto_desc), dataFaturamento: trim(r.data_faturamento), valorPedido: N(r.valor_pedido),
         buNome: trim(r.bu_nome), vendedorNome: trim(r.vendedor_nome),
         status: trim(r.status), classificacao: trim(r.classificacao), notaNps: r.nota_nps,
+        // Derivado da data, nao do status: o convite vencido continua 'ENVIADO'.
+        expirado: trim(r.status) === 'ENVIADO' && !!r.expira_em && new Date(r.expira_em) < new Date(),
         enviadoEm: r.enviado_em, respondidoEm: r.respondido_em, lembreteEm: r.lembrete_em, expiraEm: r.expira_em,
         emailEnviadoEm: r.email_enviado_em, emailDestino: trim(r.email_destino),
         sacOcorrencias: Array.isArray(r.sac_ocorrencias) ? r.sac_ocorrencias : [], sacVerificadoEm: r.sac_verificado_em,
@@ -88,14 +109,14 @@ module.exports = (app) => ({
       if (trim(q.formato).toLowerCase() === 'csv') {
         const head = ['Status', 'Cliente', 'Empresa', 'CPF/CNPJ', 'Pedido', 'NF', 'Produto', 'Faturamento',
           'Telefone', 'E-mail', 'BU', 'Vendedor', 'Enviado em', 'Respondido em', 'E-mail enviado em', 'Destino e-mail',
-          'Ocorrência SAC', 'Classificação', 'Nota', 'Motivo erro', 'Link pesquisa'];
+          'Ocorrência SAC', 'Classificação', 'Nota', 'Motivo erro', 'Expira em', 'Expirado', 'Link pesquisa'];
         const fmtTs = (t) => t ? new Date(t).toLocaleString('pt-BR') : '';
         const linhas = registros.map(r => [
           r.status, `${r.clienteCod}/${r.clienteLoja} ${r.clienteNome}`.trim(), r.empresa, r.cnpj,
           r.pedido, r.nf, r.produtoDesc, r.dataFaturamento, r.telefone, r.email, r.buNome, r.vendedorNome,
           fmtTs(r.enviadoEm), fmtTs(r.respondidoEm), fmtTs(r.emailEnviadoEm), r.emailDestino,
           (r.sacOcorrencias || []).map(o => `${o.fase}: ${o.titulo}`).join(' | '),
-          r.classificacao, r.notaNps ?? '', r.motivoErro, r.link
+          r.classificacao, r.notaNps ?? '', r.motivoErro, fmtTs(r.expiraEm), r.expirado ? 'SIM' : '', r.link
         ].map(csvCell).join(';'));
         const csv = '﻿' + [head.join(';'), ...linhas].join('\r\n');
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -108,6 +129,7 @@ module.exports = (app) => ({
         enviados: registros.filter(r => r.status === 'ENVIADO' || r.status === 'RESPONDIDO').length,
         respondidos: registros.filter(r => r.status === 'RESPONDIDO').length,
         naoRespondidos: registros.filter(r => r.status === 'ENVIADO').length,
+        expirados: registros.filter(r => r.expirado).length,
         erros: registros.filter(r => r.status === 'ERRO').length,
         emRevisao: registros.filter(r => r.status === 'REVISAO').length
       };
