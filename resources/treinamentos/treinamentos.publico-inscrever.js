@@ -93,7 +93,7 @@ module.exports = (app) => ({
         data: Treina.iso(sessao.data), horaInicio: trim(sessao.hora_inicio), horaFim: trim(sessao.hora_fim),
         local: modalidade === 'presencial' ? Treina.localSessao(treinamento, sessao) : '',
         linkOnline: modalidade === 'online' ? Treina.linkOnline(treinamento, sessao) : '',
-        emailEnviado: ef.avisos.length === 0
+        emailEnviado: !ef.avisos.some(a => /^e-mail/i.test(a))
       });
     } catch (err) {
       console.error('treinamentos/publico-inscrever:', err.message);
