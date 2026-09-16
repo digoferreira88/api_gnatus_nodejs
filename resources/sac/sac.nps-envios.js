@@ -8,8 +8,9 @@
 //   'expirado'       = enviados cujo prazo venceu (candidatos a revalidar).
 // DESCARTADO (não-COV) e PENDENTE ficam de fora por padrão.
 //
-// mes=YYYY-MM filtra pela data do DISPARO (enviado_em), caindo para criado_em
-// em quem nunca foi enviado (ERRO/REVISAO) — senão esses sumiriam do filtro.
+// mes=YYYY-MM filtra pela DATA DE FATURAMENTO (c.data_faturamento) — mesmo eixo
+// do dashboard, que é o evento de negócio. Atenção: convite sem data de
+// faturamento não entra no resultado quando um mês é escolhido.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([6003]);
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -44,15 +45,17 @@ module.exports = (app) => ({
     } else {
       conds.push("c.status IN ('ENVIADO','RESPONDIDO','ERRO','REVISAO')");   // acionáveis (REVISAO = travado pelo SAC)
     }
-    // ?mes=YYYY-MM — mesmo atalho do dashboard e dos detratores, mas aqui o eixo
-    // e' a data do DISPARO. inicio/fim continuam valendo (sobre criado_em).
+    // ?mes=YYYY-MM — eixo e' a DATA DE FATURAMENTO, igual ao dashboard.
+    // data_faturamento e' VARCHAR(8) no formato 'YYYYMMDD' (migration 77), entao
+    // a comparacao e' de STRING: nada de cast para date.
     const mes = trim(q.mes);
     if (/^\d{4}-\d{2}$/.test(mes)) {
       const ultimo = new Date(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)), 0).getDate();
-      conds.push('COALESCE(c.enviado_em, c.criado_em) >= @mesIni::date');
-      conds.push('COALESCE(c.enviado_em, c.criado_em) < (@mesFim::date + 1)');
-      p.mesIni = `${mes}-01`;
-      p.mesFim = `${mes}-${String(ultimo).padStart(2, '0')}`;
+      const ym = mes.replace('-', '');
+      conds.push('c.data_faturamento >= @mesIni');
+      conds.push('c.data_faturamento <= @mesFim');
+      p.mesIni = `${ym}01`;
+      p.mesFim = `${ym}${String(ultimo).padStart(2, '0')}`;
     }
     if (trim(q.inicio)) { conds.push('c.criado_em >= @inicio'); p.inicio = trim(q.inicio); }
     if (trim(q.fim))    { conds.push('c.criado_em < (@fim::date + 1)'); p.fim = trim(q.fim); }
