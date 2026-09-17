@@ -61,14 +61,25 @@ async function consultarOcorrencias({ dias = 3 } = {}) {
   const DIA = 864e5;
   const totalDias = Math.min(Math.max(1, dias), 30);
   const agora = new Date();
-  const eventos = [];
+  return consultarOcorrenciasPeriodo({
+    inicio: new Date(agora.getTime() - (totalDias - 1) * DIA),
+    fim: agora
+  });
+}
 
-  for (let offset = 0; offset < totalDias; offset += 5) {
-    const fimSlice = new Date(agora.getTime() - offset * DIA);
-    const iniSlice = new Date(agora.getTime() - Math.min(offset + 5, totalDias) * DIA + DIA);
+// Mesma consulta para um período qualquer [inicio .. fim] (dias inteiros),
+// fatiado em blocos de 5 dias. Usado pela carga inicial do Kanban de Pedidos,
+// que precisa de entregas de meses atrás — a API responde períodos antigos
+// (medido 17/09: 20-24/06 devolveu 863 eventos em 9 páginas).
+async function consultarOcorrenciasPeriodo({ inicio, fim }) {
+  const DIA = 864e5;
+  const eventos = [];
+  const fimTs = new Date(fim).getTime();
+  for (let fimSlice = fimTs; fimSlice >= new Date(inicio).getTime() - DIA + 1; fimSlice -= 5 * DIA) {
+    const iniSlice = Math.max(new Date(inicio).getTime(), fimSlice - 4 * DIA);
     const base = {
-      dt_inicio_ocorrencia: fmtDataHora(iniSlice, false),
-      dt_fim_ocorrencia: fmtDataHora(fimSlice, true)
+      dt_inicio_ocorrencia: fmtDataHora(new Date(iniSlice), false),
+      dt_fim_ocorrencia: fmtDataHora(new Date(fimSlice), true)
     };
     let pagina = 1, totalPaginas = 1;
     do {
@@ -80,6 +91,7 @@ async function consultarOcorrencias({ dias = 3 } = {}) {
       totalPaginas = Number(r.json.evento.qtd_pagina || 1);
       pagina++;
     } while (pagina <= totalPaginas && pagina <= 40);   // trava de segurança
+    if (iniSlice <= new Date(inicio).getTime()) break;
   }
   return { ok: true, http: 200, eventos };
 }
@@ -112,4 +124,4 @@ function extrairEntregas(eventos) {
   return [...porChave.values()];
 }
 
-module.exports = { disponivel, consultarOcorrencias, extrairEntregas };
+module.exports = { disponivel, consultarOcorrencias, consultarOcorrenciasPeriodo, extrairEntregas };

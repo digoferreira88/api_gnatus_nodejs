@@ -261,6 +261,10 @@ const CRON_RHP_RECON = '20,50 7-20 * * 1-5';
 
 // Reservas de estoque vencidas (SC0010) -> libera B2_RESERVA. De hora em hora.
 const CRON_RESERVAS_VENCIDAS = '15 * * * *';  // todo :15
+// Kanban de Pedidos (Pós-Venda): copia as entregas da Datafrete para tab_nf_entrega
+// a cada 30 min, janela de 7 dias. Só LEITURA na Datafrete. Dormente sem
+// DATAFRETE_SERVICES_KEY; KANBAN_ENTREGAS_ATIVO=0 desliga.
+const CRON_KANBAN_ENTREGAS = '5,35 6-22 * * *';
 
 // NPS pós-venda: pedidos faturados (estatus 99) -> convite + WhatsApp. Comercial,
 // de hora em hora (só roda com o módulo ATIVO + template Suri configurado).
@@ -351,6 +355,22 @@ function start(app) {
     }
   });
   console.log(`[scheduler] garantia-entrega agendado: cron "${CRON_GARANTIA_ENTREGA}"`);
+
+  // Kanban de Pedidos × Datafrete: mantém o cache de entregas que alimenta a coluna
+  // "Entregue". Falha fica registrada em tab_nf_entrega_sync e o painel avisa.
+  if (jobs.kanbanEntregas) jobs.kanbanEntregas.cancel();
+  if (String(process.env.KANBAN_ENTREGAS_ATIVO || '1') !== '0') {
+    jobs.kanbanEntregas = schedule.scheduleJob(CRON_KANBAN_ENTREGAS, async () => {
+      try {
+        const Kanban = require('./kanbanPedidos');
+        const r = await Kanban.sincronizarEntregas(app, { dias: 7 });
+        if (!r.ok && r.motivo !== 'DATAFRETE_SERVICES_KEY ausente') console.warn('[scheduler] kanban-entregas:', r.motivo);
+      } catch (err) {
+        console.error('[scheduler] erro no kanban-entregas:', err.message);
+      }
+    });
+    console.log(`[scheduler] kanban-entregas agendado: cron "${CRON_KANBAN_ENTREGAS}"`);
+  }
 
   // RHP × OneDrive: conserta o link do PDF que o Zap externo deixou como "Erro no
   // upload" (corrida de tempo). Dormente sem RHP_RECON_ATIVO=1 (+ PIPEFY_TOKEN e M365_*).
