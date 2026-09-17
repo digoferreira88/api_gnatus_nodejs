@@ -2,7 +2,7 @@
 // MES de emissao do titulo. % inadimplencia = inadimplencia / contas a receber.
 // - Base = SE1 (saldo > 0), nao mais o faturamento (SF2). (decisao 20/08)
 // - Inadimplencia = atraso 30..360 dias; >360 so com ?incluir360mais=1; 1-29 so com ?incluir1a29=1.
-// - Filtro escondido (status flagados pela gestora) SEMPRE aplicado.
+// - Filtro escondido (status flagados) aplicado quando ?filtroEscondido=1 (checkbox do operador).
 // - Equipes = B2B / B2C (B2C = Comercial Varejo, Digital, Representantes).
 //
 // DUAS VISOES (?visao=, decisao 17/09):
@@ -73,6 +73,8 @@ module.exports = (app) => ({
     const equipe = trim(req.query.equipe);   // '', 'B2B' ou 'B2C'
     const inc360 = /^(1|true|sim|on)$/i.test(String(req.query.incluir360mais || '')) ? 1 : 0;
     const inc1a29 = /^(1|true|sim|on)$/i.test(String(req.query.incluir1a29 || '')) ? 1 : 0;
+    // Filtro escondido: só quando o operador liga o checkbox (?filtroEscondido=1), igual ao dashboard.
+    const filtroEscondido = /^(1|true|sim|on)$/i.test(String(req.query.filtroEscondido || ''));
 
     const inicioStr = `${anoMin}0101`;
     const fimStr    = `${anoMax}1231`;
@@ -125,25 +127,27 @@ module.exports = (app) => ({
       } catch (e) { console.warn('fat-vs-inad equipe:', e.message); }
     }
 
-    // ===== Filtro escondido (SEMPRE): exclui clientes com status flagado =====
-    // Mesma regra do dashboard: status_excluidos (tab_cobranca_filtro_status) ->
+    // ===== Filtro escondido (checkbox do operador): exclui clientes com status flagado =====
+    // Mesma regra do dashboard: quando LIGADO, status_excluidos (tab_cobranca_filtro_status) ->
     // clientes com esse status de cobranca sao removidos de TUDO (CR, inad, aging...).
     const clientesExcluidosSql = [];
-    try {
-      const cfgRows = await Pg.connectAndQuery(`SELECT status_excluidos FROM tab_cobranca_filtro_status WHERE id = 1`, {});
-      let ex = cfgRows[0] && cfgRows[0].status_excluidos;
-      if (typeof ex === 'string') { try { ex = JSON.parse(ex); } catch { ex = []; } }
-      const setEx = new Set(Array.isArray(ex) ? ex : []);
-      if (setEx.size) {
-        const stRows = await Pg.connectAndQuery(`SELECT cliente_cod, cliente_loja, status FROM tab_cobranca_status_cliente`, {});
-        stRows.forEach(s => {
-          if (setEx.has(trim(s.status))) {
-            const cod = trim(s.cliente_cod).replace(/'/g, ''), loja = trim(s.cliente_loja).replace(/'/g, '');
-            if (cod) clientesExcluidosSql.push({ cod, loja });
-          }
-        });
-      }
-    } catch (e) { console.warn('fat-vs-inad filtro escondido:', e.message); }
+    if (filtroEscondido) {
+      try {
+        const cfgRows = await Pg.connectAndQuery(`SELECT status_excluidos FROM tab_cobranca_filtro_status WHERE id = 1`, {});
+        let ex = cfgRows[0] && cfgRows[0].status_excluidos;
+        if (typeof ex === 'string') { try { ex = JSON.parse(ex); } catch { ex = []; } }
+        const setEx = new Set(Array.isArray(ex) ? ex : []);
+        if (setEx.size) {
+          const stRows = await Pg.connectAndQuery(`SELECT cliente_cod, cliente_loja, status FROM tab_cobranca_status_cliente`, {});
+          stRows.forEach(s => {
+            if (setEx.has(trim(s.status))) {
+              const cod = trim(s.cliente_cod).replace(/'/g, ''), loja = trim(s.cliente_loja).replace(/'/g, '');
+              if (cod) clientesExcluidosSql.push({ cod, loja });
+            }
+          });
+        }
+      } catch (e) { console.warn('fat-vs-inad filtro escondido:', e.message); }
+    }
     const excluiSql = (colCli, colLoja) => clientesExcluidosSql.length
       ? ` AND (RTRIM(${colCli}) + '|' + RTRIM(${colLoja})) NOT IN (${clientesExcluidosSql.map(c => `'${c.cod}|${c.loja}'`).join(',')})`
       : '';
@@ -435,6 +439,7 @@ module.exports = (app) => ({
         formas_pgto_disponiveis: formasDisponiveis,
         incluir360mais: !!inc360,
         incluir1a29: !!inc1a29,
+        filtroEscondido,
         meta: {
           pct: metaPct,
           inadimplencia_alvo: Number(inadAlvo.toFixed(2)),
