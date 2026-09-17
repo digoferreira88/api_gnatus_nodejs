@@ -5,7 +5,19 @@
 // - Filtro escondido (status flagados pela gestora) SEMPRE aplicado.
 // - Equipes = B2B / B2C (B2C = Comercial Varejo, Digital, Representantes).
 //
-// GET /cobranca/faturamento-vs-inadimplencia?anoMin&anoMax&metaPct&equipe(B2B|B2C)&incluir360mais&incluir1a29
+// DUAS VISOES (?visao=, decisao 17/09):
+//  - emissao (safra, padrao do backend): titulos EMITIDOS no periodo; base = saldo em
+//    aberto (E1_SALDO>0). Pergunta: quanto da carteira aberta esta vencida.
+//  - vencimento: titulos que VENCERAM no periodo (de 01/01 do ano inicial ATE HOJE),
+//    pagos ou nao; base = VALOR que venceu (E1_VALOR). Pergunta: do que venceu, quanto
+//    ficou sem pagar. So TITULOS DE VENDA (natureza 10101 Vendas Nacionais / 10201
+//    Exportacao) — sem isso a base pega ~R$ 40 mi de operacoes com bancos (tipo FT,
+//    naturezas Financeiro/Emprestimos) quitadas no mesmo dia.
+//    A base NAO pode ser o saldo em aberto nesta visao: todo titulo que venceu ha
+//    30-360 dias e ainda tem saldo ja e inadimplente, e o % daria 100% em todo mes.
+//  O Prazo Medio de Recebimento e o mesmo nas duas visoes (sempre calculado pela emissao).
+//
+// GET /cobranca/faturamento-vs-inadimplencia?anoMin&anoMax&metaPct&equipe(B2B|B2C)&incluir360mais&incluir1a29&visao(emissao|vencimento)
 
 const trim = (v) => String(v || '').trim();
 const toN  = (v) => Number(v || 0);
@@ -64,6 +76,25 @@ module.exports = (app) => ({
 
     const inicioStr = `${anoMin}0101`;
     const fimStr    = `${anoMax}1231`;
+
+    const visao = /^venc/i.test(String(req.query.visao || '')) ? 'vencimento' : 'emissao';
+    const porVenc = visao === 'vencimento';
+    // Fragmentos que mudam por visao (os demais filtros sao identicos nas duas).
+    // Por vencimento o periodo termina HOJE: vencimento futuro ainda nao "venceu" e so
+    // diluiria a base com titulos que nao podem estar inadimplentes.
+    const EIXO    = porVenc ? 'se1.E1_VENCREA' : 'se1.E1_EMISSAO';
+    // O "hoje" do corte sai do banco (GETDATE), o mesmo relogio do calculo de atraso —
+    // o relogio da VPS pode estar em outro fuso e virar o dia antes.
+    const HOJE_SQL = 'CONVERT(char(8), GETDATE(), 112)';
+    const PERIODO = porVenc
+      ? `se1.E1_VENCREA BETWEEN @ini AND (CASE WHEN ${HOJE_SQL} < @fim THEN ${HOJE_SQL} ELSE @fim END)`
+      : 'se1.E1_EMISSAO BETWEEN @ini AND @fim';
+    const ESCOPO  = porVenc ? `AND RTRIM(se1.E1_NATUREZ) IN ('10101','10201')` : '';
+    // Base do %: saldo em aberto (safra) x valor original que venceu (vencimento).
+    const BASE    = porVenc ? 'se1.E1_VALOR' : 'se1.E1_SALDO';
+    // Na safra o universo ja e so saldo>0; por vencimento entram tambem os pagos.
+    const SO_ABERTOS = porVenc ? '' : 'AND se1.E1_SALDO > 0';
+    const ROTULO_BASE = porVenc ? 'valor que venceu' : 'contas a receber';
 
     const ATRASO = `DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), CONVERT(date, GETDATE()))`;
     // Inadimplencia = 30..360 dias de atraso (default). Piso baixa p/ 1 dia com
@@ -134,22 +165,27 @@ module.exports = (app) => ({
                 ON sc5.C5_FILIAL = se1.E1_FILIAL AND sc5.C5_NUM = se1.E1_PEDIDO AND sc5.D_E_L_E_T_ <> '*'
               ${joinSx5Bu}` : '';
 
-      // 1) Contas a Receber (todos os abertos) + Inadimplencia (30-360) por mes de emissao
+      // 1) Base + Inadimplencia (30-360) por mes do EIXO da visao.
+      //    Safra: base = saldo em aberto, universo so saldo>0 (identico ao anterior).
+      //    Vencimento: base = valor que venceu (pagos inclusos), so titulos de venda.
+      //    A inadimplencia exige saldo>0 nas duas (na safra e redundante).
       const crInadRows = await Protheus.connectAndQuery(`
-        SELECT SUBSTRING(se1.E1_EMISSAO, 1, 6) ymes,
-               SUM(se1.E1_SALDO) contasReceber,
-               SUM(CASE WHEN ${INAD_COND} THEN se1.E1_SALDO ELSE 0 END) inadimplencia,
-               SUM(CASE WHEN ${INAD_COND} THEN 1 ELSE 0 END) qtdInad
+        SELECT SUBSTRING(${EIXO}, 1, 6) ymes,
+               SUM(${BASE}) contasReceber,
+               SUM(CASE WHEN se1.E1_SALDO > 0 THEN se1.E1_SALDO ELSE 0 END) emAberto,
+               SUM(CASE WHEN se1.E1_SALDO > 0 AND ${INAD_COND} THEN se1.E1_SALDO ELSE 0 END) inadimplencia,
+               SUM(CASE WHEN se1.E1_SALDO > 0 AND ${INAD_COND} THEN 1 ELSE 0 END) qtdInad
           FROM SE1010 se1 WITH (NOLOCK)
           ${fi.inadJoins}
          WHERE se1.D_E_L_E_T_ <> '*'
            AND se1.E1_FILIAL = '01'
-           AND se1.E1_SALDO > 0
-           AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+           ${SO_ABERTOS}
+           AND ${PERIODO}
            AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+           ${ESCOPO}
            ${fi.inadWhere}
            ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
-         GROUP BY SUBSTRING(se1.E1_EMISSAO, 1, 6)
+         GROUP BY SUBSTRING(${EIXO}, 1, 6)
          ORDER BY ymes`,
         sqlParams
       );
@@ -162,7 +198,10 @@ module.exports = (app) => ({
         const pct = cr > 0 ? (inad / cr) * 100 : 0;
         return {
           ymes: k, ano, mes, label: `${meses[mes - 1]}/${ano.slice(2)}`,
+          // contasReceber = BASE do % (nome mantido por compatibilidade): na safra e o
+          // saldo em aberto; por vencimento e o valor que venceu no mes.
           contasReceber: Number(cr.toFixed(2)),
+          emAberto: Number(toN(r.emAberto).toFixed(2)),
           inadimplencia: Number(inad.toFixed(2)),
           qtdTitulos: toN(r.qtdInad),
           pctInadimplencia: Number(pct.toFixed(2))
@@ -170,6 +209,7 @@ module.exports = (app) => ({
       });
 
       const totCR   = serie.reduce((s, x) => s + x.contasReceber, 0);
+      const totAberto = serie.reduce((s, x) => s + x.emAberto, 0);
       const totInad = serie.reduce((s, x) => s + x.inadimplencia, 0);
       const totQtd  = serie.reduce((s, x) => s + x.qtdTitulos, 0);
       const pctAtual = totCR > 0 ? (totInad / totCR) * 100 : 0;
@@ -199,22 +239,44 @@ module.exports = (app) => ({
       const iniDate = new Date(anoMin, 0, 1).getTime();
       const fimDate = Math.min(Date.now(), new Date(anoMax, 11, 31).getTime());
       const diasPeriodo = Math.max(1, Math.round((fimDate - iniDate) / 86400000));
-      const pmr = totFat > 0 ? (totCR / totFat) * diasPeriodo : 0;
 
-      // Formas de pagamento disponiveis (pra o dropdown) — universo de contas a
-      // receber do periodo (independente da forma selecionada, pra a lista nao sumir).
+      // O PMR e sempre carteira EMITIDA no periodo (saldo aberto) / faturamento do
+      // periodo — o mesmo numero nas duas visoes. Na safra essa carteira ja e o totCR;
+      // por vencimento a base e outra, entao busca a carteira por emissao a parte.
+      let crPmr = totCR;
+      if (porVenc) {
+        try {
+          const crRows = await Protheus.connectAndQuery(`
+            SELECT SUM(se1.E1_SALDO) cr
+              FROM SE1010 se1 WITH (NOLOCK)
+              ${fi.inadJoins}
+             WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
+               AND se1.E1_SALDO > 0
+               AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+               AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+               ${fi.inadWhere}
+               ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}`,
+            sqlParams);
+          crPmr = toN(crRows[0]?.cr);
+        } catch (e) { console.warn('fat-vs-inad carteira(PMR):', e.message); crPmr = 0; }
+      }
+      const pmr = totFat > 0 ? (crPmr / totFat) * diasPeriodo : 0;
+
+      // Formas de pagamento disponiveis (pra o dropdown) — mesmo universo da base da
+      // visao (independente da forma selecionada, pra a lista nao sumir).
       let formasDisponiveis = [];
       try {
         const fRows = await Protheus.connectAndQuery(`
-          SELECT RTRIM(se1.E1_FORMAPG) cod, COUNT(*) qtd, SUM(se1.E1_SALDO) saldo
+          SELECT RTRIM(se1.E1_FORMAPG) cod, COUNT(*) qtd, SUM(${BASE}) saldo
             FROM SE1010 se1 WITH (NOLOCK)
            WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
-             AND se1.E1_SALDO > 0
-             AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+             ${SO_ABERTOS}
+             AND ${PERIODO}
              AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+             ${ESCOPO}
              ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
            GROUP BY RTRIM(se1.E1_FORMAPG)
-           ORDER BY SUM(se1.E1_SALDO) DESC`,
+           ORDER BY SUM(${BASE}) DESC`,
           { ini: inicioStr, fim: fimStr });
         formasDisponiveis = fRows.map(r => ({
           cod: trim(r.cod),
@@ -242,8 +304,9 @@ module.exports = (app) => ({
           ${joinSc5Inad}
          WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
            AND se1.E1_SALDO > 0 AND ${INAD_COND}
-           AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+           AND ${PERIODO}
            AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+           ${ESCOPO}
            ${condBuInad}
            ${condForma}
            ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
@@ -266,8 +329,9 @@ module.exports = (app) => ({
           ${joinSc5Inad}
          WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
            AND se1.E1_SALDO > 0 AND ${INAD_COND}
-           AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+           AND ${PERIODO}
            AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+           ${ESCOPO}
            ${condBuInad}
            ${condForma}
            ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
@@ -298,8 +362,9 @@ module.exports = (app) => ({
              AND RTRIM(bu_sx5.X5_CHAVE) = RTRIM(sc5.C5_ZTIPO) AND bu_sx5.D_E_L_E_T_ <> '*'
            WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
              AND se1.E1_SALDO > 0 AND ${INAD_COND}
-             AND se1.E1_EMISSAO BETWEEN @ini AND @fim
+             AND ${PERIODO}
              AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+             ${ESCOPO}
              ${condBuInad}
              ${condForma}
              ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
@@ -343,7 +408,7 @@ module.exports = (app) => ({
       const recomendacoes = [];
       const fmt = (n) => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       if (pctAtual > metaPct) {
-        recomendacoes.push(`Reduzir inadimplencia em R$ ${fmt(excessoParaMeta)} pra bater a meta de ${metaPct}% sobre contas a receber.`);
+        recomendacoes.push(`Reduzir inadimplencia em R$ ${fmt(excessoParaMeta)} pra bater a meta de ${metaPct}% sobre o ${ROTULO_BASE}.`);
         const top3 = topClientes.slice(0, 3);
         if (top3.length) {
           const soma3 = top3.reduce((s, c) => s + toN(c.saldo), 0);
@@ -362,6 +427,9 @@ module.exports = (app) => ({
 
       return res.json({
         periodo: { anoMin, anoMax },
+        // Visao aplicada e como a tela deve rotular a base do %.
+        visao,
+        rotulo_base: porVenc ? 'Valor que venceu' : 'Contas a Receber',
         equipe: equipe || null,
         formaPgto: formaSel || null,
         formas_pgto_disponiveis: formasDisponiveis,
@@ -375,7 +443,8 @@ module.exports = (app) => ({
           delta_pp: Number((pctAtual - metaPct).toFixed(2))
         },
         totais: {
-          contasReceber: Number(totCR.toFixed(2)),
+          contasReceber: Number(totCR.toFixed(2)),       // BASE do % (ver rotulo_base)
+          emAberto: Number(totAberto.toFixed(2)),         // saldo ainda em aberto do universo
           inadimplencia: Number(totInad.toFixed(2)),
           pctInadimplencia: Number(pctAtual.toFixed(2)),
           qtdTitulosInad: totQtd,
