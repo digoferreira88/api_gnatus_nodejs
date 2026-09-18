@@ -20,7 +20,10 @@
 //   RHP_RECON_ATIVO=1     liga o robô (default DESLIGADO)
 //   RHP_RECON_SIMULAR=0   desliga o dry-run (default SIMULA: loga o que faria)
 //   PIPEFY_TOKEN          + M365_TENANT_ID/CLIENT_ID/CLIENT_SECRET (Graph)
+//   RHP_RECON_MSGS        textos de erro extras, separados por "|" (economia de API)
+//   RHP_RECON_VARREDURA_DIAS  de quantos em quantos dias varre o pipe inteiro (padrão 1; 0 = nunca)
 
+const Metrica = require('./pipefyMetrica');
 const trim = (v) => String(v == null ? '' : v).trim();
 
 const PIPE_ID = '304059336';
@@ -28,6 +31,17 @@ const CAMPO_LINK = 'url_anexo_do_relat_rio_de_montagem';
 const CAMPO_OP = 'n_mero_de_op_protheus';
 const CAMPO_SERIE = 'n_meros_de_s_rie';
 const RE_ERRO = /erro no upload|verifique se o registro/i;
+
+// Texto exato que o Zap grava no campo quando não acha o PDF. É o que permite
+// perguntar ao Pipefy só pelos cards com erro (findCards) em vez de varrer o pipe
+// inteiro: 1 requisição no lugar de 40 (medido 18/09 — os mesmos 4 cards, em 0,4 s
+// contra 20 s). Variação nova no texto -> acrescente aqui ou em RHP_RECON_MSGS
+// (separadas por "|"); a varredura de conferência avisa no log quando aparece um
+// texto fora da lista.
+const MSGS_ERRO = () => {
+  const extra = trim(process.env.RHP_RECON_MSGS).split('|').map(trim).filter(Boolean);
+  return [...new Set([...extra, 'Erro no upload do arquivo. Verifique se o registro no databse está atualizado'])];
+};
 
 // Pasta destino no OneDrive pessoal da pipefy@ (onde o Zap procura e onde a produção sobe).
 const SITE_PATH = '/personal/pipefy_gnatus_com_br';
@@ -45,6 +59,7 @@ async function gql(query, variables) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
+    Metrica.contar('rhp-recon');   // consumo do contrato do Pipefy (tab_pipefy_uso)
     const r = await fetch('https://api.pipefy.com/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN()}` },
@@ -60,15 +75,37 @@ async function gql(query, variables) {
 
 const campo = (card, id) => trim((card.fields || []).find(f => f.field?.id === id)?.value);
 
-// Todos os cards do pipe (todas as fases) que estão com o texto de ERRO no link.
+const CARD_FIELDS = `id title fields{value field{id}}`;
+
+// Cards com o texto de erro no link, perguntando direto ao Pipefy (1 requisição por
+// texto conhecido). RE_ERRO continua valendo como conferência do que voltou.
 async function listarCardsComErro() {
+  const achados = new Map();
+  for (const msg of MSGS_ERRO()) {
+    let after = null;
+    do {
+      const d = await gql(`query($p:ID!,$s:FindCards!,$a:String){findCards(pipeId:$p,search:$s,first:50,after:$a){
+        pageInfo{hasNextPage endCursor} edges{node{${CARD_FIELDS}}}}}`,
+        { p: PIPE_ID, s: { fieldId: CAMPO_LINK, fieldValue: msg }, a: after });
+      const pg = d.findCards;
+      (pg?.edges || []).forEach(e => { if (RE_ERRO.test(campo(e.node, CAMPO_LINK))) achados.set(trim(e.node.id), e.node); });
+      after = pg?.pageInfo?.hasNextPage ? pg.pageInfo.endCursor : null;
+    } while (after);
+  }
+  return [...achados.values()];
+}
+
+// Varredura completa do pipe (todas as fases). Cara — ~40 requisições — e por isso
+// roda de tempos em tempos (RHP_RECON_VARREDURA_DIAS), só para achar card com texto
+// de erro fora de MSGS_ERRO. O que ela encontrar a mais vira aviso no log.
+async function varrerPipeInteiro() {
   const fases = (await gql(`query($id:ID!){pipe(id:$id){phases{id}}}`, { id: PIPE_ID })).pipe.phases;
   const out = [];
   for (const fase of fases) {
     let after = null;
     do {
       const d = await gql(`query($fid:ID!,$a:String){phase(id:$fid){cards(first:50,after:$a){
-        pageInfo{hasNextPage endCursor} edges{node{id title fields{value field{id}}}}}}}`, { fid: fase.id, a: after });
+        pageInfo{hasNextPage endCursor} edges{node{${CARD_FIELDS}}}}}}`, { fid: fase.id, a: after });
       const pg = d.phase?.cards;
       (pg?.edges || []).forEach(e => {
         if (RE_ERRO.test(campo(e.node, CAMPO_LINK))) out.push(e.node);
@@ -78,6 +115,15 @@ async function listarCardsComErro() {
   }
   return out;
 }
+
+// De quantos em quantos dias a varredura completa roda (0 = nunca). Ela custa ~40
+// requisições; a busca direta custa 1. Reinicia a cada deploy — no pior caso varre
+// uma vez a mais.
+const VARREDURA_DIAS = () => {
+  const n = Number(process.env.RHP_RECON_VARREDURA_DIAS);
+  return Number.isFinite(n) && n >= 0 ? n : 1;
+};
+let ultimaVarredura = 0;
 
 // Grava o link no campo. new_value é escalar UndefinedInput -> vai INLINE (variável
 // String! dá "Type mismatch"; ver [[pipefy-rm-pdf-link-fix]]).
@@ -157,7 +203,26 @@ async function executar(app, origem = 'CRON') {
 
   if (!disponivel()) return { ...resumo, inativo: true };
 
-  const cards = await listarCardsComErro();
+  let cards = await listarCardsComErro();
+  // Uma vez por dia confere a busca rápida contra o pipe inteiro. Card que só a
+  // varredura acha = texto de erro novo: entra neste ciclo e fica registrado para
+  // ser incluído em MSGS_ERRO.
+  if (origem === 'CRON' && VARREDURA_DIAS() > 0 && Date.now() - ultimaVarredura >= VARREDURA_DIAS() * 864e5) {
+    ultimaVarredura = Date.now();
+    try {
+      const todos = await varrerPipeInteiro();
+      const achados = new Set(cards.map(c => trim(c.id)));
+      const fora = todos.filter(c => !achados.has(trim(c.id)));
+      if (fora.length) {
+        const textos = [...new Set(fora.map(c => campo(c, CAMPO_LINK)))];
+        console.warn(`[rhp-recon] ${fora.length} card(s) com texto de erro fora da lista — inclua em RHP_RECON_MSGS: ${textos.map(t => JSON.stringify(t.slice(0, 120))).join(' | ')}`);
+        cards = [...cards, ...fora];
+      }
+      resumo.varreduraCompleta = { cards: todos.length, foraDaLista: fora.length };
+    } catch (e) {
+      console.warn('[rhp-recon] varredura completa falhou:', e.message);
+    }
+  }
   resumo.cards = cards.length;
   if (!cards.length) return resumo;
 

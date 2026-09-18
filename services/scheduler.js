@@ -266,6 +266,10 @@ const CRON_RESERVAS_VENCIDAS = '15 * * * *';  // todo :15
 // DATAFRETE_SERVICES_KEY; KANBAN_ENTREGAS_ATIVO=0 desliga.
 const CRON_KANBAN_ENTREGAS = '5,35 6-22 * * *';
 
+// Contador de chamadas à API do Pipefy (contrato de 10.000/mês): passa da memória
+// para tab_pipefy_uso. Só grava se houve chamada.
+const CRON_PIPEFY_USO = '*/10 * * * *';
+
 // NPS pós-venda: pedidos faturados (estatus 99) -> convite + WhatsApp. Comercial,
 // de hora em hora (só roda com o módulo ATIVO + template Suri configurado).
 const CRON_NPS_POSVENDA = '40 8-19 * * 1-5';  // :40, 08h-19h, seg-sex
@@ -371,6 +375,17 @@ function start(app) {
     });
     console.log(`[scheduler] kanban-entregas agendado: cron "${CRON_KANBAN_ENTREGAS}"`);
   }
+
+  // Consumo do Pipefy: grava o que as rotinas contaram desde o último flush.
+  if (jobs.pipefyUso) jobs.pipefyUso.cancel();
+  jobs.pipefyUso = schedule.scheduleJob(CRON_PIPEFY_USO, async () => {
+    try {
+      await require('./pipefyMetrica').flush(app);
+    } catch (err) {
+      console.error('[scheduler] erro no pipefy-uso:', err.message);
+    }
+  });
+  console.log(`[scheduler] pipefy-uso agendado: cron "${CRON_PIPEFY_USO}"`);
 
   // RHP × OneDrive: conserta o link do PDF que o Zap externo deixou como "Erro no
   // upload" (corrida de tempo). Dormente sem RHP_RECON_ATIVO=1 (+ PIPEFY_TOKEN e M365_*).

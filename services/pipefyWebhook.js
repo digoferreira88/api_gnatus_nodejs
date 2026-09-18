@@ -12,6 +12,7 @@
 // Envio: services/suri (mesma API/canal do PHP). Fila com dedupe em
 // tab_pipefy_wh_fila (numero+card+fase+acao), eventos em tab_pipefy_wh_evento.
 
+const Metrica = require('./pipefyMetrica');
 const Suri = require('./suri');
 
 const TOKEN = () => String(process.env.PIPEFY_TOKEN || '').trim();
@@ -301,6 +302,7 @@ async function gql(query, variables) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
+    Metrica.contar('webhook');   // consumo do contrato do Pipefy (tab_pipefy_uso)
     const r = await fetch('https://api.pipefy.com/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN()}` },
@@ -326,14 +328,46 @@ async function dadosDatabasePorId(recordId) {
   return d.table_record;
 }
 // busca whatsapp do usuario na tabela 306929792 (title = id do usuario)
-async function whatsappDoUsuario(idUsuario) {
+//
+// O telefone do responsável quase não muda, mas era consultado no Pipefy a cada
+// evento — 1 requisição por responsável, ~1.400 por mês. Agora fica guardado em
+// tab_pipefy_usuario_whats e só é reconsultado depois de PIPEFY_WHATS_CACHE_DIAS
+// (padrão 7). Telefone trocado no Pipefy demora até esse prazo para valer aqui;
+// para aplicar na hora, apague a linha do usuário na tabela.
+const CACHE_WHATS_DIAS = () => {
+  const n = Number(process.env.PIPEFY_WHATS_CACHE_DIAS);
+  return Number.isFinite(n) && n >= 0 ? n : 7;
+};
+async function whatsappDoUsuario(Pg, idUsuario) {
+  const id = String(idUsuario);
+  const dias = CACHE_WHATS_DIAS();
+  if (Pg && dias > 0) {
+    try {
+      const r = await Pg.connectAndQuery(
+        `SELECT whatsapp FROM tab_pipefy_usuario_whats
+          WHERE id_usuario = @id AND atualizado_em >= NOW() - (@d || ' days')::interval`,
+        { id, d: String(dias) });
+      if (r.length) return trim(r[0].whatsapp) || null;
+    } catch (e) { console.warn('[pipefy-wh] cache de telefone indisponível:', e.message); }
+  }
   const d = await gql(`query($t: ID!, $s: String!) {
     table_records(table_id: $t, first: 1, search: { title: $s }) {
       edges { node { record_fields { value field { id } } } } } }`,
-    { t: TABELA_USUARIOS_WHATS, s: String(idUsuario) });
+    { t: TABELA_USUARIOS_WHATS, s: id });
   const fields = d.table_records?.edges?.[0]?.node?.record_fields || [];
   const f = fields.find(x => x.field.id === 'whatsapp');
-  return f ? String(f.value || '').replace(/\D/g, '') : null;
+  const fone = f ? String(f.value || '').replace(/\D/g, '') : null;
+  if (Pg) {
+    try {
+      // Guarda inclusive o "não tem telefone" (string vazia), senão o usuário sem
+      // cadastro gera uma requisição a cada evento.
+      await Pg.connectAndQuery(
+        `INSERT INTO tab_pipefy_usuario_whats (id_usuario, whatsapp, atualizado_em) VALUES (@id, @w, NOW())
+         ON CONFLICT (id_usuario) DO UPDATE SET whatsapp = EXCLUDED.whatsapp, atualizado_em = NOW()`,
+        { id, w: fone || '' });
+    } catch (e) { console.warn('[pipefy-wh] gravar cache de telefone:', e.message); }
+  }
+  return fone;
 }
 async function publicFormLink(cardId) {
   try {
@@ -641,7 +675,7 @@ async function processarEvento({ Pg }, payload) {
     if (late && !ids.includes(PATRICIA_ID)) ids.push(PATRICIA_ID);
     for (const idUsuario of ids) {
       try {
-        const fone = fonePHP(await whatsappDoUsuario(idUsuario));
+        const fone = fonePHP(await whatsappDoUsuario(Pg, idUsuario));
         if (await enfileirar(Pg, { fone, cardId, faseId, action, templateId: tpl, parametros: params })) acoes.push(`responsável ${idUsuario} -> ${fone}`);
       } catch (e) { acoes.push(`responsável ${idUsuario}: ERRO ${e.message}`); }
     }

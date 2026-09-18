@@ -18,6 +18,7 @@
 // Contrato do Datafrete descoberto/validado em 21/08/2026 (ver datafreteTms.js):
 // entregue = cod_evento 1 ou 2. Match por chave NFe (SF2) com fallback numero.
 
+const Metrica = require('./pipefyMetrica');
 const Datafrete = require('./datafreteTms');
 
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -42,6 +43,7 @@ async function gql(query, variables) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
+    Metrica.contar('garantia');   // consumo do contrato do Pipefy (tab_pipefy_uso)
     const r = await fetch('https://api.pipefy.com/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN()}` },

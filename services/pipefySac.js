@@ -12,6 +12,7 @@
 //   NPS_SAC_FASE_CONCLUIDO = 328814465  (ÚNICA fase excluída do cruzamento)
 // Campos do documento no card: informe_seu_cpf / informe_o_n_mero_do_cnpj.
 
+const Metrica = require('./pipefyMetrica');
 const PIPE = () => String(process.env.NPS_SAC_PIPE || '304770705').trim();
 const FASE_CONCLUIDO = () => String(process.env.NPS_SAC_FASE_CONCLUIDO || '328814465').trim();
 const CAMPO_CPF = 'informe_seu_cpf';
@@ -23,6 +24,7 @@ const trim = (s) => String(s == null ? '' : s).trim();
 const docValido = (d) => d.length === 11 || d.length === 14;   // CPF ou CNPJ
 
 async function gql(query, variables) {
+  Metrica.contar('nps-sac');   // consumo do contrato do Pipefy (tab_pipefy_uso)
   const r = await fetch('https://api.pipefy.com/graphql', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN() },

@@ -15,6 +15,7 @@
 //   n_mero_de_op_protheus | produto (conector) | n_meros_de_s_rie |
 //   data_in_cio | data_do_t_rmino_1   (datas em YYYY/MM/DD, como o PHP enviava)
 
+const Metrica = require('./pipefyMetrica');
 const TOKEN = () => String(process.env.PIPEFY_TOKEN || '').trim();
 const PIPE_ID = () => String(process.env.PIPEFY_PIPE_ID || '304059336').trim();
 const ORG_ID = () => String(process.env.PIPEFY_ORG_ID || '301239355').trim();
@@ -29,6 +30,7 @@ async function gql(query, variables) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
+    Metrica.contar('op');   // consumo do contrato do Pipefy (tab_pipefy_uso)
     const r = await fetch('https://api.pipefy.com/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN()}` },

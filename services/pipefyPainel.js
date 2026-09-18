@@ -21,6 +21,7 @@
 // Config (.env): PIPEFY_TOKEN, PAINEL_PIPEFY_EXCLUIR (CSV extra de pipe ids,
 // além da tabela), PAINEL_PIPEFY_TTL_MIN (default 5).
 
+const Metrica = require('./pipefyMetrica');
 const trim = (v) => String(v == null ? '' : v).trim();
 
 const TOKEN = () => trim(process.env.PIPEFY_TOKEN);
@@ -36,6 +37,7 @@ async function gql(query, variables) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
+    Metrica.contar('painel');   // consumo do contrato do Pipefy (tab_pipefy_uso)
     const r = await fetch('https://api.pipefy.com/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN()}` },

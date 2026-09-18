@@ -319,14 +319,22 @@ async function processarFaturados(app) {
   // pesquisar quem está reclamando enviesaria a satisfação. Fail-open: se o
   // Pipefy falhar, segue o disparo normal (não trava a esteira toda por causa
   // de indisponibilidade), apenas registra o aviso.
-  let sacMapa = null;
-  try {
-    const sac = await PipefySac.carregarOcorrenciasAbertas();
-    sacMapa = sac.mapa;
-    console.log(`[nps] trava SAC: ${sacMapa.size} doc(s) com ocorrência aberta (${sac.totalCards} cards ativos em "${sac.pipeNome}")`);
-  } catch (e) {
-    console.warn('[nps] trava SAC indisponível (segue fail-open):', e.message);
-  }
+  // Carrega SOB DEMANDA: a maioria das rodadas não cria nenhum convite (o mesmo
+  // faturado já foi tratado numa rodada anterior) e varrer o pipe do SAC à toa
+  // custava ~10 requisições por rodada, 12 vezes por dia.
+  let sacMapa = null, sacTentado = false;
+  const obterSacMapa = async () => {
+    if (sacTentado) return sacMapa;
+    sacTentado = true;
+    try {
+      const sac = await PipefySac.carregarOcorrenciasAbertas();
+      sacMapa = sac.mapa;
+      console.log(`[nps] trava SAC: ${sacMapa.size} doc(s) com ocorrência aberta (${sac.totalCards} cards ativos em "${sac.pipeNome}")`);
+    } catch (e) {
+      console.warn('[nps] trava SAC indisponível (segue fail-open):', e.message);
+    }
+    return sacMapa;
+  };
 
   let criados = 0, enviados = 0, semTelefone = 0, jaExistiam = 0, falhas = 0, antifadiga = 0, emRevisao = 0;
   for (const r of cand) {
@@ -374,11 +382,12 @@ async function processarFaturados(app) {
     // fallback A1_DDDCEL). Ambos podem ter zero à esquerda ("027") → normaliza.
     const brutoTel = montarTelefone(r.ddd, r.dddcel, r.tel);
     const telNorm = Suri.normalizePhone(brutoTel);
-    const sacSet = sacMapa ? ', sac_verificado_em=NOW()' : '';   // fragmento controlado
+    const mapaSac = await obterSacMapa();
+    const sacSet = mapaSac ? ', sac_verificado_em=NOW()' : '';   // fragmento controlado
 
     // TRAVA SAC: cliente com reclamação aberta → NÃO dispara automático; guarda o
     // telefone (p/ o operador poder enviar depois) + as ocorrências e marca REVISAO.
-    const ocorr = PipefySac.ocorrenciasDe(sacMapa, r.cgc);
+    const ocorr = PipefySac.ocorrenciasDe(mapaSac, r.cgc);
     if (ocorr.length) {
       emRevisao++;
       await Pg.connectAndQuery(
