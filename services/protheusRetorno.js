@@ -35,9 +35,14 @@ const trim = (v) => String(v || '').trim();
  * @param {string} [a.operador]
  * @param {boolean} a.simular          — true = dry-run (nao grava)
  * @param {boolean} [a.baixar]         — true = processa tambem a baixa (FINA070)
+ * @param {boolean} [a.force]          — true = ignora o marcador de arquivo ja
+ *   importado (409 JA_IMPORTADO). NAO liga/desliga o registro: ele roda em toda
+ *   importacao real de qualquer jeito, protegido no Protheus pelas guardas de
+ *   titulo baixado e de ocorrencia igual (cobr001.prw:2117-2138). Quem barra
+ *   reprocessamento fora de ordem e' a trava do resource, nao este parametro.
  * @returns {Promise<{ok, httpStatus, body}>}
  */
-async function importar({ filial, banco, agencia, conta, nomeArquivo, conteudoBase64, conteudoTexto, operador, simular, baixar }) {
+async function importar({ filial, banco, agencia, conta, nomeArquivo, conteudoBase64, conteudoTexto, operador, simular, baixar, force }) {
   const apiUrl  = process.env.PROTHEUS_API_URL;
   const apiUser = process.env.PROTHEUS_API_USER;
   const apiPass = process.env.PROTHEUS_API_PASS;
@@ -61,6 +66,9 @@ async function importar({ filial, banco, agencia, conta, nomeArquivo, conteudoBa
   // So envia quando for true: sem a baixa, o payload fica identico ao de antes
   // (o endpoint trata ausente como false).
   if (baixar === true) payload.baixar = true;
+  // Idem: so vai no payload quando for true, pra requisicao normal continuar
+  // byte a byte igual a de antes.
+  if (force === true) payload.force = true;
   if (trim(banco))   payload.banco = trim(banco);
   if (trim(agencia)) payload.agencia = trim(agencia);
   if (trim(conta))   payload.conta = trim(conta);

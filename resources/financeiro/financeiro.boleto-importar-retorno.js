@@ -77,6 +77,13 @@ function resumirBaixa(body) {
   const resumo = {
     titulos: 0, valor_total: 0, ja_baixados: 0, erros: 0,
     parciais_anteriores: 0, divergentes: 0, nao_suportados: 0, nao_localizados: 0,
+    // `parciais` = itens que o Protheus marcou baixa_parcial na ESTA baixa (o
+    // principal nao cobre o saldo). Nao confundir com parciais_anteriores, que e'
+    // titulo que JA tinha baixa parcial de antes.
+    // 🔑 No Santander e' a unica rede antes de gravar: la o Diego nao le 153-165
+    // nem 176-188, entao o guard que compara com E1_VALOR nao roda. Se um convenio
+    // mandar o 254-266 liquido, o sintoma aparece aqui como parcial na previa.
+    parciais: 0, parciais_titulos: [],
     tarifa_total: 0, simulada: false, status_nao_mapeados: []
   };
   const naoMapeados = new Set();
@@ -91,6 +98,13 @@ function resumirBaixa(body) {
       resumo.valor_total += valorBaixa(d);
       resumo.tarifa_total += N(d && d.baixa_tarifa);
       if (st === 'BAIXA_SIMULADA') resumo.simulada = true;
+      if (d && d.baixa_parcial === true) {
+        resumo.parciais++;
+        const c = chaveDoDetalhe(d);
+        if (c && resumo.parciais_titulos.length < 20) {
+          resumo.parciais_titulos.push([c.prefixo, c.numero, c.parcela].filter(Boolean).join('/'));
+        }
+      }
     } else if (st === 'JA_BAIXADO') {
       resumo.ja_baixados++;
     } else if (st === 'ERRO_BAIXA') {
@@ -152,6 +166,48 @@ function chaveDoDetalhe(d) {
   return { prefixo: trim(d && d.prefixo), numero, parcela };
 }
 
+/**
+ * Data de GERACAO do arquivo, do header: posicoes 95-100 (DDMMAA). Mesma
+ * posicao no CNAB400 do Itau e do Santander — conferido nos retornos reais de
+ * 15/09, 18/09 e 21/09/2026. Devolve 'YYYYMMDD', ou '' se nao der pra ler.
+ *
+ * ⚠️ NAO usar a data do NOME do arquivo: o Santander `..._210926P_MOV.TXT`
+ * tem cabecalho 18/09 — e' o movimento de sexta, baixado na segunda.
+ */
+function dataDoArquivo(texto) {
+  const primeira = String(texto || '').split(/\r?\n/)[0] || '';
+  const d = primeira.slice(94, 100);
+  if (!/^\d{6}$/.test(d)) return '';
+  const dd = Number(d.slice(0, 2)), mm = Number(d.slice(2, 4));
+  if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return '';
+  return `20${d.slice(4)}${d.slice(2, 4)}${d.slice(0, 2)}`;
+}
+
+/**
+ * Ultimo retorno REAL ja importado desta carteira (pela auditoria).
+ *
+ * Serve para barrar reprocessamento FORA DE ORDEM. Segundo o Diego
+ * (cobr001.prw:2149-2173), aplicar um arquivo mais ANTIGO depois de um mais
+ * novo sobrescreve `E1_OCORREN`/`E1_NUMBCO` do titulo que ainda estiver aberto
+ * e joga o `E1_DTOCORR` para a data de hoje. Reenviar o MESMO arquivo e'
+ * inofensivo; o perigo e' a ordem.
+ */
+async function ultimoImportado(Pg, banco, conta) {
+  const rows = await Pg.connectAndQuery(`
+    SELECT meta->>'data_arquivo' AS data_arquivo,
+           meta->>'arquivo'      AS arquivo,
+           criado_em
+      FROM tab_auditoria
+     WHERE acao LIKE 'RETORNO_IMPORTAR%'
+       AND severidade = 'CRITICO'
+       AND meta->>'banco' = @banco
+       AND meta->>'conta_enviada' = @conta
+       AND meta->>'data_arquivo' IS NOT NULL
+     ORDER BY meta->>'data_arquivo' DESC
+     LIMIT 1`, { banco, conta });
+  return rows[0] || null;
+}
+
 // Consulta a SE1 quais (prefixo,numero,parcela) estao com E1_STATUS='B'
 // (ja baixados). Em lotes de OR-clauses pra respeitar o limite de params.
 async function buscarBaixados(Protheus, chaves) {
@@ -192,6 +248,13 @@ module.exports = (app) => ({
     const conta = trim(req.body?.conta);
     const simular = req.body?.simular !== false;   // default seguro: dry-run
     const baixar = req.body?.baixar === true;      // default seguro: so registro
+    // force: pula o 409 JA_IMPORTADO do marcador no Protheus. O registro em si
+    // roda em toda importacao real, com ou sem force, protegido la pelas guardas
+    // de titulo baixado / ocorrencia igual (Diego, cobr001.prw:2117-2138).
+    const force = req.body?.force === true;
+    // Confirmacao explicita para aplicar arquivo mais ANTIGO que o ultimo ja
+    // importado daquela carteira — o unico cenario que realmente estraga dado.
+    const confirmarAnterior = req.body?.confirmar_anterior === true;
 
     if (!conteudoBase64) {
       return res.status(400).json({ message: 'Envie o conteudo do arquivo (.RET) em conteudo_base64.' });
@@ -220,6 +283,38 @@ module.exports = (app) => ({
 
     try {
       const operadorEmail = trim(user?.EMAIL) || `id_${user?.ID}`;
+
+      // Data de geracao do arquivo — usada na trava de ordem e gravada na
+      // auditoria pra servir de referencia nos proximos imports.
+      let dataArquivo = '';
+      try { dataArquivo = dataDoArquivo(Buffer.from(conteudoBase64, 'base64').toString('latin1')); }
+      catch (e) { console.warn('boleto-importar-retorno: nao deu pra ler a data do header —', e.message); }
+
+      // ===== Trava de ordem (2026-09-21) =====
+      // Vale para QUALQUER import real, nao so com force: o risco nao e' o force
+      // em si, e' aplicar um arquivo mais antigo por cima de um mais novo. Se a
+      // data do header nao for legivel, nao trava (fail-open) — melhor deixar
+      // passar do que travar trabalho legitimo por um layout que nao conhecemos.
+      if (!simular && dataArquivo && !confirmarAnterior) {
+        let ult = null;
+        try { ult = await ultimoImportado(app.services.Pg, banco, conta); }
+        catch (e) { console.warn('boleto-importar-retorno: consulta do ultimo importado falhou —', e.message); }
+        if (ult && trim(ult.data_arquivo) > dataArquivo) {
+          const fmt = (d) => `${d.slice(6, 8)}/${d.slice(4, 6)}/${d.slice(0, 4)}`;
+          Auditoria.registrar(app, {
+            modulo: 'Financeiro', submodulo: 'EnvioBoleto',
+            acao: 'RETORNO_FORA_DE_ORDEM', severidade: 'AVISO', req,
+            entidade: 'boleto_retorno_arquivo', entidadeId: nomeArquivo || '(sem nome)',
+            descricao: `Bloqueou import do retorno ${nomeArquivo || '(arquivo)'} (${fmt(dataArquivo)}): a carteira ${banco}/${conta} já recebeu o arquivo ${trim(ult.arquivo)} de ${fmt(trim(ult.data_arquivo))}`,
+            meta: { arquivo: nomeArquivo, banco, conta_enviada: conta, data_arquivo: dataArquivo, ultimo: ult }
+          });
+          return res.status(409).json({
+            ok: false, codigo_erro: 'RETORNO_FORA_DE_ORDEM',
+            data_arquivo: dataArquivo, ultimo_importado: ult,
+            mensagem: `Este arquivo é de ${fmt(dataArquivo)}, anterior ao último já importado nesta carteira (${trim(ult.arquivo)}, de ${fmt(trim(ult.data_arquivo))}). Aplicar um retorno mais antigo sobrescreve a ocorrência e o nosso número dos títulos que ainda estão abertos. Se tiver certeza, reenvie confirmando.`
+          });
+        }
+      }
 
       // ===== Pre-filtro Santander (033): remove linhas de titulo JA BAIXADO =====
       // O endpoint do Diego estourava HTTP 500 ao reprocessar a liquidacao de um
@@ -260,7 +355,8 @@ module.exports = (app) => ({
         conteudoBase64: conteudoEnvio,
         operador: operadorEmail,
         simular,
-        baixar
+        baixar,
+        force
       });
 
       const body = r.body || {};
@@ -309,6 +405,11 @@ module.exports = (app) => ({
             : `IMPORTOU retorno ${nomeArquivo || '(arquivo)'} no Protheus — ${N(body.qtd_registrados)} reg, ${N(body.qtd_liquidados)} liq, ${N(body.qtd_rejeitados)} rej (de ${N(body.qtd_registros)})${txtBaixa}`),
         meta: {
           arquivo: nomeArquivo, banco: body.banco || banco, layout: body.layout, simular, baixar,
+          // data_arquivo e' a referencia da trava de ordem dos proximos imports:
+          // sem ela gravada aqui, o proximo import nao tem com o que comparar.
+          data_arquivo: dataArquivo || undefined,
+          force: force || undefined,
+          confirmou_anterior: confirmarAnterior || undefined,
           qtd_registros: N(body.qtd_registros), qtd_registrados: N(body.qtd_registrados),
           qtd_liquidados: N(body.qtd_liquidados), qtd_rejeitados: N(body.qtd_rejeitados),
           qtd_nao_localizados: N(body.qtd_nao_localizados),
@@ -424,3 +525,4 @@ module.exports = (app) => ({
 // Exportado para teste unitario do resumo (o loader so usa o default).
 module.exports.resumirBaixa = resumirBaixa;
 module.exports.chaveDoDetalhe = chaveDoDetalhe;
+module.exports.dataDoArquivo = dataDoArquivo;
