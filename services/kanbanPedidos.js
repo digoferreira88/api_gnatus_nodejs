@@ -678,6 +678,8 @@ async function montarKanban(app, filtros = {}) {
 
   const limite = Math.min(500, Math.max(1, N(filtros.limite) || 40));
   const soEtapa = trim(filtros.etapa);
+  // Exportação (relatório): devolve TODOS os cards de cada etapa, sem o teto por coluna.
+  const exportar = /^(1|true|sim|on)$/i.test(String(filtros.exportar || ''));
   const semSemaforo = (p) => (p.semRastreio || p.aguardandoRemessa ? 1 : 0);
   const etapas = ETAPAS.map(e => {
     const lista = pedidos.filter(p => p.etapa === e.codigo);
@@ -686,7 +688,7 @@ async function montarKanban(app, filtros = {}) {
     lista.sort((a, b) => e.codigo === 'entregue'
       ? String(b.entrada).localeCompare(String(a.entrada))
       : (semSemaforo(a) - semSemaforo(b)) || (N(b.slaPct) - N(a.slaPct)) || (b.horasNaEtapa - a.horasNaEtapa));
-    const mostrar = soEtapa ? (soEtapa === e.codigo ? lista.length : 0) : limite;
+    const mostrar = exportar ? lista.length : (soEtapa ? (soEtapa === e.codigo ? lista.length : 0) : limite);
     return {
       codigo: e.codigo, nome: e.nome, slaHoras: cfg.sla[e.codigo] || null,
       total: lista.length,

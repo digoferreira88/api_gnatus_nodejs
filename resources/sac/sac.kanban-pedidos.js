@@ -28,7 +28,7 @@ module.exports = (app) => ({
       const dados = await Kanban.montarKanban(app, {
         ini: q.ini, fim: q.fim, vendedor: q.vendedor, equipe: q.equipe,
         curvaA: liga(q.curvaA), estourado: liga(q.estourado),
-        busca: q.busca, etapa: q.etapa, limite: q.limite
+        busca: q.busca, etapa: q.etapa, limite: q.limite, exportar: q.exportar
       });
       return res.json(dados);
     } catch (err) {
