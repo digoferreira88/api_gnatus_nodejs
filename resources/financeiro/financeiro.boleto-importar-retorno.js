@@ -19,6 +19,20 @@
 //   re-sincronizados a partir da SE1 (services/boletoSincronizar): o LIQUIDADO
 //   vem da verdade do Protheus, nao do detalhes[] da resposta.
 //
+// Contrato R42 (COBR001-20260918, 2026-09-18) — a 1a baixa real (16/09) expos
+// dois defeitos, ambos corrigidos pelo Diego:
+//   (a) a baixa quitava pelo liquido creditado e deixava a TARIFA do banco
+//       (campo 176-188 do .RET) como saldo aberto no titulo. Agora quita pelo
+//       BRUTO (AUTVALREC = 254-266 + tarifa, so banco 341) e a tarifa NAO e'
+//       lancada pela API de proposito: o financeiro ja a lanca pelo extrato
+//       (FINA100, C/C 341/0298/789009) e lancar aqui duplicaria.
+//   (b) o resultado da baixa so vinha em `acao` e o `status` ficava LIQUIDADO,
+//       fazendo a resposta reportar 0 baixas mesmo tendo baixado.
+// Dai as duas regras deste arquivo: comparar status por valor EXATO (ERRO_BAIXA
+// tambem contem "BAIX") e re-sincronizar olhando `status_retorno`.
+// ⚠️ Santander (033) nao foi conferido pelo Diego e nao le tarifa — nao ligar a
+// baixa real no 033 antes de uma previa conferida titulo a titulo.
+//
 // Quem grava no Protheus e' o endpoint do Diego; a intranet so le a SE1.
 // Auditoria CRITICO em qualquer escrita real. Permissao 8005.
 
@@ -34,41 +48,92 @@ const N = (v) => Number(v || 0);
 
 const baixaRealAtiva = () => trim(process.env.BOLETO_BAIXA_RETORNO_ATIVO) === '1';
 
-// Status que o registro (sem baixa) ja devolvia — nao sao "desconhecidos".
-const STATUS_REGISTRO = new Set(['REGISTRADO', 'LIQUIDADO', 'REJEITADO', 'NAO_LOCALIZADO', 'OUTRO']);
+// Status que o registro (sem baixa) devolve — nao sao "desconhecidos".
+// AMBIGUO/NAO_LOCALIZADO tambem aparecem como `acao` no bloco de baixa.
+const STATUS_REGISTRO = new Set(['REGISTRADO', 'LIQUIDADO', 'REJEITADO', 'NAO_LOCALIZADO', 'OUTRO', 'AMBIGUO']);
 
-// Valor efetivamente pago. Nomes seguem o spec; os alternativos cobrem variacao
-// de nomenclatura na resposta da R39, que ainda nao vimos com arquivo real.
-const valorPago = (d) => N(d && (d.valor_pago ?? d.valor_recebido ?? d.valor_liquidado ?? d.valor));
+// Status de baixa que contam como "vai baixar / baixou" (contrato R42).
+// BAIXA_SIMULADA e' a previa: o titulo SERIA baixado.
+const BAIXA_CONTA = new Set(['BAIXADO', 'BAIXA_SIMULADA']);
+
+// Valor da baixa = o que o sacado pagou (AUTVALREC = creditado + tarifa).
+// A partir da R42 vem em `baixa_valor`; os alternativos cobrem R41 e anteriores.
+const valorBaixa = (d) => N(d && (d.baixa_valor ?? d.valor_pago ?? d.valor_recebido ?? d.valor_liquidado ?? d.valor));
 
 /**
  * Resume a parte de BAIXA do detalhes[].
  *
- * O formato exato da resposta da R39 do Diego nao foi conferido contra um
- * arquivo real (o fonte nao esta com a gente). Segue o spec
- * docs/spec-diego-baixa-retorno-fina070.md e e' tolerante a variacoes: status
- * de baixa sao reconhecidos por conteudo (…BAIX…), e qualquer status fora do
- * esperado vai para `status_nao_mapeados`, pra ser revisto na 1a previa.
+ * Contrato R42 (COBR001-20260918, handoff do Diego de 18/09/2026):
+ *   status ∈ BAIXADO | BAIXA_SIMULADA | JA_BAIXADO | ERRO_BAIXA | NAO_LOCALIZADO
+ *   acao   discrimina o ERRO_BAIXA: BAIXA_PARCIAL_ANTERIOR | BAIXA_DIVERGENTE |
+ *          BAIXA_NAO_SUPORTADA | NAO_LOCALIZADO | AMBIGUO | ERRO_BAIXA
+ *   status_retorno guarda o status do REGISTRO (LIQUIDADO).
+ *
+ * ⚠️ Comparar o status por valor EXATO, nunca por substring: `ERRO_BAIXA`
+ * tambem contem "BAIX" e a versao antiga o contava como baixa.
  */
 function resumirBaixa(body) {
   const arr = Array.isArray(body && body.detalhes) ? body.detalhes : [];
-  const resumo = { titulos: 0, valor_total: 0, ja_baixados: 0, erros: 0, status_nao_mapeados: [] };
+  const resumo = {
+    titulos: 0, valor_total: 0, ja_baixados: 0, erros: 0,
+    parciais_anteriores: 0, divergentes: 0, nao_suportados: 0, nao_localizados: 0,
+    tarifa_total: 0, simulada: false, status_nao_mapeados: []
+  };
   const naoMapeados = new Set();
+
   for (const d of arr) {
     const st = trim(d && d.status).toUpperCase();
     if (!st) continue;
-    const ehBaixa = st.includes('BAIX');
-    if (ehBaixa && st.includes('ERRO')) resumo.erros++;
-    else if (ehBaixa && st.startsWith('JA_')) resumo.ja_baixados++;
-    else if (ehBaixa) { resumo.titulos++; resumo.valor_total += valorPago(d); }
-    else if (!STATUS_REGISTRO.has(st)) naoMapeados.add(st);
+    const acao = trim(d && d.acao).toUpperCase();
+
+    if (BAIXA_CONTA.has(st)) {
+      resumo.titulos++;
+      resumo.valor_total += valorBaixa(d);
+      resumo.tarifa_total += N(d && d.baixa_tarifa);
+      if (st === 'BAIXA_SIMULADA') resumo.simulada = true;
+    } else if (st === 'JA_BAIXADO') {
+      resumo.ja_baixados++;
+    } else if (st === 'ERRO_BAIXA') {
+      // Cada motivo tem tratativa diferente; o generico e' recusa da FINA070.
+      if (acao === 'BAIXA_PARCIAL_ANTERIOR') resumo.parciais_anteriores++;
+      else if (acao === 'BAIXA_DIVERGENTE') resumo.divergentes++;
+      else if (acao === 'BAIXA_NAO_SUPORTADA') resumo.nao_suportados++;
+      else if (acao === 'NAO_LOCALIZADO' || acao === 'AMBIGUO') resumo.nao_localizados++;
+      else resumo.erros++;
+    } else if (!STATUS_REGISTRO.has(st)) {
+      naoMapeados.add(st);
+    }
   }
+
   resumo.valor_total = Math.round(resumo.valor_total * 100) / 100;
+  resumo.tarifa_total = Math.round(resumo.tarifa_total * 100) / 100;
   resumo.status_nao_mapeados = [...naoMapeados];
-  // Arquivo com liquidacoes mas nenhuma baixa indicada: ou o formato da resposta
-  // difere do spec, ou o endpoint nao processou a baixa. Nao liberar a baixa
-  // real antes de entender qual dos dois.
-  if (resumo.titulos === 0 && resumo.ja_baixados === 0 && N(body && body.qtd_liquidados) > 0) {
+
+  // A R42 manda os totais no topo. Onde eles existirem, valem: o detalhes[]
+  // pode vir truncado. Guardamos divergencia entre as duas contagens em vez de
+  // escolher em silencio — foi exatamente uma contagem silenciosa que escondeu
+  // a baixa real de 16/09.
+  const topo = (k) => (body && body[k] != null ? N(body[k]) : null);
+  const qtdTopo = topo('qtd_baixada');
+  if (qtdTopo != null && qtdTopo !== resumo.titulos) {
+    resumo.divergencia_contagem = { detalhes: resumo.titulos, topo: qtdTopo };
+    resumo.titulos = qtdTopo;
+  }
+  const tarifaTopo = topo('baixa_tarifa_total');
+  if (tarifaTopo != null) resumo.tarifa_total = tarifaTopo;
+  if (body && body.baixa_simulada === true) resumo.simulada = true;
+
+  // Baixa desligada no proprio Protheus: mostra o motivo dele, nao o nosso.
+  if (body && body.baixa_habilitada === false) {
+    resumo.aviso = trim(body.baixa_motivo) || 'O Protheus respondeu que a baixa nao esta habilitada neste endpoint.';
+    return resumo;
+  }
+
+  // Arquivo com liquidacoes e NENHUMA informacao de baixa na resposta: ou o
+  // formato mudou, ou o endpoint nao processou a baixa. Foi o sintoma da R41.
+  const temInfoBaixa = qtdTopo != null || resumo.titulos || resumo.ja_baixados || resumo.erros
+    || resumo.parciais_anteriores || resumo.divergentes || resumo.nao_suportados || resumo.nao_localizados;
+  if (!temInfoBaixa && N(body && body.qtd_liquidados) > 0) {
     resumo.aviso = `O arquivo tem ${N(body.qtd_liquidados)} liquidação(ões), mas o Protheus não indicou nenhuma baixa. Confira com a TI antes de liberar a baixa real.`;
   }
   return resumo;
@@ -207,8 +272,18 @@ module.exports = (app) => ({
       if (baixar && r.ok) body.resumo_baixa = resumirBaixa(body);
 
       const rb = body.resumo_baixa;
+      // Pendencias de tratativa manual so entram no texto quando existem, pra
+      // auditoria nao virar ruido de zeros.
+      const pend = rb ? [
+        rb.parciais_anteriores && `${rb.parciais_anteriores} com baixa parcial anterior`,
+        rb.divergentes && `${rb.divergentes} divergente(s)`,
+        rb.nao_suportados && `${rb.nao_suportados} não suportado(s)`,
+        rb.nao_localizados && `${rb.nao_localizados} não localizado(s) na baixa`
+      ].filter(Boolean) : [];
       const txtBaixa = rb
         ? ` · baixa${simular ? ' (prévia)' : ''}: ${rb.titulos} título(s), R$ ${rb.valor_total.toFixed(2)}, ${rb.ja_baixados} já baixado(s), ${rb.erros} erro(s)`
+          + (rb.tarifa_total ? `, tarifa R$ ${rb.tarifa_total.toFixed(2)}` : '')
+          + (pend.length ? ` · ${pend.join(', ')}` : '')
         : '';
 
       // Auditoria. Severidade reflete o RESULTADO, nao so o modo:
@@ -293,7 +368,14 @@ module.exports = (app) => ({
         const chaves = [];
         for (const d of (Array.isArray(body.detalhes) ? body.detalhes : [])) {
           const st = trim(d && d.status).toUpperCase();
-          if (st.includes('ERRO') || !(st.includes('BAIX') || st.includes('LIQUID'))) continue;
+          const stRet = trim(d && d.status_retorno).toUpperCase();
+          // R42: `status` passou a carregar o resultado da BAIXA e o LIQUIDADO do
+          // registro migrou para `status_retorno`. Comparacao EXATA — o antigo
+          // includes('BAIX') casava tambem com ERRO_BAIXA.
+          // O 3o termo cobre R41 e anteriores, onde LIQUIDADO vinha em `status`.
+          const baixou = st === 'BAIXADO' || st === 'JA_BAIXADO';
+          const liquidou = stRet === 'LIQUIDADO' || st === 'LIQUIDADO';
+          if (!baixou && !liquidou) continue;
           const c = chaveDoDetalhe(d);
           if (!c) continue;
           const k = `${c.prefixo}|${c.numero}|${c.parcela}`;
