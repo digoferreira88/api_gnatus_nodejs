@@ -154,6 +154,9 @@ module.exports = (app) => ({
         AND SD2.D2_FILIAL = '01'
         AND SD2.D2_CF IN (${cfopList})
         AND SD2.D2_EMISSAO BETWEEN @inicio AND @fim
+        -- Exclui Notas Complementares de ICMS (F2_TIPO='I'): nao sao venda de
+        -- mercadoria, nao tem pedido (sem BU/vendedor) e vem com quantidade 0.
+        AND ISNULL(SF2.F2_TIPO, 'N') <> 'I'
         ${condVendedor}
         ${condBu}
       ORDER BY SD2.D2_EMISSAO, SD2.D2_DOC, SD2.D2_ITEM
@@ -171,6 +174,9 @@ module.exports = (app) => ({
                MAX(RTRIM(X5.X5_DESCRI)) label,
                SUM(SD2.D2_VALBRUT - SD2.D2_VALDEV) total
           FROM SD2010 SD2 WITH (NOLOCK)
+          LEFT JOIN SF2010 SF2 WITH (NOLOCK)
+            ON SF2.F2_FILIAL = SD2.D2_FILIAL AND SF2.F2_DOC = SD2.D2_DOC
+           AND SF2.F2_SERIE = SD2.D2_SERIE AND ISNULL(SF2.D_E_L_E_T_, ' ') = ' '
           LEFT JOIN SC5010 SC5 WITH (NOLOCK)
             ON SC5.C5_FILIAL = SD2.D2_FILIAL AND SC5.C5_NUM = SD2.D2_PEDIDO
            AND ISNULL(SC5.D_E_L_E_T_, ' ') = ' '
@@ -181,6 +187,7 @@ module.exports = (app) => ({
            AND SD2.D2_FILIAL = '01'
            AND SD2.D2_CF IN (${cfopList})
            AND SD2.D2_EMISSAO BETWEEN @inicio AND @fim
+           AND ISNULL(SF2.F2_TIPO, 'N') <> 'I'
          GROUP BY SC5.C5_ZTIPO
          ORDER BY SUM(SD2.D2_VALBRUT - SD2.D2_VALDEV) DESC`;
 
