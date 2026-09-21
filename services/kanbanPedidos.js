@@ -658,11 +658,17 @@ async function montarKanban(app, filtros = {}) {
     .sort((a, b) => a.nome.localeCompare(b.nome));
   const equipesOpc = [...new Set(pedidos.map(p => p.equipe).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
+  // Filtros de MÚLTIPLA seleção: aceitam string única, lista separada por vírgula
+  // ou array (?vendedor[]=A&vendedor[]=B). Set vazio = sem filtro (todos).
+  const toSet = (v) => new Set((Array.isArray(v) ? v : String(v == null ? '' : v).split(',')).map(x => trim(x)).filter(Boolean));
+  const selVend = toSet(filtros.vendedor);
+  const selEquipe = toSet(filtros.equipe);
+
   const busca = trim(filtros.busca).toUpperCase();
   const buscaNum = /^\d{1,6}$/.test(busca) ? busca.padStart(6, '0') : null;
   pedidos = pedidos.filter(p =>
-    (!trim(filtros.vendedor) || p.vendedor.cod === trim(filtros.vendedor)) &&
-    (!trim(filtros.equipe) || p.equipe === trim(filtros.equipe)) &&
+    (selVend.size === 0 || selVend.has(trim(p.vendedor.cod))) &&
+    (selEquipe.size === 0 || selEquipe.has(trim(p.equipe))) &&
     (!filtros.curvaA || p.curvaA) &&
     (!filtros.estourado || p.sla === 'vermelho') &&
     (!busca || (buscaNum
