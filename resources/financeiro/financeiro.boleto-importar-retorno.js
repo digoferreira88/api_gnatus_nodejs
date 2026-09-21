@@ -201,11 +201,102 @@ async function ultimoImportado(Pg, banco, conta) {
      WHERE acao LIKE 'RETORNO_IMPORTAR%'
        AND severidade = 'CRITICO'
        AND meta->>'banco' = @banco
-       AND meta->>'conta_enviada' = @conta
+       -- conta_enviada e' a carteira escolhida na tela; contas_importadas cobre
+       -- o arquivo multi-carteira, onde uma importacao atinge varias.
+       AND (meta->>'conta_enviada' = @conta OR meta->'contas_importadas' ? @conta)
        AND meta->>'data_arquivo' IS NOT NULL
      ORDER BY meta->>'data_arquivo' DESC
      LIMIT 1`, { banco, conta });
   return rows[0] || null;
+}
+
+/**
+ * Carteiras cadastradas do banco, ja no formato que o endpoint do Diego espera
+ * (DbSeek na SA6 por A6_NUMCON). O DV e' concatenado so quando ainda nao vem
+ * embutido — mesma regra do `contaParaSEE` da tela, por causa do cadastro
+ * inconsistente da Gnatus (13000208+dv6 e 130002086+dv6 convivem).
+ *
+ * `chave` sao os 8 primeiros digitos, que e' como a conta aparece na linha do
+ * .RET. Carteiras com letras no numero (13000208IN, APLICACAO) ficam de fora:
+ * nao sao carteiras de cobranca e colidiriam na chave.
+ */
+async function carteirasDoBanco(Protheus, banco) {
+  const rows = await Protheus.connectAndQuery(`
+    SELECT RTRIM(A6_AGENCIA) agencia, RTRIM(A6_NUMCON) numcon,
+           RTRIM(A6_DVCTA) dv, RTRIM(A6_NOME) nome
+      FROM SA6010 WITH (NOLOCK)
+     WHERE D_E_L_E_T_<>'*' AND RTRIM(A6_COD)=@banco`, { banco });
+  return rows
+    .map(r => {
+      const numcon = trim(r.numcon), dv = trim(r.dv);
+      return {
+        agencia: trim(r.agencia), numcon, dv, nome: trim(r.nome),
+        contaSEE: dv && !numcon.endsWith(dv) ? numcon + dv : numcon,
+        chave: numcon.slice(0, 8)
+      };
+    })
+    .filter(c => /^\d{8,}$/.test(c.numcon));
+}
+
+/**
+ * Casa a conta lida da linha do .RET (8 digitos) com a carteira cadastrada.
+ * Devolve null quando nao acha e quando acha mais de uma com contas diferentes
+ * — nos dois casos preferimos parar a adivinhar a carteira, que foi exatamente
+ * o erro que mandou R$ 64 mil para a conta errada em 21/09.
+ */
+function acharCarteira(carteiras, conta) {
+  const c = trim(conta).padStart(8, '0');
+  // Conta zerada nao resolve: no SA6 ela casaria com "CREDITOS NAO
+  // IDENTIFICADOS", uma conta transitoria. Mandar baixa para la
+  // automaticamente e' pior do que parar e chamar alguem.
+  if (/^0+$/.test(c)) return null;
+  const achadas = carteiras.filter(x => x.chave === c);
+  if (!achadas.length) return null;
+  const distintas = [...new Set(achadas.map(x => x.contaSEE))];
+  return distintas.length === 1 ? achadas[0] : null;
+}
+
+/**
+ * Junta as respostas das varias carteiras numa so, no formato que o resto do
+ * handler (e a tela) ja espera, guardando o detalhamento em `grupos[]`.
+ * Contadores somam; `detalhes[]` concatena.
+ */
+function mesclarPartes(resultados, baixar) {
+  const SOMAR = [
+    'qtd_registros', 'qtd_registrados', 'qtd_liquidados', 'qtd_rejeitados',
+    'qtd_nao_localizados', 'qtd_outros', 'qtd_baixada', 'qtd_baixa_ja_baixado',
+    'qtd_baixa_erro', 'baixa_tarifa_total'
+  ];
+  const body = { ok: true, detalhes: [], grupos: [] };
+  const filtro = { removidos: 0, mantidos: 0, total: 0 };
+  let httpStatus = 200, ok = true, temFiltro = false;
+
+  for (const res of resultados) {
+    const b = res.r.body || {};
+    if (!res.r.ok) { ok = false; if (httpStatus === 200) httpStatus = res.r.httpStatus || 502; }
+    SOMAR.forEach(k => { if (b[k] != null) body[k] = Math.round((N(body[k]) + N(b[k])) * 100) / 100; });
+    if (Array.isArray(b.detalhes)) body.detalhes.push(...b.detalhes);
+    ['layout', 'banco', 'build_tag'].forEach(k => { if (!body[k] && b[k]) body[k] = b[k]; });
+    if (res.filtro) {
+      temFiltro = true;
+      filtro.removidos += res.filtro.removidos;
+      filtro.mantidos += res.filtro.mantidos;
+      filtro.total += res.filtro.total;
+    }
+    body.grupos.push({
+      conta: res.conta, agencia: res.agencia, carteira: res.nome || undefined,
+      linhas: res.parte.linhas, ok: res.r.ok, httpStatus: res.r.httpStatus,
+      codigo_erro: b.codigo_erro, mensagem: b.mensagem,
+      qtd_registros: N(b.qtd_registros), qtd_registrados: N(b.qtd_registrados),
+      qtd_liquidados: N(b.qtd_liquidados), qtd_rejeitados: N(b.qtd_rejeitados),
+      qtd_nao_localizados: N(b.qtd_nao_localizados),
+      filtro_ja_baixados: res.filtro || undefined,
+      resumo_baixa: baixar && res.r.ok ? resumirBaixa(b) : undefined
+    });
+  }
+  body.ok = ok;
+  if (temFiltro) body.filtro_ja_baixados = filtro;
+  return { ok, httpStatus, body };
 }
 
 // Consulta a SE1 quais (prefixo,numero,parcela) estao com E1_STATUS='B'
@@ -322,42 +413,94 @@ module.exports = (app) => ({
       // ANTES de enviar — destravando os registros/baixas das demais linhas.
       // Com baixar:true continua valido: titulo ja baixado nao tem o que baixar.
       // So Santander; Itau (341) funciona e nao e' tocado.
-      let conteudoEnvio = conteudoBase64;
-      let filtro = null;
-      if (banco === '033') {
-        try {
-          const texto = Buffer.from(conteudoBase64, 'base64').toString('latin1');
-          const chaves = CnabFiltro.extrairChaves(texto);
-          if (chaves.length) {
-            const baixados = await buscarBaixados(app.services.Protheus, chaves);
-            if (baixados.size) {
-              const res2 = CnabFiltro.filtrarBaixados(texto, baixados);
-              if (res2.removidos.length) {
-                conteudoEnvio = Buffer.from(res2.conteudo, 'latin1').toString('base64');
-                filtro = { removidos: res2.removidos.length, mantidos: res2.mantidos, total: res2.total };
-                console.log(`boleto-importar-retorno: filtro Santander removeu ${res2.removidos.length} titulo(s) ja baixado(s) de ${res2.total}`);
-              }
-            }
-          }
-        } catch (e) {
-          // Filtro e' best-effort: se falhar, manda o arquivo original (Diego
-          // pode estourar, mas nao pioramos o cenario).
-          console.warn('boleto-importar-retorno: falha no pre-filtro Santander —', e.message);
+      const textoOriginal = Buffer.from(conteudoBase64, 'base64').toString('latin1');
+      const partes = CnabFiltro.dividirPorConta(textoOriginal, banco);
+      const multi = partes.length > 1;
+
+      // Resolve TODAS as carteiras ANTES de executar qualquer uma: importar pela
+      // metade seria pior do que nao importar.
+      let carteiras = [];
+      if (multi) {
+        carteiras = await carteirasDoBanco(app.services.Protheus, banco);
+        const orfas = partes.filter(p => !acharCarteira(carteiras, p.conta)).map(p => p.conta);
+        if (orfas.length) {
+          Auditoria.registrar(app, {
+            modulo: 'Financeiro', submodulo: 'EnvioBoleto',
+            acao: 'RETORNO_CARTEIRA_AUSENTE', severidade: 'AVISO', req,
+            entidade: 'boleto_retorno_arquivo', entidadeId: nomeArquivo || '(sem nome)',
+            descricao: `Bloqueou o retorno ${nomeArquivo || '(arquivo)'}: conta(s) ${orfas.join(', ')} sem carteira cadastrada no banco ${banco}`,
+            meta: { arquivo: nomeArquivo, banco, contas_no_arquivo: partes.map(p => p.conta), orfas }
+          });
+          return res.status(409).json({
+            ok: false, codigo_erro: 'CARTEIRA_NAO_ENCONTRADA',
+            contas_no_arquivo: partes.map(p => p.conta), contas_sem_carteira: orfas,
+            mensagem: `O arquivo tem título(s) da(s) conta(s) ${orfas.join(', ')}, que não está(ão) cadastrada(s) como carteira do banco ${banco}. Cadastre no Protheus (SA6) ou confira o arquivo — a intranet não escolhe carteira por conta própria.`
+          });
+        }
+      } else if (!simular && banco === '033' && partes[0].conta) {
+        // Arquivo de uma conta so: confere se e' mesmo a carteira escolhida na
+        // tela. Mandar para a carteira errada foi o erro de 21/09.
+        const doArquivo = trim(partes[0].conta).padStart(8, '0');
+        const daTela = trim(conta).replace(/\D/g, '').slice(0, 8);
+        if (daTela && doArquivo !== daTela) {
+          return res.status(409).json({
+            ok: false, codigo_erro: 'CARTEIRA_DIVERGENTE',
+            conta_no_arquivo: doArquivo, conta_selecionada: trim(conta),
+            mensagem: `O arquivo é da conta ${doArquivo}, mas a carteira escolhida é ${trim(conta)}. Selecione a carteira correta antes de importar.`
+          });
         }
       }
 
-      const r = await ProtheusRetorno.importar({
-        filial: '01',
-        banco,
-        agencia,
-        conta,
-        nomeArquivo,
-        conteudoBase64: conteudoEnvio,
-        operador: operadorEmail,
-        simular,
-        baixar,
-        force
-      });
+      const resultados = [];
+      for (const parte of partes) {
+        const cart = multi ? acharCarteira(carteiras, parte.conta) : null;
+        const contaParte = cart ? cart.contaSEE : conta;
+        const agenciaParte = cart ? cart.agencia : agencia;
+        let texto = multi ? parte.conteudo : textoOriginal;
+        let filtroParte = null;
+
+        // ===== Pre-filtro Santander (033): remove linhas de titulo JA BAIXADO =====
+        // O endpoint do Diego estourava HTTP 500 ao reprocessar a liquidacao de
+        // um titulo ja baixado (E1_STATUS='B'). Como sao no-op, removemos antes
+        // de enviar — destravando os registros/baixas das demais linhas. Com
+        // baixar:true continua valido: titulo baixado nao tem o que baixar.
+        if (banco === '033') {
+          try {
+            const chaves = CnabFiltro.extrairChaves(texto);
+            if (chaves.length) {
+              const baixados = await buscarBaixados(app.services.Protheus, chaves);
+              if (baixados.size) {
+                const res2 = CnabFiltro.filtrarBaixados(texto, baixados);
+                if (res2.removidos.length) {
+                  texto = res2.conteudo;
+                  filtroParte = { removidos: res2.removidos.length, mantidos: res2.mantidos, total: res2.total };
+                  console.log(`boleto-importar-retorno: filtro removeu ${res2.removidos.length} de ${res2.total} (conta ${contaParte})`);
+                }
+              }
+            }
+          } catch (e) {
+            // Best-effort: se o filtro falhar, manda o arquivo como veio.
+            console.warn('boleto-importar-retorno: falha no pre-filtro Santander —', e.message);
+          }
+        }
+
+        const rp = await ProtheusRetorno.importar({
+          filial: '01', banco, agencia: agenciaParte, conta: contaParte, nomeArquivo,
+          conteudoBase64: Buffer.from(texto, 'latin1').toString('base64'),
+          operador: operadorEmail, simular, baixar, force
+        });
+        resultados.push({
+          parte, conta: contaParte, agencia: agenciaParte,
+          nome: cart ? cart.nome : '', filtro: filtroParte, r: rp
+        });
+
+        // Numa importacao REAL, se uma carteira falhar nao seguimos para a
+        // proxima: melhor parar e mostrar do que espalhar meia importacao.
+        if (!simular && !rp.ok) break;
+      }
+
+      const r = multi ? mesclarPartes(resultados, baixar) : resultados[0].r;
+      const filtro = multi ? null : resultados[0].filtro;
 
       const body = r.body || {};
       // Ecoa o modo pro front: o import real sempre repete o modo simulado.
@@ -365,6 +508,7 @@ module.exports = (app) => ({
       body.baixar = baixar;
       body.baixa_real_ativa = baixaRealAtiva();
       if (filtro) body.filtro_ja_baixados = filtro;
+      if (multi) body.contas_no_arquivo = partes.map(p => p.conta);
       if (baixar && r.ok) body.resumo_baixa = resumirBaixa(body);
 
       const rb = body.resumo_baixa;
@@ -410,6 +554,10 @@ module.exports = (app) => ({
           data_arquivo: dataArquivo || undefined,
           force: force || undefined,
           confirmou_anterior: confirmarAnterior || undefined,
+          // Arquivo multi-carteira: sem isto, a trava de ordem so protegeria a
+          // carteira que estava selecionada na tela.
+          contas_importadas: resultados.map(x => x.conta).filter(Boolean),
+          grupos: body.grupos || undefined,
           qtd_registros: N(body.qtd_registros), qtd_registrados: N(body.qtd_registrados),
           qtd_liquidados: N(body.qtd_liquidados), qtd_rejeitados: N(body.qtd_rejeitados),
           qtd_nao_localizados: N(body.qtd_nao_localizados),
@@ -526,3 +674,5 @@ module.exports = (app) => ({
 module.exports.resumirBaixa = resumirBaixa;
 module.exports.chaveDoDetalhe = chaveDoDetalhe;
 module.exports.dataDoArquivo = dataDoArquivo;
+module.exports.acharCarteira = acharCarteira;
+module.exports.mesclarPartes = mesclarPartes;

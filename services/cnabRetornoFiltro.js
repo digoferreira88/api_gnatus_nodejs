@@ -103,6 +103,75 @@ function parseDetalhesPorBanco(conteudo, banco) {
     : parseDetalhes(conteudo);
 }
 
+// ===================== CONTA POR LINHA (multi-carteira) =====================
+// No Santander o bloco 18-37 da linha-detalhe e' agencia(4) + conta do
+// CONVENIO(8) + conta do TITULO(8). Um mesmo arquivo traz titulos de carteiras
+// diferentes — confirmado nos retornos de 01/06, 15/09 e 21/09/2026, todos
+// misturando 13000208 e 29000258.
+//
+// 🔴 Ignorar isso custou caro: na baixa de 21/09 a intranet mandou UMA conta
+// para o arquivo inteiro e 28 movimentos (R$ 64.025,26) foram gravados na conta
+// errada, quebrando a conciliacao bancaria. Dai esta divisao.
+//
+// Itau (341) NAO mistura: conta unica no arquivo (posicoes 22-29). Bancos fora
+// do mapa devolvem uma parte so, com o comportamento de antes.
+const CONTA_POR_LINHA = { '033': [30, 37] };
+
+/** Conta do titulo na linha-detalhe; '' quando o banco nao tem conta por linha. */
+function contaDaLinha(linha, banco) {
+  const faixa = CONTA_POR_LINHA[String(banco || '').trim()];
+  if (!faixa) return '';
+  const v = String(linha || '').slice(faixa[0] - 1, faixa[1]).trim();
+  return /^\d{1,8}$/.test(v) ? v : '';
+}
+
+/** As contas distintas presentes nas linhas-detalhe, em ordem de aparicao. */
+function contasDoArquivo(conteudo, banco) {
+  const out = [];
+  for (const l of String(conteudo || '').split(/\r?\n/)) {
+    if (!l || l[0] !== '1') continue;
+    const c = contaDaLinha(l, banco);
+    if (c && !out.includes(c)) out.push(c);
+  }
+  return out;
+}
+
+/**
+ * Divide o .RET por conta do titulo. Cada parte leva o MESMO header e trailer
+ * e a sequencia renumerada, igual ao que o filtro de ja-baixados ja fazia.
+ *
+ * Devolve [{ conta, conteudo, linhas }]. Uma unica parte (conta '') quando o
+ * banco nao tem conta por linha ou quando o arquivo so tem uma.
+ */
+function dividirPorConta(conteudo, banco) {
+  const contas = contasDoArquivo(conteudo, banco);
+  if (contas.length <= 1) {
+    return [{ conta: contas[0] || '', conteudo, linhas: null }];
+  }
+
+  const eol = String(conteudo).includes('\r\n') ? '\r\n' : '\n';
+  const linhas = String(conteudo).split(/\r?\n/);
+  const temVaziaFinal = linhas.length && linhas[linhas.length - 1] === '';
+  const corpo = temVaziaFinal ? linhas.slice(0, -1) : linhas;
+  if (corpo.length < 3) return [{ conta: contas[0] || '', conteudo, linhas: null }];
+
+  const header = corpo[0];
+  const trailer = corpo[corpo.length - 1];
+  const detalhes = corpo.slice(1, -1);
+  const L = header.length;
+  const larguraUnica = corpo.every(l => l.length === L) && L > 6;
+  const renum = (l, n) => larguraUnica ? (l.slice(0, L - 6) + String(n).padStart(6, '0')) : l;
+
+  return contas.map(conta => {
+    // Linha que nao parseia a conta fica FORA das partes, de proposito: melhor
+    // perder uma linha ilegivel do que manda-la para a carteira errada.
+    const meus = detalhes.filter(l => contaDaLinha(l, banco) === conta);
+    let seq = 1;
+    const out = [renum(header, seq++), ...meus.map(l => renum(l, seq++)), renum(trailer, seq)];
+    return { conta, conteudo: out.join(eol) + eol, linhas: meus.length };
+  });
+}
+
 // Lista as chaves de todas as linhas-detalhe (tipo '1') de um conteudo CNAB.
 function extrairChaves(conteudo) {
   const linhas = String(conteudo || '').split(/\r?\n/);
@@ -155,4 +224,8 @@ function filtrarBaixados(conteudo, baixadosSet) {
   return { conteudo: out.join(eol) + eol, removidos, mantidos: mantidos.length, total: detalhes.length };
 }
 
-module.exports = { filtrarBaixados, extrairChaves, chaveLinha, parseDetalhes, parseDetalhesBradesco, parseDetalhesPorBanco };
+module.exports = {
+  filtrarBaixados, extrairChaves, chaveLinha,
+  parseDetalhes, parseDetalhesBradesco, parseDetalhesPorBanco,
+  contaDaLinha, contasDoArquivo, dividirPorConta
+};
