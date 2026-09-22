@@ -85,6 +85,25 @@ module.exports = (app) => ({
         { cod, loja }
       );
 
+      // 2b) Status de cobrança definido POR TÍTULO (refina o status do cliente).
+      const stTitRows = await Pg.connectAndQuery(
+        `SELECT s.titulo_prefixo AS prefixo, s.titulo_num AS numero, s.titulo_parcela AS parcela,
+                s.titulo_tipo AS tipo, s.status AS status, s.observacao AS observacao,
+                s.dt_atualizacao AS dt_atualizacao, u.NOME AS user_nome
+           FROM tab_cobranca_status_titulo s
+           LEFT JOIN tab_intranet_usr u ON u.ID = s.id_user
+          WHERE s.cliente_cod = @cod AND s.cliente_loja = @loja`,
+        { cod, loja }
+      );
+      const keyTit = (p, n, pa, ti) => `${trim(p)}|${trim(n)}|${trim(pa)}|${trim(ti)}`;
+      const stTitMap = {};
+      stTitRows.forEach(r => {
+        stTitMap[keyTit(r.prefixo, r.numero, r.parcela, r.tipo)] = {
+          status: trim(r.status), observacao: r.observacao || '',
+          dtAtualizacao: r.dt_atualizacao, userNome: trim(r.user_nome)
+        };
+      });
+
       const titulos = tits.map(t => {
         const d = toNumber(t.diasAtraso);
         return {
@@ -96,7 +115,8 @@ module.exports = (app) => ({
           portadorNome: trim(t.portadorNome) || BANCOS[trim(t.portador)] || trim(t.portador) || '—',
           buCod: trim(t.buCod),
           buNome: trim(t.buNome) || trim(t.buCod) || '—',
-          faixa: faixaAtraso(d)
+          faixa: faixaAtraso(d),
+          statusTitulo: stTitMap[keyTit(t.prefixo, t.numero, t.parcela, t.tipo)] || null
         };
       });
 
