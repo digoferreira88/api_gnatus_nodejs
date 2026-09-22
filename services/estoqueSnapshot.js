@@ -50,7 +50,10 @@ async function lerSaldoAtual(Protheus) {
            sb1.B1_PE           lead_time_dias,
            sb2.B2_QATU  qtd_estoque,
            sb2.B2_CM1   custo_medio,
-           sb2.B2_VATU1 valor_estoque
+           sb2.B2_VATU1 valor_estoque,
+           -- Painel de Estoque (Compras) alterna o gráfico entre valor em estoque e
+           -- valor empenhado; sem esta coluna a série de empenho não existiria.
+           (sb2.B2_QEMP * sb2.B2_CM1) valor_empenho
       FROM SB2010 sb2 WITH (NOLOCK)
       LEFT JOIN SB1010 sb1 WITH (NOLOCK)
         ON sb1.B1_COD = sb2.B2_COD AND sb1.D_E_L_E_T_ <> '*'
@@ -200,11 +203,11 @@ async function atualizar(app, { meses = 1 } = {}) {
         await Pg.connectAndQuery(`
           INSERT INTO tab_estoque_snapshot_mensal (
             ano_mes, cod_produto, armazem, tipo_produto, descricao, grupo,
-            qtd_estoque, custo_medio, valor_estoque,
+            qtd_estoque, custo_medio, valor_estoque, valor_empenho,
             qtd_saidas_mes, valor_saidas_mes
           ) VALUES (
             @anoMes, @cod, @arm, @tipo, @desc, @grupo,
-            @qtd, @cm, @valor,
+            @qtd, @cm, @valor, @empenho,
             @qtds, @vsaidas
           )
           ON CONFLICT (ano_mes, cod_produto, armazem)
@@ -215,6 +218,7 @@ async function atualizar(app, { meses = 1 } = {}) {
             qtd_estoque  = EXCLUDED.qtd_estoque,
             custo_medio  = EXCLUDED.custo_medio,
             valor_estoque= EXCLUDED.valor_estoque,
+            valor_empenho= EXCLUDED.valor_empenho,
             qtd_saidas_mes  = EXCLUDED.qtd_saidas_mes,
             valor_saidas_mes= EXCLUDED.valor_saidas_mes,
             snapshot_em  = NOW()`,
@@ -226,6 +230,7 @@ async function atualizar(app, { meses = 1 } = {}) {
             qtd: Number(r.qtd_estoque || 0),
             cm: Number(r.custo_medio || 0),
             valor: Number(r.valor_estoque || 0),
+            empenho: Number(r.valor_empenho || 0),
             qtds: sa.qtd,
             vsaidas: sa.valor
           }
@@ -307,6 +312,7 @@ async function _doRefrescarMesCorrente(app, { maxIdadeMin }) {
       qtd_estoque: Number(r.qtd_estoque || 0),
       custo_medio: Number(r.custo_medio || 0),
       valor_estoque: Number(r.valor_estoque || 0),
+      valor_empenho: Number(r.valor_empenho || 0),
       qtd_saidas_mes: sa.qtd, valor_saidas_mes: sa.valor
     };
   });
@@ -316,17 +322,18 @@ async function _doRefrescarMesCorrente(app, { maxIdadeMin }) {
   await Pg.connectAndQuery(`
     INSERT INTO tab_estoque_snapshot_mensal
       (ano_mes, cod_produto, armazem, tipo_produto, descricao, grupo,
-       qtd_estoque, custo_medio, valor_estoque, qtd_saidas_mes, valor_saidas_mes, snapshot_em)
+       qtd_estoque, custo_medio, valor_estoque, valor_empenho, qtd_saidas_mes, valor_saidas_mes, snapshot_em)
     SELECT @anoMes, x.cod_produto, x.armazem, x.tipo_produto, x.descricao, x.grupo,
-           x.qtd_estoque, x.custo_medio, x.valor_estoque, x.qtd_saidas_mes, x.valor_saidas_mes, NOW()
+           x.qtd_estoque, x.custo_medio, x.valor_estoque, x.valor_empenho, x.qtd_saidas_mes, x.valor_saidas_mes, NOW()
       FROM jsonb_to_recordset(@json::jsonb) AS x(
         cod_produto text, armazem text, tipo_produto text, descricao text, grupo text,
-        qtd_estoque numeric, custo_medio numeric, valor_estoque numeric,
+        qtd_estoque numeric, custo_medio numeric, valor_estoque numeric, valor_empenho numeric,
         qtd_saidas_mes numeric, valor_saidas_mes numeric)
     ON CONFLICT (ano_mes, cod_produto, armazem) DO UPDATE SET
       tipo_produto = EXCLUDED.tipo_produto, descricao = EXCLUDED.descricao, grupo = EXCLUDED.grupo,
       qtd_estoque = EXCLUDED.qtd_estoque, custo_medio = EXCLUDED.custo_medio,
-      valor_estoque = EXCLUDED.valor_estoque, qtd_saidas_mes = EXCLUDED.qtd_saidas_mes,
+      valor_estoque = EXCLUDED.valor_estoque, valor_empenho = EXCLUDED.valor_empenho,
+      qtd_saidas_mes = EXCLUDED.qtd_saidas_mes,
       valor_saidas_mes = EXCLUDED.valor_saidas_mes, snapshot_em = NOW()`,
     { anoMes, json });
 
