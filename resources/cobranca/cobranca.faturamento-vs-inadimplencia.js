@@ -206,6 +206,9 @@ module.exports = (app) => ({
           // saldo em aberto; por vencimento e o valor que venceu no mes.
           contasReceber: Number(cr.toFixed(2)),
           emAberto: Number(toN(r.emAberto).toFixed(2)),
+          // faturado = faturamento REAL do mes (NF de venda); preenchido abaixo,
+          // apos a consulta de faturamento. Usado pela aba do dashboard de cobranca.
+          faturado: 0,
           inadimplencia: Number(inad.toFixed(2)),
           qtdTitulos: toN(r.qtdInad),
           pctInadimplencia: Number(pct.toFixed(2))
@@ -221,11 +224,14 @@ module.exports = (app) => ({
 
       // Prazo Medio de Recebimento (DSO) = contas a receber / (faturamento do periodo / dias).
       // Faturamento = NF de saida (SF2/SD2, CFOPs de venda) do mesmo periodo/filtros.
+      // Faturamento REAL (NF de venda) por MES de emissao da nota. Alimenta o PMR
+      // (soma do periodo) e a coluna/serie "Faturamento" da aba do dashboard.
       let totFat = 0;
+      const fatPorMes = {};
       try {
         const cfopList = CFOPS_VENDA.map(c => `'${c}'`).join(',');
         const fatRows = await Protheus.connectAndQuery(`
-          SELECT SUM(sd2.D2_VALBRUT) faturado
+          SELECT SUBSTRING(sf2.F2_EMISSAO, 1, 6) ymes, SUM(sd2.D2_VALBRUT) faturado
             FROM SF2010 sf2 WITH (NOLOCK)
             INNER JOIN SD2010 sd2 WITH (NOLOCK)
               ON sd2.D2_FILIAL = sf2.F2_FILIAL AND sd2.D2_DOC = sf2.F2_DOC
@@ -236,10 +242,13 @@ module.exports = (app) => ({
            WHERE sf2.D_E_L_E_T_ <> '*' AND sf2.F2_FILIAL = '01'
              AND sf2.F2_EMISSAO BETWEEN @ini AND @fim
              ${fi.fatWhere}
-             ${excluiSql('sf2.F2_CLIENTE', 'sf2.F2_LOJA')}`,
+             ${excluiSql('sf2.F2_CLIENTE', 'sf2.F2_LOJA')}
+           GROUP BY SUBSTRING(sf2.F2_EMISSAO, 1, 6)`,
           sqlParams);
-        totFat = toN(fatRows[0]?.faturado);
-      } catch (e) { console.warn('fat-vs-inad faturamento(PMR):', e.message); }
+        fatRows.forEach(r => { const y = trim(r.ymes); const v = toN(r.faturado); if (y) fatPorMes[y] = v; totFat += v; });
+      } catch (e) { console.warn('fat-vs-inad faturamento:', e.message); }
+      // Anexa o faturamento do mes a cada ponto da serie (0 quando nao houve NF no mes).
+      serie.forEach(s => { s.faturado = Number(toN(fatPorMes[s.ymes]).toFixed(2)); });
       const iniDate = new Date(anoMin, 0, 1).getTime();
       const fimDate = Math.min(Date.now(), new Date(anoMax, 11, 31).getTime());
       const diasPeriodo = Math.max(1, Math.round((fimDate - iniDate) / 86400000));
@@ -450,6 +459,7 @@ module.exports = (app) => ({
         totais: {
           contasReceber: Number(totCR.toFixed(2)),       // BASE do % (ver rotulo_base)
           emAberto: Number(totAberto.toFixed(2)),         // saldo ainda em aberto do universo
+          faturado: Number(totFat.toFixed(2)),            // faturamento real do periodo (NF de venda)
           inadimplencia: Number(totInad.toFixed(2)),
           pctInadimplencia: Number(pctAtual.toFixed(2)),
           qtdTitulosInad: totQtd,
