@@ -297,8 +297,12 @@ async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
   resumo.sa1 = sa1.length;
   const estado = await carregarEstado(Pg);
 
-  // mais NOVOS primeiro (código desc) — cliente recém-cadastrado não espera o backfill
-  const norm = sa1.map(normalizar).sort((a, b) => (a.codigo < b.codigo ? 1 : a.codigo > b.codigo ? -1 : 0));
+  // mais NOVOS primeiro: código numérico DESC (Protheus incrementa sequencial, então
+  // maior número = mais recente). Códigos não-numéricos (séries legadas "LY0xxx",
+  // letras avulsas) vão por ÚLTIMO — senão ordenariam acima de "0..." e o backfill
+  // gastaria dias neles antes dos clientes numéricos novos.
+  const ordKey = (c) => (/^\d+$/.test(c) ? parseInt(c, 10) : -1);
+  const norm = sa1.map(normalizar).sort((a, b) => ordKey(b.codigo) - ordKey(a.codigo));
 
   const toCreate = [];
   const toUpdate = [];
