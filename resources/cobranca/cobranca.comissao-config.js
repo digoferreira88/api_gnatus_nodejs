@@ -1,8 +1,8 @@
 // GET /cobranca/comissao/config — config da comissão (colaborador, faixas, BUs
-// excluídas) + BUs disponíveis (live) + colaboradores p/ os selects. Perm 9005 (gestora).
+// excluídas) + BUs disponíveis (live) + colaboradores p/ os selects. Perm 9006 (gestão).
 const Comissao = require('../../services/cobrancaComissao');
 const trim = (v) => String(v == null ? '' : v).trim();
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9005, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9006, 0]);
 
 module.exports = (app) => ({
   verb: 'get',

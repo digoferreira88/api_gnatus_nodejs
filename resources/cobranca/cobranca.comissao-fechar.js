@@ -1,7 +1,7 @@
 // POST /cobranca/comissao/fechar { anoMes, reabrir? } — congela (ou reabre) a
-// comissão apurada de um mês, p/ o financeiro/RH pagar sem recalcular. Perm 9005.
+// comissão apurada de um mês, p/ o financeiro/RH pagar sem recalcular. Perm 9006.
 const Comissao = require('../../services/cobrancaComissao');
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9005, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9006, 0]);
 
 module.exports = (app) => ({
   verb: 'post',

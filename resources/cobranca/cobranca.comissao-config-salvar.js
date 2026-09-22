@@ -1,7 +1,7 @@
 // PUT /cobranca/comissao/config — salva colaborador cobrador + faixas + BUs
-// excluídas (substitui as listas por completo). Perm 9005 (gestora).
+// excluídas (substitui as listas por completo). Perm 9006 (gestão).
 const trim = (v) => String(v == null ? '' : v).trim();
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9005, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9006, 0]);
 
 module.exports = (app) => ({
   verb: 'put',

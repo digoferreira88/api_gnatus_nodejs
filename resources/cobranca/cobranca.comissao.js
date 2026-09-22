@@ -1,8 +1,8 @@
 // GET /cobranca/comissao?anoMes=YYYYMM — apura a comissão do mês (competência =
-// mês da baixa). Retorna totais + detalhe título a título + se está fechado. Perm 9005.
+// mês da baixa). Retorna totais + detalhe título a título + se está fechado. Perm 9006.
 const Comissao = require('../../services/cobrancaComissao');
 const toN = (v) => Number(v || 0);
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9005, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9006, 0]);
 
 module.exports = (app) => ({
   verb: 'get',
