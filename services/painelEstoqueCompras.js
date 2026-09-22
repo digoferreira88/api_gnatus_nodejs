@@ -20,6 +20,8 @@
 // atrasada/futura pelo mês vigente e calcula disponibilidade. Nada disso é feito aqui —
 // mandar nível de linha preserva o corte dinâmico da carteira (regra R5 do contexto).
 
+const Carteira = require('./carteiraRegras');
+
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 const n2 = (v) => Math.round(N(v) * 100) / 100;
@@ -66,17 +68,18 @@ async function lerPedidosCompra(Protheus) {
        AND RTRIM(C7_RESIDUO) <> 'S' AND (C7_QUANT - C7_QUJE) > 0`, {});
 }
 
-// Carteira de pedidos, nível de linha. Item com resíduo eliminado (C6_BLQ='R') é
-// cancelamento e não conta, mesma regra do Kanban de Pedidos.
+// Carteira de pedidos, nível de linha — MESMA regra do export .xlsx da tela de
+// Carteira (resources/vendas/vendas.carteira-detalhe.js), que é justamente o arquivo
+// que Compras subia no painel. Regra compartilhada em services/carteiraRegras.js.
 async function lerCarteira(Protheus) {
   return Protheus.connectAndQuery(`
     SELECT RTRIM(c6.C6_PRODUTO) cod, RTRIM(c6.C6_DESCRI) descricao,
            (c6.C6_QTDVEN - c6.C6_QTDENT) saldo, c6.C6_ENTREG dataEntrega
       FROM SC6010 c6 WITH (NOLOCK)
-      JOIN SC5010 c5 WITH (NOLOCK) ON c5.C5_FILIAL = c6.C6_FILIAL AND c5.C5_NUM = c6.C6_NUM
-           AND c5.D_E_L_E_T_ <> '*'
-     WHERE c6.D_E_L_E_T_ <> '*' AND c6.C6_FILIAL = '01'
-       AND (c6.C6_QTDVEN - c6.C6_QTDENT) > 0 AND RTRIM(c6.C6_BLQ) <> 'R'`, {});
+      JOIN SC5010 c5 WITH (NOLOCK) ON c5.C5_NUM = c6.C6_NUM AND c5.C5_FILIAL = '01' AND c5.D_E_L_E_T_ <> '*'
+      JOIN SA1010 sa1 WITH (NOLOCK) ON sa1.A1_COD = c5.C5_CLIENTE AND sa1.A1_LOJA = c5.C5_LOJACLI AND sa1.D_E_L_E_T_ <> '*'
+      JOIN SB1010 sb1 WITH (NOLOCK) ON sb1.B1_FILIAL = '' AND sb1.B1_COD = c6.C6_PRODUTO AND sb1.D_E_L_E_T_ <> '*'
+     WHERE c6.D_E_L_E_T_ <> '*' AND c6.C6_FILIAL = '01' AND ${Carteira.filtroSql('c6')}`, {});
 }
 
 async function lerEstrutura(Protheus) {

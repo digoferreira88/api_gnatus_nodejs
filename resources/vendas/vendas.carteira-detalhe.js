@@ -18,7 +18,10 @@ const trim = (v) => String(v == null ? '' : v).trim();
 const up   = (v) => trim(v).toUpperCase();
 const N    = (v) => Number(v || 0);
 
-const CFOPS_CARTEIRA = ['5105','5106','5116','5117','5119','5405','5933','6105','6106','6107','6108','6110','6116','6117','6119','6122','6123','6404','6933','5924'];
+// Regra da carteira (CFOPs + saldo + bloqueio) em services/carteiraRegras.js — o
+// Painel de Estoque do Compras consome a MESMA regra, porque o arquivo que eles
+// subiam no painel era este export.
+const Carteira = require('../../services/carteiraRegras');
 
 const FORMAS_PGTO = {
   '1':'Cheque','2':'Dinheiro','3':'Cartão','4':'Boleto','5':'Não informado',
@@ -68,7 +71,6 @@ module.exports = (app) => ({
       vendRows.forEach(v => vendMap.set(trim(v.cod), trim(v.nome)));
       const vendNome = (cod) => { const c = trim(cod); return c && vendMap.get(c) ? up(vendMap.get(c)) : 'DESCONHECIDO'; };
 
-      const cfopList = CFOPS_CARTEIRA.map(c => `'${c}'`).join(',');
       const params = {};
       let condVend = '';
       if (vendedor) { condVend = `AND (sc5.C5_VEND1 = @vend OR sc5.C5_VEND2 = @vend OR sc5.C5_VEND3 = @vend)`; params.vend = vendedor; }
@@ -116,8 +118,7 @@ module.exports = (app) => ({
           ON bu.X5_FILIAL = '  ' AND bu.X5_TABELA = 'Z1' AND RTRIM(bu.X5_CHAVE) = RTRIM(sc5.C5_ZTIPO) AND bu.D_E_L_E_T_ <> '*'
         WHERE sc6.C6_FILIAL = '01' AND sc6.D_E_L_E_T_ <> '*' AND sc5.D_E_L_E_T_ <> '*'
           AND sb1.D_E_L_E_T_ <> '*' AND sa1.D_E_L_E_T_ <> '*' AND sc5.C5_FILIAL = '01'
-          AND sc6.C6_CF IN (${cfopList})
-          AND (sc6.C6_QTDVEN - sc6.C6_QTDENT) > 0 AND sc6.C6_BLQ = ' '
+          AND ${Carteira.filtroSql('sc6')}
           ${condVend}
         ORDER BY sc5.C5_ZTIPO, sc6.C6_NUM, sc6.C6_ITEM`;
 
