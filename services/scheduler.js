@@ -248,6 +248,12 @@ const CRON_ESTOQUE_SNAPSHOT = '0 3 * * *';  // 03:00 todo dia
 // (~14 runs/dia vs 96 antes). Antes era '*/15 * * * *' e amplificava qualquer churn.
 const CRON_PIPEFY_OP = '0 7-20 * * 1-5';    // 07:00..20:00, de hora em hora, seg-sex
 
+// SA1 (Protheus) -> database CLIENTES do Pipefy: cria os que faltam (represado
+// pelo teto diário) e espelha mudanças. Dormente sem PIPEFY_CLIENTES_ATIVO=1
+// (+ PIPEFY_TOKEN). De hora em hora no horário comercial — cliente novo entra no
+// mesmo dia, e cada ciclo é limitado por PIPEFY_CLIENTES_TETO_CICLO/_TETO_DIA.
+const CRON_PIPEFY_CLIENTES = '45 7-20 * * 1-5';   // :45, 07h-20h, seg-sex
+
 // Garantia × Datafrete: entrega confirmada -> card p/ CONCLUÍDO. Dormente sem
 // GARANTIA_ENTREGA_ATIVO=1 (+ PIPEFY_TOKEN e DATAFRETE_SERVICES_KEY). Meia em
 // meia hora em horário comercial — entrega não muda mais rápido que isso.
@@ -345,6 +351,20 @@ function start(app) {
     }
   });
   console.log(`[scheduler] pipefy-op agendado: cron "${CRON_PIPEFY_OP}"`);
+
+  // SA1 -> Pipefy CLIENTES (espelho de clientes). Dormente sem PIPEFY_CLIENTES_ATIVO=1.
+  if (jobs.pipefyClientes) jobs.pipefyClientes.cancel();
+  jobs.pipefyClientes = schedule.scheduleJob(CRON_PIPEFY_CLIENTES, async () => {
+    try {
+      const PipefyClientes = require('./pipefyClientes');
+      if (!PipefyClientes.disponivel()) return;   // sem gate/token: silêncio
+      const r = await PipefyClientes.sincronizar(app.services, 'CRON');
+      if (r.criados > 0 || r.atualizados > 0 || r.erros > 0) console.log('[scheduler] pipefy-clientes:', JSON.stringify({ criados: r.criados, atualizados: r.atualizados, erros: r.erros, faltando: r.faltandoAntes }));
+    } catch (err) {
+      console.error('[scheduler] erro no pipefy-clientes:', err.message);
+    }
+  });
+  console.log(`[scheduler] pipefy-clientes agendado: cron "${CRON_PIPEFY_CLIENTES}"`);
 
   // Garantia × Datafrete (entrega -> CONCLUÍDO). Dormente sem os gates do .env.
   if (jobs.garantiaEntrega) jobs.garantiaEntrega.cancel();
