@@ -73,7 +73,7 @@ module.exports = (app) => ({
                  SUM(sc6.C6_VALOR)  total,
                  COUNT(DISTINCT sc5.C5_NUM) numnf
             FROM SC6010 sc6 WITH (NOLOCK)
-            LEFT JOIN SC5010 sc5 WITH (NOLOCK) ON sc6.C6_NUM = sc5.C5_NUM
+            LEFT JOIN SC5010 sc5 WITH (NOLOCK) ON sc6.C6_FILIAL = sc5.C5_FILIAL AND sc6.C6_NUM = sc5.C5_NUM
            WHERE sc5.C5_FILIAL = '01'
              AND sc5.D_E_L_E_T_ <> '*'
              AND sc6.D_E_L_E_T_ <> '*'
