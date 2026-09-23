@@ -152,6 +152,17 @@ function holt(serie, alfa = 0.25, beta = 0.10) {
   return { nivel, tend };
 }
 
+// Último dia do mês (AAAAMM) em que houve movimento, limitado ao dia de hoje.
+function ultimoDiaCom(rows, ym, limite) {
+  let dia = 0;
+  rows.forEach(r => {
+    if (trim(r.ym) !== ym) return;
+    const d = Number(trim(r.dia));
+    if (d > dia && d <= limite && (N(r.v) > 0 || N(r.n) > 0)) dia = d;
+  });
+  return dia || limite;
+}
+
 // ---------------------------------------------------------------------------
 // Montagem do D
 // ---------------------------------------------------------------------------
@@ -599,10 +610,11 @@ async function montarD(app, { anoBase } = {}) {
       });
       cumShare[`${prefixo}_${metrica}`] = Array.from({ length: 31 },
         (_, d) => Number(media(acumuladas.map(c => c[d] || 1)).toFixed(4)));
-      // espelho do ano anterior, acumulado por dia
+      // Espelho do ano anterior, acumulado por dia. Índice do mês é 0-11: é assim
+      // que o painel lê (D.espelhoMes.ped.v[mes-1][dia-1]).
       porMes.forEach((o, ym) => {
         if (ym.slice(0, 4) !== anoAnt) return;
-        const mes = Number(ym.slice(4, 6));
+        const mes = Number(ym.slice(4, 6)) - 1;
         let ac = 0;
         espelhoMes[prefixo === 'ped' ? 'ped' : 'fat'][metrica][mes] = o[metrica].map(v => { ac += v; return n2(ac); });
       });
@@ -631,7 +643,14 @@ async function montarD(app, { anoBase } = {}) {
     _meta: {
       geradoEm: new Date().toISOString(), ms: Date.now() - t0,
       mesesFechados, mesAtual, diaAtual, ano,
-      parcial: { mes: mesAtual, dia: diaAtual }
+      parcial: { mes: mesAtual, dia: diaAtual },
+      // Último dia do mês em curso COM movimento, por fonte: o pedido entra todo dia,
+      // a nota nem sempre. É o que o painel escreve no "até dia N" e o que dimensiona
+      // a projeção de cada métrica.
+      ultimoDia: {
+        ped: ultimoDiaCom(diarios.ped, `${ano}${String(mesAtual).padStart(2, '0')}`, diaAtual),
+        fat: ultimoDiaCom(diarios.fat, `${ano}${String(mesAtual).padStart(2, '0')}`, diaAtual)
+      }
     }
   };
   return D;
