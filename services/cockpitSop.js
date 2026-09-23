@@ -6,8 +6,10 @@
 //
 // As quatro fontes são relatórios que a intranet já tem, e as regras abaixo são as
 // deles (validadas em 22/09/2026 contra a base embutida no HTML):
-//   entrada     SC6×SC5, CFOPs de venda, item não bloqueado, INCLUI redigitação
-//               -> ago/26: R$ 9,61 mi e 579 pedidos (arquivo deles: 9,60 e 579)
+//   entrada     SC6×SC5, CFOPs de venda, item não bloqueado. ALINHADO ao Relatório
+//               de Vendas (23/09/2026): EXCLUI redigitação (C5_ZTIPO<>'RED') e usa
+//               preço COM IPI (C6_PRCVEN×(1+IPI%)), não o C6_ZPRCVEN do arquivo do
+//               setor. Muda a base de todo o motor (sazonalidade/cenários/book-to-bill).
 //   faturamento SD2×SF2, mesmos CFOPs + 6109, valor = D2_VALBRUT − D2_VALDEV,
 //               sem nota complementar de ICMS -> ago/26: R$ 7,01 mi, 8.629 un,
 //               690 notas (idêntico ao arquivo deles)
@@ -93,20 +95,23 @@ const zeros = () => Array(12).fill(0);
 // ---------------------------------------------------------------------------
 
 // Entrada (pedidos) por mês × UF × BU, com marcação do cliente de licitação IVG.
+// Valor = preço COM IPI e SEM redigitação — idêntico ao Relatório de Vendas.
 async function lerEntrada(Protheus, ini, fim) {
   return Protheus.connectAndQuery(`
     SELECT LEFT(c5.C5_EMISSAO, 6) ym, RTRIM(sa1.A1_EST) uf,
            COALESCE(NULLIF(RTRIM(bu.X5_DESCRI), ''), RTRIM(c5.C5_ZTIPO)) canal,
            CASE WHEN sa1.A1_NOME LIKE '%IVG%' THEN 1 ELSE 0 END ivg,
-           SUM(c6.C6_QTDVEN * c6.C6_ZPRCVEN) v, SUM(c6.C6_QTDVEN) q, COUNT(DISTINCT c6.C6_NUM) n,
-           COUNT(*) linhas
+           SUM(c6.C6_QTDVEN * ROUND(c6.C6_PRCVEN * (1 + (b1.B1_IPI / 100)), 2)) v,
+           SUM(c6.C6_QTDVEN) q, COUNT(DISTINCT c6.C6_NUM) n, COUNT(*) linhas
       FROM SC6010 c6 WITH (NOLOCK)
       JOIN SC5010 c5 WITH (NOLOCK) ON c5.C5_FILIAL = c6.C6_FILIAL AND c5.C5_NUM = c6.C6_NUM AND c5.D_E_L_E_T_ <> '*'
+      LEFT JOIN SB1010 b1 WITH (NOLOCK) ON b1.B1_FILIAL = '' AND b1.B1_COD = c6.C6_PRODUTO AND b1.D_E_L_E_T_ <> '*'
       LEFT JOIN SA1010 sa1 WITH (NOLOCK) ON sa1.A1_COD = c5.C5_CLIENTE AND sa1.A1_LOJA = c5.C5_LOJACLI AND sa1.D_E_L_E_T_ <> '*'
       LEFT JOIN SX5010 bu WITH (NOLOCK) ON bu.X5_FILIAL = '  ' AND bu.X5_TABELA = 'Z1'
            AND RTRIM(bu.X5_CHAVE) = RTRIM(c5.C5_ZTIPO) AND bu.D_E_L_E_T_ <> '*'
      WHERE c6.D_E_L_E_T_ <> '*' AND c6.C6_FILIAL = '01' AND c5.C5_EMISSAO BETWEEN @ini AND @fim
        AND c6.C6_CF IN (${listaSql(CFOPS_PEDIDO)}) AND c6.C6_BLQ = ' '
+       AND RTRIM(c5.C5_ZTIPO) NOT IN ('RED')
      GROUP BY LEFT(c5.C5_EMISSAO, 6), RTRIM(sa1.A1_EST),
               COALESCE(NULLIF(RTRIM(bu.X5_DESCRI), ''), RTRIM(c5.C5_ZTIPO)),
               CASE WHEN sa1.A1_NOME LIKE '%IVG%' THEN 1 ELSE 0 END`, { ini, fim });
@@ -188,11 +193,14 @@ async function lerDiarios(Protheus, ini, fim) {
   const [ped, fat] = await Promise.all([
     Protheus.connectAndQuery(`
       SELECT LEFT(c5.C5_EMISSAO, 6) ym, RIGHT(RTRIM(c5.C5_EMISSAO), 2) dia,
-             SUM(c6.C6_QTDVEN * c6.C6_ZPRCVEN) v, SUM(c6.C6_QTDVEN) q, COUNT(DISTINCT c6.C6_NUM) n
+             SUM(c6.C6_QTDVEN * ROUND(c6.C6_PRCVEN * (1 + (b1.B1_IPI / 100)), 2)) v,
+             SUM(c6.C6_QTDVEN) q, COUNT(DISTINCT c6.C6_NUM) n
         FROM SC6010 c6 WITH (NOLOCK)
         JOIN SC5010 c5 WITH (NOLOCK) ON c5.C5_FILIAL = c6.C6_FILIAL AND c5.C5_NUM = c6.C6_NUM AND c5.D_E_L_E_T_ <> '*'
+        LEFT JOIN SB1010 b1 WITH (NOLOCK) ON b1.B1_FILIAL = '' AND b1.B1_COD = c6.C6_PRODUTO AND b1.D_E_L_E_T_ <> '*'
        WHERE c6.D_E_L_E_T_ <> '*' AND c6.C6_FILIAL = '01' AND c5.C5_EMISSAO BETWEEN @ini AND @fim
          AND c6.C6_CF IN (${listaSql(CFOPS_PEDIDO)}) AND c6.C6_BLQ = ' '
+         AND RTRIM(c5.C5_ZTIPO) NOT IN ('RED')
        GROUP BY LEFT(c5.C5_EMISSAO, 6), RIGHT(RTRIM(c5.C5_EMISSAO), 2)`, { ini, fim }),
     Protheus.connectAndQuery(`
       SELECT LEFT(d2.D2_EMISSAO, 6) ym, RIGHT(RTRIM(d2.D2_EMISSAO), 2) dia,
@@ -252,6 +260,7 @@ async function lerLeadTimePedido(Protheus, ini, fim) {
       JOIN SC5010 c5 WITH (NOLOCK) ON c5.C5_FILIAL = c6.C6_FILIAL AND c5.C5_NUM = c6.C6_NUM AND c5.D_E_L_E_T_ <> '*'
      WHERE c6.D_E_L_E_T_ <> '*' AND c6.C6_FILIAL = '01' AND c5.C5_EMISSAO BETWEEN @ini AND @fim
        AND c6.C6_CF IN (${listaSql(CFOPS_PEDIDO)}) AND c6.C6_BLQ = ' '
+       AND RTRIM(c5.C5_ZTIPO) NOT IN ('RED')
        AND LEN(RTRIM(c6.C6_DATFAT)) = 8 AND c6.C6_DATFAT >= c5.C5_EMISSAO
      GROUP BY LEFT(c5.C5_EMISSAO, 4),
               DATEDIFF(DAY, CONVERT(date, c5.C5_EMISSAO, 112), CONVERT(date, c6.C6_DATFAT, 112))`, { ini, fim });
