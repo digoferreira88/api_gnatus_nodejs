@@ -10,9 +10,15 @@
 //
 // Saldo de cada pedido = (C6_QTDVEN - C6_QTDENT) * preco unitario com IPI
 //
+// CFOPs / filtro: usa services/carteiraRegras (a MESMA carteira curada do Excel
+// "Carteira completa" (carteira-detalhe.js), do cockpit e do Painel de Estoque).
+// Antes usava a lista ampla de tab_vendas_cfop (heranca do intranet antigo, ~130
+// CFOPs incl. exportacao/transferencia) e o resumo divergia do proprio Excel em
+// ~R$160k (alinhado em 23/09/2026).
+//
 // GET /vendas/carteira?vendedor=000123
 
-const { getCfops, inLista } = require('./_cfops');
+const Carteira = require('../../services/carteiraRegras');
 
 const trim = (v) => v == null ? null : String(v).trim();
 const toN  = (v) => Number(v || 0);
@@ -37,9 +43,6 @@ module.exports = (app) => ({
     const vendedor = trim(req.query.vendedor);
 
     try {
-      const cfops = await getCfops(Pg, 'carteira');
-      if (!cfops.length) return res.status(500).json({ message: 'Nenhum CFOP de carteira configurado.' });
-
       const { m0, m1, m2, m3 } = buckets();
 
       const condVend = vendedor
@@ -47,7 +50,6 @@ module.exports = (app) => ({
         : '';
       const params = { m0, m1, m2, m3 };
       if (vendedor) params.vend = vendedor;
-      const cfopList = inLista(cfops);
 
       // Query mestre: agrupa por BU + bucket de entrega
       const sqlBucket = `
@@ -68,9 +70,7 @@ module.exports = (app) => ({
          WHERE sc6.C6_FILIAL = '01'
            AND sc6.D_E_L_E_T_ <> '*'
            AND sc5.D_E_L_E_T_ <> '*'
-           AND sc6.C6_BLQ = ' '
-           AND (sc6.C6_QTDVEN - sc6.C6_QTDENT) > 0
-           AND sc6.C6_CF IN (${cfopList})
+           AND ${Carteira.filtroSql('sc6')}
            ${condVend}
          GROUP BY sc5.C5_ZTIPO,
                   CASE

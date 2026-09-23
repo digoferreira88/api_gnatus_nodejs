@@ -223,7 +223,9 @@ async function lerCarteira(Protheus) {
   return Protheus.connectAndQuery(`
     SELECT RTRIM(c6.C6_NUM) pedido, RTRIM(c6.C6_PRODUTO) cod, RTRIM(c6.C6_DESCRI) descricao,
            (c6.C6_QTDVEN - c6.C6_QTDENT) saldo, c6.C6_ENTREG entrega,
-           CAST(c6.C6_ZPRCVEN * (c6.C6_QTDVEN - c6.C6_QTDENT) AS DECIMAL(14,2)) valor,
+           -- valor = COM IPI (preço oficial da tela de Carteira). Antes era C6_ZPRCVEN,
+           -- o que fazia o aging (em atraso/no prazo) divergir da página de Carteira.
+           CAST(ROUND(c6.C6_PRCVEN * (1 + (ISNULL(b1.B1_IPI, 0) / 100)), 2) * (c6.C6_QTDVEN - c6.C6_QTDENT) AS DECIMAL(14,2)) valor,
            CAST(ROUND(c6.C6_PRCVEN * (1 + (ISNULL(b1.B1_IPI, 0) / 100)), 2) * (c6.C6_QTDVEN - c6.C6_QTDENT) AS DECIMAL(14,2)) valorIpi,
            COALESCE(NULLIF(RTRIM(bu.X5_DESCRI), ''), RTRIM(c5.C5_ZTIPO)) canal,
            ISNULL(pe.estatus_cod, 0) estatusCod
