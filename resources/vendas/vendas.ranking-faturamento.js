@@ -82,6 +82,9 @@ module.exports = (app) => ({
         AND sd2.d2_emissao >= @inicio
         AND sd2.d2_emissao <= @fim
         AND sd2.D2_CF IN (${cfopList})
+        -- Exclui Notas Complementares de ICMS (F2_TIPO='I') — nao sao venda de
+        -- mercadoria; mesma regra do Relatorio de Faturamento e do cockpit (21/09).
+        AND ISNULL(sf2.F2_TIPO, 'N') <> 'I'
         ${condVendedor}
         ${condBu}
       GROUP BY ISNULL(NULLIF(RTRIM(sf2.f2_vend1), ''), '(sem)')
@@ -108,6 +111,7 @@ module.exports = (app) => ({
          AND sf2.F2_FILIAL = '01'
          AND sf2.F2_EMISSAO >= @inicio
          AND sf2.F2_EMISSAO <= @fim
+         AND ISNULL(sf2.F2_TIPO, 'N') <> 'I'
        GROUP BY ${EXPR_BU_LABEL}
        ORDER BY SUM(sd2.d2_valbrut - sd2.d2_valdev) DESC
     `;
