@@ -7,7 +7,8 @@
 //
 // DATA = {
 //   historico: [{ ym, ano, mes, wh: { armazem: [valorEstoque, valorEmpenho] } }]
-//   stock:    [[produto, descricao, armazem, saldoAtual, saldoDisp, valorEstoque, valorEmpenho]]
+//   stock:    [[produto, descricao, armazem, saldoAtual, saldoDisp, valorEstoque, valorEmpenho, reserva]]
+//             reserva = empenho + reserva de estoque (o que reduz o saldoDisp)
 //   poRaw:    [[codigo, descProduto, abertoQtd, dataPrevISO]]      — nível de LINHA
 //   cartRaw:  [[codigo, descricao, saldoQtd, dataEntregaISO]]      — nível de LINHA
 //   struct:   { codigo: 1|2 }          1 = é pai/PA na estrutura · 2 = é componente
@@ -51,7 +52,8 @@ async function lerEstoque(Protheus) {
            b2.B2_QATU saldoAtual,
            (b2.B2_QATU - b2.B2_QEMP - b2.B2_RESERVA) saldoDisp,
            b2.B2_VATU1 valorEstoque,
-           (b2.B2_QEMP * b2.B2_CM1) valorEmpenho
+           (b2.B2_QEMP * b2.B2_CM1) valorEmpenho,
+           (ISNULL(b2.B2_QEMP, 0) + ISNULL(b2.B2_RESERVA, 0)) reserva
       FROM SB2010 b2 WITH (NOLOCK)
       LEFT JOIN SB1010 b1 WITH (NOLOCK) ON b1.B1_COD = b2.B2_COD AND b1.D_E_L_E_T_ <> '*'
      WHERE b2.D_E_L_E_T_ <> '*' AND b2.B2_FILIAL = '01' AND ${FILTRO_ARMAZEM}`, {});
@@ -180,7 +182,7 @@ async function montarDados(app, { semCache = false } = {}) {
 
   const stock = estoque.map(r => [
     trim(r.cod), trim(r.descricao), trim(r.armazem),
-    n2(r.saldoAtual), n2(r.saldoDisp), n2(r.valorEstoque), n2(r.valorEmpenho)
+    n2(r.saldoAtual), n2(r.saldoDisp), n2(r.valorEstoque), n2(r.valorEmpenho), n2(r.reserva)
   ]);
   const poRaw = pc.map(r => [trim(r.cod), trim(r.descricao), n2(r.aberto), isoDeProtheus(r.dataPrev)]);
   const cartRaw = carteira.map(r => [trim(r.cod), trim(r.descricao), n2(r.saldo), isoDeProtheus(r.dataEntrega)]);
