@@ -134,6 +134,17 @@ module.exports = (app) => ({
         banco: trim(r.banco_cod), agencia: trim(r.banco_agencia), conta: trim(r.banco_conta)
       });
 
+      // TRAVA: portador de cessão cadastrado só para borderô (sem as coordenadas
+      // do fundo) nao pode gerar boleto — sairia com campo livre zerado, ou seja
+      // um codigo de barras invalido. Melhor recusar com motivo do que entregar
+      // um PDF impagavel, que foi o estrago do bug do Itau em 15/09.
+      if (bko.boletoPendente) {
+        return res.status(409).json({
+          codigo_erro: 'BOLETO_CESSAO_NAO_CONFIGURADO',
+          message: bko.motivo || `Boleto do portador ${trim(r.banco_cod)} ainda não configurado.`
+        });
+      }
+
       // 4) Linha digitavel — calculada localmente a partir dos dados base
       //    (NN do PG, ag/conta efetivas, valor do titulo, E1_VENCTO original).
       const lin = await ProtheusBoleto.linhaDigitavel({

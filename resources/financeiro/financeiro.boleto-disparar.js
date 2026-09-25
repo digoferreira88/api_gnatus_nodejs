@@ -306,8 +306,10 @@ module.exports = (app) => ({
         if (!trim(bko.agencia) || !trim(bko.conta)) {
           falhaCount++;
           resultados.push({
-            ...ref, status: 'LINHA_INDISPONIVEL', codigo_erro: 'SEM_AG_CONTA',
-            mensagem: `Agencia/conta do banco ${trim(r.banco_cod)} nao configuradas no lote — boleto NAO enviado (evita codigo de barras invalido). Reprocesse o lote/borderô.`
+            ...ref, status: 'LINHA_INDISPONIVEL',
+            codigo_erro: bko.boletoPendente ? 'BOLETO_CESSAO_NAO_CONFIGURADO' : 'SEM_AG_CONTA',
+            mensagem: bko.motivo
+              || `Agencia/conta do banco ${trim(r.banco_cod)} nao configuradas no lote — boleto NAO enviado (evita codigo de barras invalido). Reprocesse o lote/borderô.`
           });
           continue;
         }

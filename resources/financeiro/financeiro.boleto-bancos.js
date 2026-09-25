@@ -67,7 +67,13 @@ module.exports = (app) => ({
           cc: trim(sa6.cc) + (trim(sa6.dv) ? `-${trim(sa6.dv)}` : ''),
           cessao: true,                             // front pode sinalizar "cessão"
           bancoBoleto: p.bancoBoleto,               // 237 — banco do boleto/barcode
-          rotulo: `${p.nome} · cessão (boleto ${p.bancoBoleto} ag ${p.agencia} cc ${p.conta})`
+          // Fundo cadastrado só pro borderô (sem coordenadas do fundo) aparece
+          // na lista, mas o rótulo diz que boleto ainda não sai — senão o
+          // operador monta o lote esperando disparar e só descobre no fim.
+          boletoPendente: !PortadorCessao.boletoConfigurado(p),
+          rotulo: PortadorCessao.boletoConfigurado(p)
+            ? `${p.nome} · cessão (boleto ${p.bancoBoleto} ag ${p.agencia} cc ${p.conta})`
+            : `${p.nome} · cessão — borderô apenas (boleto ainda não configurado)`
         });
       }
 

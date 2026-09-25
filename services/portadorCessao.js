@@ -41,8 +41,37 @@ const PORTADORES = {
       'Quitação válida exclusivamente por este boleto.',
       'Não pague boletos emitidos por terceiros'
     ]
+  },
+
+  // Grupo BFC (25/09/2026). O Protheus ja tem o cadastro no mesmo padrao do 044:
+  // SA6 'GRUPO BFC' e SEE carteira '001', ambos com ag/conta ZERADAS — o que basta
+  // pro BORDERO. O Diego confirmou que a remessa usa o mesmo .REM do Bradesco,
+  // entao o campo livre 237 e o parser do retorno ja servem.
+  //
+  // ⚠️ BOLETO AINDA NAO CONFIGURADO: faltam agencia/conta/carteira do fundo no
+  // Bradesco e o CNPJ do beneficiario. Ficam VAZIOS de proposito — `dadosBoleto`
+  // devolve `boletoPendente` e quem gera boleto/linha recusa, em vez de emitir
+  // com coordenada inventada, que seria um boleto impagavel.
+  '699': {
+    portador: '699',
+    nome: 'Grupo BFC',
+    bancoBoleto: '237',
+    agencia: '',
+    conta: '',
+    carteira: '',
+    especie: 'DM',
+    beneficiarioFinal: null,
+    instrucoes: [
+      'ATENÇÃO: Título cedido ao Grupo BFC.',
+      'Quitação válida exclusivamente por este boleto.',
+      'Não pague boletos emitidos por terceiros'
+    ]
   }
 };
+
+// O boleto so pode ser emitido quando as coordenadas do fundo existem. Sem elas
+// da pra fazer bordero (que usa a ag/conta do Protheus), mas nao boleto.
+const boletoConfigurado = (p) => !!(p && trim(p.agencia) && trim(p.conta) && trim(p.carteira));
 
 // Aplica overrides de .env por portador (ex.: PORTADOR_044_AGENCIA=1234).
 function comOverrides(p) {
@@ -76,6 +105,15 @@ function get(portador) {
 function dadosBoleto({ banco, agencia, conta } = {}) {
   const p = get(banco);
   if (!p) return { banco: trim(banco), agencia: trim(agencia), conta: trim(conta), cessao: false };
+  // Portador de cessao sem as coordenadas do fundo: sinaliza pendente em vez de
+  // devolver campo vazio, que viraria um codigo de barras invalido silencioso.
+  if (!boletoConfigurado(p)) {
+    return {
+      banco: p.bancoBoleto, agencia: '', conta: '', carteira: '',
+      cessao: true, portador: p.portador, boletoPendente: true,
+      motivo: `O boleto do portador ${p.portador} (${p.nome}) ainda não está configurado: faltam agência, conta e carteira do fundo no banco ${p.bancoBoleto}. O borderô funciona; a emissão de boleto não.`
+    };
+  }
   return {
     banco: p.bancoBoleto,
     agencia: p.agencia,
@@ -93,4 +131,4 @@ const ehCessao = (portador) => !!PORTADORES[trim(portador)];
 const codigos = () => Object.keys(PORTADORES);
 const listar = () => codigos().map((c) => get(c));
 
-module.exports = { get, dadosBoleto, ehCessao, codigos, listar };
+module.exports = { get, dadosBoleto, ehCessao, codigos, listar, boletoConfigurado };
