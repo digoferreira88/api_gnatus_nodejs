@@ -19,9 +19,12 @@ function dataIso(ymd) {
 
 // Best-effort: separa "RUA X, 123" em { endereco:'RUA X', numero:'123' }. Sem número
 // reconhecível → numero 'S/N'. Protheus guarda tudo em A1_END.
+// ⚠️ O número final só vale se for DÍGITOS PUROS: a prefeitura de Barretos devolve
+// HTTP 500 (não 400) quando o <nro> tem letra (ex.: "6B" de "...104 SALA 6B"). Nesse
+// caso caímos em 'S/N' e o endereço COMPLETO (incl. o número real) fica no xLgr.
 function splitEndereco(a1end) {
   const s = trim(a1end);
-  const m = s.match(/^(.*?)[,\s]+(\d+[A-Za-z]?)\s*$/);
+  const m = s.match(/^(.*?)[,\s]+(\d+)\s*$/);
   if (m) return { endereco: trim(m[1]).replace(/,\s*$/, ''), numero: m[2] };
   return { endereco: s, numero: 'S/N' };
 }

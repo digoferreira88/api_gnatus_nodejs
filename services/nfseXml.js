@@ -100,7 +100,7 @@ function blocoToma(t) {
         `<CEP>${soDig(t.cep)}</CEP>` +
       `</endNac>` +
       `<xLgr>${esc(t.endereco) || 'NAO INFORMADO'}</xLgr>` +
-      `<nro>${esc(t.numero) || 'S/N'}</nro>` +
+      `<nro>${/^\d+$/.test(String(t.numero == null ? '' : t.numero).trim()) ? String(t.numero).trim() : 'S/N'}</nro>` +   // Barretos dá HTTP 500 se o nro tiver letra → só dígitos, senão S/N
       `<xBairro>${esc(t.bairro) || 'NAO INFORMADO'}</xBairro>` +
     `</end>` +
     (trim(t.email) ? `<email>${esc(t.email)}</email>` : '') +
