@@ -50,6 +50,10 @@ const PASTA = 'Pipefy compartilhada';
 const TOKEN = () => trim(process.env.PIPEFY_TOKEN);
 const ATIVO = () => trim(process.env.RHP_RECON_ATIVO) === '1';
 const SIMULAR = () => trim(process.env.RHP_RECON_SIMULAR) !== '0';   // default: simula
+// Quando o PDF nao existe, limpa o texto de erro do campo em vez de so logar.
+// Default OFF: e' mudanca de processo, nao correcao — liga quando a producao
+// estiver de fato tirando os PDFs do fluxo.
+const LIMPAR_AUSENTE = () => trim(process.env.RHP_RECON_LIMPAR_AUSENTE) === '1';
 const graphConfig = () => !!(process.env.M365_TENANT_ID && process.env.M365_CLIENT_ID && process.env.M365_CLIENT_SECRET);
 
 const disponivel = () => ATIVO() && !!TOKEN() && graphConfig();
@@ -190,7 +194,7 @@ const linkValor = (arq) =>
 // ---------- Execução ----------
 async function executar(app, origem = 'CRON') {
   const { Pg } = app.services ? app.services : app;
-  const resumo = { cards: 0, corrigidos: 0, simulados: 0, ausentes: 0, erros: 0, detalhes: [] };
+  const resumo = { cards: 0, corrigidos: 0, limpos: 0, simulados: 0, ausentes: 0, erros: 0, detalhes: [] };
   const logar = async (card, r) => {
     try {
       await Pg.connectAndQuery(`
@@ -237,6 +241,39 @@ async function executar(app, origem = 'CRON') {
     const { arq } = nomeArquivo(op, serie);
     const nomePdf = `${arq}.pdf`;
     if (!arquivos.has(nomePdf)) {
+      // Processo novo (28/09/2026): a produção está tirando os PDFs do fluxo pra
+      // o card andar melhor, e a automação nova deles espera o campo VAZIO.
+      // Quem escreve "Erro no upload" é o Zap externo, que não tem retry — então
+      // este é o único ponto em que o campo volta a ficar em branco.
+      //
+      // 🔒 Só limpamos o que é TEXTO DE ERRO. Campo com link de verdade nunca é
+      // tocado: o RHP é documento controlado de produto médico, e apagar um link
+      // válido destruiria rastreabilidade. Campo já vazio também não é regravado.
+      const atual = campo(card, CAMPO_LINK);
+      if (LIMPAR_AUSENTE() && RE_ERRO.test(atual)) {
+        if (SIMULAR()) {
+          resumo.simulados++;
+          await logar(card, { op, serie, arq, resultado: 'SIMULADO_LIMPEZA', detalhe: `SIMULAÇÃO — limparia o texto de erro (PDF "${nomePdf}" não está na pasta)` });
+          continue;
+        }
+        try {
+          await gravarLink(card.id, '');
+          resumo.limpos++;
+          await logar(card, { op, serie, arq, resultado: 'LIMPO', detalhe: `texto de erro removido; PDF "${nomePdf}" não está na pasta (processo novo: link em branco)` });
+          try {
+            const Auditoria = require('./auditoria');
+            Auditoria.registrar({ services: { Pg } }, {
+              modulo: 'Produção', submodulo: 'RHP', acao: 'LINK_PDF_LIMPO', severidade: 'INFO',
+              entidade: 'pipefy_card', entidadeId: trim(card.id),
+              descricao: `RHP: campo do relatório deixado em branco no card "${trim(card.title)}" — PDF ${nomePdf} não está na pasta (${origem})`
+            });
+          } catch (e) { console.warn('[rhp-recon] auditoria:', e.message); }
+        } catch (e) {
+          resumo.erros++;
+          await logar(card, { op, serie, arq, resultado: 'ERRO', detalhe: 'Pipefy (limpeza): ' + e.message });
+        }
+        continue;
+      }
       resumo.ausentes++;
       await logar(card, { op, serie, arq, resultado: 'AUSENTE', detalhe: `PDF "${nomePdf}" ainda não está na pasta (produção não gerou/subiu)` });
       continue;
