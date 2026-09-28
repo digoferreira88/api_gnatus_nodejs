@@ -4,7 +4,7 @@
 // dashboard (config + validação).
 
 const STATUS_LIST = [
-  { value: 'REGULAR',             label: 'Regular' },
+  { value: 'SOLICITACAO_BAIXA_CR', label: 'Solicitação de baixa CR' },
   { value: 'RECOMPRA',            label: 'Recompra' },
   { value: 'NEGOCIANDO',          label: 'Em cobrança' },
   { value: 'PROMESSA',            label: 'Promessa' },
