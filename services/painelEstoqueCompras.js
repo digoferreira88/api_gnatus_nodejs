@@ -9,7 +9,9 @@
 //   historico: [{ ym, ano, mes, wh: { armazem: [valorEstoque, valorEmpenho] } }]
 //   stock:    [[produto, descricao, armazem, saldoAtual, saldoDisp, valorEstoque, valorEmpenho, reserva]]
 //             reserva = empenho + reserva de estoque (o que reduz o saldoDisp)
-//   poRaw:    [[codigo, descProduto, abertoQtd, dataPrevISO]]      — nível de LINHA
+//   poRaw:    [[codigo, descProduto, abertoQtd, dataPrevISO, numeroPC]] — nível de LINHA
+//             numeroPC é o 5º e último de propósito: o painel desestrutura só os 4
+//             primeiros, então acrescentar no fim não quebra versão antiga do HTML.
 //   cartRaw:  [[codigo, descricao, saldoQtd, dataEntregaISO]]      — nível de LINHA
 //   struct:   { codigo: 1|2 }          1 = é pai/PA na estrutura · 2 = é componente
 //   compRoot: { componente: PA }       componente que pertence a UM ÚNICO PA de topo
@@ -64,7 +66,7 @@ async function lerEstoque(Protheus) {
 async function lerPedidosCompra(Protheus) {
   return Protheus.connectAndQuery(`
     SELECT RTRIM(C7_PRODUTO) cod, RTRIM(C7_DESCRI) descricao,
-           (C7_QUANT - C7_QUJE) aberto, C7_DATPRF dataPrev
+           (C7_QUANT - C7_QUJE) aberto, C7_DATPRF dataPrev, RTRIM(C7_NUM) pedido
       FROM SC7010 WITH (NOLOCK)
      WHERE D_E_L_E_T_ <> '*' AND C7_FILIAL = '01'
        AND RTRIM(C7_RESIDUO) <> 'S' AND (C7_QUANT - C7_QUJE) > 0`, {});
@@ -184,7 +186,10 @@ async function montarDados(app, { semCache = false } = {}) {
     trim(r.cod), trim(r.descricao), trim(r.armazem),
     n2(r.saldoAtual), n2(r.saldoDisp), n2(r.valorEstoque), n2(r.valorEmpenho), n2(r.reserva)
   ]);
-  const poRaw = pc.map(r => [trim(r.cod), trim(r.descricao), n2(r.aberto), isoDeProtheus(r.dataPrev)]);
+  // 5º elemento (nº do PC) acrescentado em 28/09/2026 para a tooltip que lista os
+  // pedidos em aberto. É aditivo de propósito: o painel desestrutura só os 4
+  // primeiros, então versão antiga do HTML continua funcionando.
+  const poRaw = pc.map(r => [trim(r.cod), trim(r.descricao), n2(r.aberto), isoDeProtheus(r.dataPrev), trim(r.pedido)]);
   const cartRaw = carteira.map(r => [trim(r.cod), trim(r.descricao), n2(r.saldo), isoDeProtheus(r.dataEntrega)]);
 
   const { struct, compRoot } = montarEstrutura(arestas);
