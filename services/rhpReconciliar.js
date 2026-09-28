@@ -253,7 +253,9 @@ async function executar(app, origem = 'CRON') {
       if (LIMPAR_AUSENTE() && RE_ERRO.test(atual)) {
         if (SIMULAR()) {
           resumo.simulados++;
-          await logar(card, { op, serie, arq, resultado: 'SIMULADO_LIMPEZA', detalhe: `SIMULAÇÃO — limparia o texto de erro (PDF "${nomePdf}" não está na pasta)` });
+          // ⚠️ `resultado` é varchar(12) na tab_rhp_reconciliacao_log — rótulo
+          // mais longo que isso faz o INSERT falhar e o log some em silêncio.
+          await logar(card, { op, serie, arq, resultado: 'SIM_LIMPEZA', detalhe: `SIMULAÇÃO — limparia o texto de erro (PDF "${nomePdf}" não está na pasta)` });
           continue;
         }
         try {
