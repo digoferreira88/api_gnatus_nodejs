@@ -52,7 +52,7 @@ module.exports = (app) => ({
     const sql = `
       SELECT
         SC5.C5_ZTIPO, SC5.C5_ZFATPAR, SC5.C5_FORMAPG, SC5.C5_EMISSAO,
-        SC6.C6_ENTREG, SF2.F2_VALBRUT,
+        SC6.C6_ENTREG, SF2.F2_VALBRUT, RTRIM(SF2.F2_MENNOTA) AS F2_MENNOTA,
         SD2.D2_FILIAL, SD2.D2_EMISSAO, RTRIM(SD2.D2_DOC) AS D2_DOC,
         RTRIM(SD2.D2_PEDIDO) AS D2_PEDIDO, RTRIM(SD2.D2_CLIENTE) AS D2_CLIENTE,
         SD2.D2_ITEM, RTRIM(SD2.D2_COD) AS D2_COD, SD2.D2_LOCAL, SD2.D2_UM,
@@ -304,7 +304,9 @@ module.exports = (app) => ({
           outrosDifal: toNumber(r.D2_VOPDIF),
           emissaoPedido: trim(r.C5_EMISSAO),
           dataEntrega: trim(r.C6_ENTREG),
-          statusPedido: trim(r.STATUS_PEDIDO)
+          statusPedido: trim(r.STATUS_PEDIDO),
+          // Informações Adicionais da NF (Dados Adicionais do DANFE) — F2_MENNOTA.
+          infoAdicional: trim(r.F2_MENNOTA)
         };
       });
 
