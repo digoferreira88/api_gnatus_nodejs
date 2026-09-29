@@ -70,7 +70,7 @@ function montarEmail({ nome, numero, parcela, valor, vencimento, banco, linha })
   const venc = fmtData(vencimento);
   const val = fmtBRL(valor);
   const nf = `${numero}${parcela ? '/' + parcela : ''}`;
-  const subject = `Boleto em aberto — NF / Pedido ${nf}${venc ? ` (vence ${venc})` : ''}`;
+  const subject = `Boleto a vencer — NF / Pedido ${nf}${venc ? ` (vence ${venc})` : ''}`;
 
   const text =
     `Olá, ${nome || 'cliente'}.\n\n` +
@@ -98,7 +98,7 @@ function montarEmail({ nome, numero, parcela, valor, vencimento, banco, linha })
 <tr><td style="padding:28px 32px 8px 32px;">
 <img src="https://intranew.gnatus.com.br/logo-gnatus.png" alt="Gnatus" width="64" height="64" style="display:block;border:0;outline:none;text-decoration:none;width:64px;height:64px;margin-bottom:12px;">
 <div style="font-size:12px;letter-spacing:1.5px;color:#64748b;text-transform:uppercase;font-weight:600;">Financeiro</div>
-<h1 style="margin:6px 0 0 0;font-size:22px;line-height:1.3;font-weight:600;color:#0f172a;">Boleto em aberto</h1>
+<h1 style="margin:6px 0 0 0;font-size:22px;line-height:1.3;font-weight:600;color:#0f172a;">Boleto a vencer</h1>
 </td></tr>
 <tr><td style="padding:16px 32px 0 32px;font-size:15px;line-height:1.6;color:#0f172a;">
 <p style="margin:0 0 12px 0;">Olá, <strong>${esc(nome || 'cliente')}</strong>.</p>
