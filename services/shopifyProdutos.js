@@ -90,11 +90,20 @@ const M_STATUS = `
     }
   }`;
 
+// Situação com que o produto NASCE. Começou como DRAFT (produto sem foto nem
+// descrição não devia cair na loja); em 29/09/2026 o usuário optou por ACTIVE.
+//
+// ⚠️ ACTIVE **não** publica na vitrine: `publishedAt` continua nulo e o produto não
+// tem URL até ser publicado no canal Online Store — o que exige o escopo
+// `write_publications` (que o app não tem) ou a ação em massa no admin da loja.
+// Medido na própria loja, não presumido.
+const STATUS_NOVO = () => (trim(process.env.SHOPIFY_STATUS_NOVO).toUpperCase() === 'ACTIVE' ? 'ACTIVE' : 'DRAFT');
+
 // Produto de variante única: o Shopify ainda exige a opção "Title"/"Default Title".
 function inputCriacao(p) {
   return {
     title: p.titulo,
-    status: 'DRAFT',                 // nunca publicamos: falta foto e descrição
+    status: STATUS_NOVO(),
     vendor: 'Gnatus',
     tags: ['protheus'],              // marca de procedência p/ a loja filtrar
     productOptions: [{ name: 'Title', values: [{ name: 'Default Title' }] }],
@@ -482,6 +491,7 @@ async function panorama({ Pg, Protheus }) {
     erroCredencial,
     ativo: disponivel(),
     simular: SIMULAR(),
+    statusNovo: STATUS_NOVO(),
     arquivar: ARQUIVAR(),
     loja: Api.SHOP(),
     versaoApi: Api.VERSAO(),
@@ -511,4 +521,4 @@ async function ultimosLogs(Pg, limite = 15) {
        FROM tab_shopify_log ORDER BY criado_em DESC LIMIT @lim`, { lim: limite });
 }
 
-module.exports = { disponivel, seed, sincronizar, panorama, ultimosLogs, SIMULAR, ARQUIVAR };
+module.exports = { disponivel, seed, sincronizar, panorama, ultimosLogs, SIMULAR, ARQUIVAR, STATUS_NOVO };
