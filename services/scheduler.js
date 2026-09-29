@@ -254,6 +254,12 @@ const CRON_PIPEFY_OP = '0 7-20 * * 1-5';    // 07:00..20:00, de hora em hora, se
 // mesmo dia, e cada ciclo é limitado por PIPEFY_CLIENTES_TETO_CICLO/_TETO_DIA.
 const CRON_PIPEFY_CLIENTES = '45 7-20 * * 1-5';   // :45, 07h-20h, seg-sex
 
+// Protheus (ACV/SB1/DA1) -> loja Shopify: cria os produtos que a ACV marcou e espelha
+// mudança de preço. Dormente sem SHOPIFY_ATIVO=1 (+ SHOPIFY_SHOP/SHOPIFY_TOKEN), e com
+// SHOPIFY_SIMULAR=1 o ciclo é dry-run. Uma vez por hora no comercial — preço de tabela
+// não muda mais rápido que isso, e cada ciclo é limitado por SHOPIFY_TETO_CICLO/_DIA.
+const CRON_SHOPIFY_PRODUTOS = '25 7-20 * * 1-5';  // :25, 07h-20h, seg-sex
+
 // Garantia × Datafrete: entrega confirmada -> card p/ CONCLUÍDO. Dormente sem
 // GARANTIA_ENTREGA_ATIVO=1 (+ PIPEFY_TOKEN e DATAFRETE_SERVICES_KEY). Meia em
 // meia hora em horário comercial — entrega não muda mais rápido que isso.
@@ -366,6 +372,22 @@ function start(app) {
   });
   console.log(`[scheduler] pipefy-clientes agendado: cron "${CRON_PIPEFY_CLIENTES}"`);
 
+  // Protheus -> Shopify (espelho de produtos). Dormente sem SHOPIFY_ATIVO=1 + token.
+  if (jobs.shopifyProdutos) jobs.shopifyProdutos.cancel();
+  jobs.shopifyProdutos = schedule.scheduleJob(CRON_SHOPIFY_PRODUTOS, async () => {
+    try {
+      const ShopifyProdutos = require('./shopifyProdutos');
+      if (!ShopifyProdutos.disponivel()) return;   // sem gate/token: silêncio
+      const r = await ShopifyProdutos.sincronizar(app.services, 'CRON');
+      if (r.criados > 0 || r.atualizados > 0 || r.arquivados > 0 || r.erros > 0) {
+        console.log('[scheduler] shopify-produtos:', JSON.stringify({ criados: r.criados, atualizados: r.atualizados, arquivados: r.arquivados, erros: r.erros, simulado: r.simulado }));
+      }
+    } catch (err) {
+      console.error('[scheduler] erro no shopify-produtos:', err.message);
+    }
+  });
+  console.log(`[scheduler] shopify-produtos agendado: cron "${CRON_SHOPIFY_PRODUTOS}"`);
+
   // Garantia × Datafrete (entrega -> CONCLUÍDO). Dormente sem os gates do .env.
   if (jobs.garantiaEntrega) jobs.garantiaEntrega.cancel();
   jobs.garantiaEntrega = schedule.scheduleJob(CRON_GARANTIA_ENTREGA, async () => {
@@ -469,8 +491,15 @@ function start(app) {
   console.log(`[scheduler] expedicao-aviso agendado: cron "${CRON_EXPEDICAO_AVISO}"`);
 
   // SEFAZ DF-e — ingestão de NF-e recebidas (só liga com o A1 configurado).
+  //
+  // DFE_ATIVO=0 desliga SÓ esta ingestão, sem tocar na emissão de NFS-e nem no ADN —
+  // os três dividem o mesmo certificado A1, então o NFSE_CERT_PATH não serve de chave.
+  // Existe porque o NFeDistribuicaoDFe aceita UM consumidor por CNPJ: se o Transmite
+  // (ou qualquer outro) estiver puxando o mesmo cursor de NSU, os dois se atrapalham e
+  // a SEFAZ devolve 656 "Consumo Indevido". Default LIGADO: ausência da var não muda nada.
   if (jobs.dfe) jobs.dfe.cancel();
-  if (String(process.env.NFSE_CERT_PATH || '').trim()) {
+  const dfeAtivo = String(process.env.DFE_ATIVO ?? '1').trim() !== '0';
+  if (String(process.env.NFSE_CERT_PATH || '').trim() && dfeAtivo) {
     jobs.dfe = schedule.scheduleJob(CRON_DFE, async () => {
       try {
         const Dfe = require('./sefazDfe');
@@ -481,6 +510,8 @@ function start(app) {
       }
     });
     console.log(`[scheduler] sefaz-dfe agendado: cron "${CRON_DFE}"`);
+  } else if (!dfeAtivo) {
+    console.log('[scheduler] sefaz-dfe: DESLIGADO por DFE_ATIVO=0 — nao agendado');
   } else {
     console.log('[scheduler] sefaz-dfe: NFSE_CERT_PATH ausente — não agendado');
   }
