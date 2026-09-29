@@ -68,3 +68,13 @@ CREATE INDEX IF NOT EXISTS ix_shopify_log_data ON tab_shopify_log (criado_em DES
 INSERT INTO tab_intranet_permissoes (id_permissao, nome, modulo)
 SELECT 22001, 'Shopify - Espelho de produtos', 'Tecnologia'
  WHERE NOT EXISTS (SELECT 1 FROM tab_intranet_permissoes WHERE id_permissao = 22001);
+
+-- ⚠️ Em produção esta migration roda como o role `postgres` (via
+-- `sudo cat ... | sudo -u postgres psql`, porque /home/intranet é 750 e o psql -f
+-- não consegue abrir o arquivo). Tabela NOVA criada assim nasce pertencendo ao
+-- postgres e a aplicação (role `intranet`) não enxerga. Por isso os GRANTs abaixo —
+-- sem eles a aba Espelho quebra com "permission denied for table". Idempotentes.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE tab_shopify_produto_sync TO intranet;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE tab_shopify_ctrl          TO intranet;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE tab_shopify_log           TO intranet;
+GRANT USAGE, SELECT ON SEQUENCE tab_shopify_log_id_seq TO intranet;

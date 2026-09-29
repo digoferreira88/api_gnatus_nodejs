@@ -21,15 +21,79 @@ const SHOP = () => trim(process.env.SHOPIFY_SHOP)
   .replace(/\/.*$/, '')
   .toLowerCase();
 
-// O Admin API access token começa com "shpat_". Outros prefixos são credenciais
-// diferentes do mesmo app e NÃO autenticam a Admin API — o caso mais comum é colar
-// o "API secret key" (shpss_), que serve para validar webhook.
-function diagnosticoToken() {
+// ---------------------------------------------------------------------------
+// AUTENTICAÇÃO — dois caminhos, porque o Shopify tem dois tipos de custom app
+//
+// 1) App do DEV DASHBOARD (o fluxo atual): NÃO existe token fixo para copiar. O
+//    token se obtém pelo *client credentials grant* a partir do client id +
+//    secret, e **vale 24 horas** (`expires_in: 86399`). Não há refresh token:
+//    para renovar, repete-se a mesma requisição. Por isso o token é buscado e
+//    cacheado aqui dentro, e não colado no .env.
+// 2) Custom app LEGADO (criado antes de 2026): tem um Admin API access token
+//    fixo (`shpat_`). Se `SHOPIFY_TOKEN` estiver preenchido com um, ele vence.
+const CLIENT_ID = () => trim(process.env.SHOPIFY_CLIENT_ID);
+const CLIENT_SECRET = () => trim(process.env.SHOPIFY_CLIENT_SECRET);
+const TOKEN_FIXO = () => {
   const t = trim(process.env.SHOPIFY_TOKEN);
-  if (!t) return 'SHOPIFY_TOKEN vazio.';
-  if (t.startsWith('shpat_') || t.startsWith('shpca_')) return null;
-  if (t.startsWith('shpss_')) return 'O valor em SHOPIFY_TOKEN parece ser o API secret key (shpss_), que só serve para validar webhook. A Admin API precisa do Admin API access token (shpat_), que aparece uma única vez ao instalar o app na loja.';
-  return `SHOPIFY_TOKEN começa com "${t.slice(0, 6)}…" — o esperado é um Admin API access token (shpat_).`;
+  return /^shp(at|ca)_/.test(t) ? t : '';
+};
+
+let tokenCache = null;    // { valor, expiraEm }  — expiraEm em ms epoch
+let buscandoToken = null; // dedup de concorrência
+
+// Margem para não usar um token que expira no meio de um ciclo longo.
+const MARGEM_EXPIRA_MS = 5 * 60 * 1000;
+
+async function trocarPorToken() {
+  const r = await fetch(`https://${SHOP()}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      client_id: CLIENT_ID(),
+      client_secret: CLIENT_SECRET(),
+      grant_type: 'client_credentials'
+    }),
+    signal: AbortSignal.timeout(20000)
+  });
+  const txt = await r.text();
+  let j; try { j = JSON.parse(txt); } catch { j = {}; }
+  if (!r.ok || !j.access_token) {
+    const detalhe = j.error_description || j.error || txt.slice(0, 200) || `HTTP ${r.status}`;
+    throw new Error(`Shopify (client_credentials): ${detalhe}`);
+  }
+  const segundos = Number(j.expires_in) > 0 ? Number(j.expires_in) : 86399;
+  return { valor: trim(j.access_token), expiraEm: Date.now() + segundos * 1000 };
+}
+
+async function obterToken() {
+  const fixo = TOKEN_FIXO();
+  if (fixo) return fixo;
+  if (!CLIENT_ID() || !CLIENT_SECRET()) {
+    throw new Error('Shopify sem credencial: defina SHOPIFY_CLIENT_ID e SHOPIFY_CLIENT_SECRET (ou um SHOPIFY_TOKEN shpat_).');
+  }
+  if (tokenCache && tokenCache.expiraEm - MARGEM_EXPIRA_MS > Date.now()) return tokenCache.valor;
+  if (!buscandoToken) {
+    buscandoToken = trocarPorToken()
+      .then((t) => { tokenCache = t; buscandoToken = null; return t; })
+      .catch((e) => { buscandoToken = null; throw e; });
+  }
+  return (await buscandoToken).valor;
+}
+
+const invalidarToken = () => { tokenCache = null; };
+
+// Diagnóstico de credencial mal colada — os três valores da tela do app são
+// parecidos e o erro da API ("Invalid API key or access token") não diz qual é qual.
+function diagnosticoToken() {
+  const bruto = trim(process.env.SHOPIFY_TOKEN);
+  if (CLIENT_ID() && CLIENT_SECRET()) return null;
+  if (TOKEN_FIXO()) return null;
+  if (CLIENT_ID() && !CLIENT_SECRET()) return 'SHOPIFY_CLIENT_ID está preenchido, falta SHOPIFY_CLIENT_SECRET (o valor shpss_ da tela do app).';
+  if (!CLIENT_ID() && CLIENT_SECRET()) return 'SHOPIFY_CLIENT_SECRET está preenchido, falta SHOPIFY_CLIENT_ID (a API key, hex de 32 caracteres).';
+  if (!bruto) return 'Defina SHOPIFY_CLIENT_ID e SHOPIFY_CLIENT_SECRET (app do Dev Dashboard) ou SHOPIFY_TOKEN com um Admin API access token shpat_ (app legado).';
+  if (bruto.startsWith('shpss_')) return 'SHOPIFY_TOKEN tem o client secret (shpss_). Num app do Dev Dashboard ele vai em SHOPIFY_CLIENT_SECRET, junto com o client id em SHOPIFY_CLIENT_ID — não existe token fixo para colar.';
+  if (/^[0-9a-f]{32}$/i.test(bruto)) return 'SHOPIFY_TOKEN tem o client id (API key). Num app do Dev Dashboard ele vai em SHOPIFY_CLIENT_ID, junto com o secret em SHOPIFY_CLIENT_SECRET — não existe token fixo para colar.';
+  return `SHOPIFY_TOKEN começa com "${bruto.slice(0, 6)}…", que não é um Admin API access token (shpat_).`;
 }
 const TOKEN = () => trim(process.env.SHOPIFY_TOKEN);
 // Versões saem a cada trimestre e cada uma vive no mínimo 12 meses. Em 29/09/2026 a
@@ -41,7 +105,7 @@ const TOKEN = () => trim(process.env.SHOPIFY_TOKEN);
 // resposta (avisoVersao) e o default aqui precisa ser revisto de tempos em tempos.
 const VERSAO = () => trim(process.env.SHOPIFY_API_VERSION) || '2026-07';
 let avisoVersao = null;   // preenchido quando a loja responde numa versão diferente
-const configurado = () => !!SHOP() && !!TOKEN();
+const configurado = () => !!SHOP() && (!!TOKEN_FIXO() || (!!CLIENT_ID() && !!CLIENT_SECRET()));
 
 const endpoint = () => `https://${SHOP()}/admin/api/${VERSAO()}/graphql.json`;
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -80,7 +144,7 @@ async function aguardarFolga() {
 }
 
 async function gql(query, variables = {}, _retry = 3) {
-  if (!configurado()) throw new Error('Shopify não configurado — defina SHOPIFY_SHOP e SHOPIFY_TOKEN no .env.');
+  if (!configurado()) throw new Error('Shopify não configurado — ' + (diagnosticoToken() || 'defina SHOPIFY_SHOP no .env.'));
 
   await aguardarFolga();
 
@@ -92,7 +156,7 @@ async function gql(query, variables = {}, _retry = 3) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': TOKEN()
+        'X-Shopify-Access-Token': await obterToken()
       },
       body: JSON.stringify({ query, variables }),
       signal: ctrl.signal
@@ -102,6 +166,13 @@ async function gql(query, variables = {}, _retry = 3) {
     throw new Error(e.name === 'AbortError' ? 'Shopify: timeout (30s)' : `Shopify: ${e.message}`);
   }
   clearTimeout(timer);
+
+  // 401 com token obtido por client_credentials: ele vale 24h e pode ter vencido
+  // (ou sido revogado) no meio de um ciclo longo. Descarta o cache e refaz uma vez.
+  if (r.status === 401 && _retry > 0 && !TOKEN_FIXO()) {
+    invalidarToken();
+    return gql(query, variables, _retry - 1);
+  }
 
   // 429 = estouramos o bucket mesmo assim. Respeita o Retry-After e tenta 1 vez.
   if (r.status === 429 && _retry > 0) {
