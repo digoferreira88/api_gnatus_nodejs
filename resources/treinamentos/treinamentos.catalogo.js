@@ -58,7 +58,7 @@ module.exports = (app) => ({
         const item = {
           id: s.id, data: s.data ? new Date(s.data).toISOString().slice(0, 10) : '',
           horaInicio: trim(s.hora_inicio), horaFim: trim(s.hora_fim),
-          local: trim(s.local), teamsLink: trim(s.teams_link),
+          local: trim(s.local), soPresencial: Treina.soPresencial(s.local), teamsLink: trim(s.teams_link),
           capacidade: st.capacidade, ocupadas: st.ocupadas, disponiveis: st.disponiveis,
           online: Number(s.online || 0), statusSessao: st.status
         };

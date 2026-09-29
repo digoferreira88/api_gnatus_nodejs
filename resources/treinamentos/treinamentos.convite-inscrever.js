@@ -11,7 +11,8 @@ const trim = (v) => String(v == null ? '' : v).trim();
 const MSG = {
   JA_INSCRITO: 'Você já está inscrito(a) neste treinamento.',
   LOTADA: 'Esta data está LOTADA — sem vagas presenciais. Escolha outra data.',
-  INDISPONIVEL: 'Esta data não está mais disponível.'
+  INDISPONIVEL: 'Esta data não está mais disponível.',
+  SO_PRESENCIAL: 'Esta turma é presencial (sala do varejo) — não há participação online. Inscreva-se presencialmente ou escolha outra data.'
 };
 
 module.exports = (app) => ({

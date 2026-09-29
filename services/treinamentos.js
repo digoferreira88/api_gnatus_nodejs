@@ -50,6 +50,18 @@ function statusSessao(sessao, hojeISO) {
 
 const linkOnline = (treinamento, sessao) => trim(sessao?.teams_link) || trim(treinamento?.teams_link) || '';
 const localSessao = (treinamento, sessao) => trim(sessao?.local) || trim(treinamento?.local_padrao) || '';
+
+// Salas que NÃO oferecem inscrição ONLINE (presencial-only). Regra pelo NOME do
+// local da sessão — ex.: "Sala de Varejo" (setor comercial, sem transmissão online).
+// A modalidade é por TREINAMENTO, então esta é a única forma de travar por SALA sem
+// campo por sessão. Configurável por env TREINA_SALAS_SO_PRESENCIAL (CSV de trechos,
+// case-insensitive); default 'varejo'. Aplicada em toda inscrição (colab/convite/público).
+function soPresencial(local) {
+  const l = String(local == null ? '' : local).toLowerCase();
+  const padroes = String(process.env.TREINA_SALAS_SO_PRESENCIAL || 'varejo')
+    .split(/[;,]/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return padroes.some((p) => l.includes(p));
+}
 const horario = (s) => (s.hora_inicio ? `${trim(s.hora_inicio)}${s.hora_fim ? ' às ' + trim(s.hora_fim) : ''}` : '');
 
 // ---- HTML do e-mail de confirmação (email-safe, inline styles) ----
@@ -274,7 +286,8 @@ async function viewPublica(app, treinamentoId) {
     const st = statusSessao(s, hoje);
     return {
       id: s.id, data: iso(s.data), horaInicio: trim(s.hora_inicio), horaFim: trim(s.hora_fim),
-      local: trim(s.local), capacidade: st.capacidade, disponiveis: st.disponiveis, statusSessao: st.status
+      local: trim(s.local), soPresencial: soPresencial(s.local),
+      capacidade: st.capacidade, disponiveis: st.disponiveis, statusSessao: st.status
     };
   });
   return {
@@ -295,6 +308,8 @@ async function viewPublica(app, treinamentoId) {
 // (índice ux_treina_insc_convite_ativa). Retorna { ok, codigo?, inscricaoId, capacidade, ocupadas }.
 async function inscreverConvidado(app, { convite, treinamento, sessao, modalidade }) {
   const { Pg } = app.services;
+  // Sala presencial-only (ex.: Varejo) não aceita inscrição online.
+  if (modalidade === 'online' && soPresencial(sessao && sessao.local)) return { ok: false, codigo: 'SO_PRESENCIAL' };
   const tid = Number(treinamento.id);
   const sid = Number(sessao.id);
   const cid = Number(convite.id);
@@ -348,7 +363,7 @@ async function inscreverConvidado(app, { convite, treinamento, sessao, modalidad
 }
 
 module.exports = {
-  statusSessao, linkOnline, localSessao, horario, fmtDataBR, iso,
+  statusSessao, soPresencial, linkOnline, localSessao, horario, fmtDataBR, iso,
   efeitosInscricao, removerEventoInscricao, avisarPorEmail,
   emailConfirmacao, emailAviso, htmlEvento,
   parseEmails, garantirReuniaoSessao, excluirReuniaoSessao,

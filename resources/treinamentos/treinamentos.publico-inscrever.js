@@ -11,7 +11,8 @@ const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MSG = {
   JA_INSCRITO: 'Este e-mail já está inscrito neste treinamento.',
   LOTADA: 'Esta data está LOTADA — sem vagas presenciais. Escolha outra data.',
-  INDISPONIVEL: 'Esta data não está mais disponível.'
+  INDISPONIVEL: 'Esta data não está mais disponível.',
+  SO_PRESENCIAL: 'Esta turma é presencial (sala do varejo) — não há participação online. Inscreva-se presencialmente ou escolha outra data.'
 };
 
 module.exports = (app) => ({

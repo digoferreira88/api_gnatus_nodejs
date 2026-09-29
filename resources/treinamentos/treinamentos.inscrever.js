@@ -52,6 +52,8 @@ module.exports = (app) => ({
       const mods = trim(r.modalidades);
       if (modalidade === 'online' && mods === 'presencial') return res.status(409).json({ message: 'Este treinamento não oferece participação online.' });
       if (modalidade === 'presencial' && mods === 'online') return res.status(409).json({ message: 'Este treinamento é somente online.' });
+      // Sala presencial-only (ex.: Varejo): não há inscrição online nessa sessão.
+      if (modalidade === 'online' && Treina.soPresencial(sessao.local)) return res.status(409).json({ message: 'Esta turma é presencial (sala do varejo) — não há participação online. Inscreva-se presencialmente ou escolha outra data.' });
 
       let inscricaoId = null, capacidade = r.capacidade, ocupadas = r.ocupadas;
 
