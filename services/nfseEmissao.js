@@ -203,4 +203,15 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
   }
 }
 
-module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido };
+// Erros da prefeitura/ADN que indicam que a NFS-e PROVAVELMENTE FOI criada apesar da
+// resposta de erro (ambiguidade de timeout): o ADN nacional trava (504) DEPOIS de gerar
+// a nota, ou o retry bate em "já escriturada"/"chave já compartilhada com o ADN". Nesses
+// casos a chave existe no portal e o registro deve ser reconciliado (informar-chave).
+function provavelmenteEmitida(erros) {
+  const txt = (Array.isArray(erros)
+    ? erros.map((e) => `${(e && e.Codigo) || ''} ${(e && e.Descricao) || ''} ${(e && e.Complemento) || ''}`).join(' ')
+    : String(erros || '')).toLowerCase();
+  return /504\s*gateway|compartilhada com o adn|j[áa] escriturada|\be1268\b|\be0014\b/.test(txt);
+}
+
+module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido, provavelmenteEmitida };

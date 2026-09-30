@@ -3,7 +3,7 @@
 // pelo /fiscal/nfse/xml). Perm 16001.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([16001, 0]);
-const { config } = require('../../services/nfseEmissao');
+const { config, provavelmenteEmitida } = require('../../services/nfseEmissao');
 const trim = (v) => String(v == null ? '' : v).trim();
 
 module.exports = (app) => ({
@@ -45,6 +45,7 @@ module.exports = (app) => ({
       ambiente: trim(r.ambiente), status: trim(r.status), chave: trim(r.nfse_chave),
       numero: trim(r.nfse_numero), dpsId: trim(r.dps_id), writeback: trim(r.writeback),
       erros: r.erros || [], temDps: !!r.tem_dps, temNfse: !!r.tem_nfse,
+      verificarPortal: trim(r.status) !== 'EMITIDA' && provavelmenteEmitida(r.erros),
       emitidoPor: trim(r.emitido_por),
       emitidoEm: r.emitido_em ? new Date(r.emitido_em).toISOString() : '',
       criadoEm: r.criado_em ? new Date(r.criado_em).toISOString() : ''
