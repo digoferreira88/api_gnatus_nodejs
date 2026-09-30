@@ -99,6 +99,39 @@ const M_STATUS = `
 // Medido na própria loja, não presumido.
 const STATUS_NOVO = () => (trim(process.env.SHOPIFY_STATUS_NOVO).toUpperCase() === 'ACTIVE' ? 'ACTIVE' : 'DRAFT');
 
+// Canais de venda em que o produto novo deve ser publicado.
+//
+// ⚠️ status ACTIVE e PUBLICAÇÃO são eixos independentes — medido na loja: produto
+// ACTIVE fica com publishedAt nulo e sem URL até ser publicado num canal. Sem isto
+// a integração cria produto que ninguém vê.
+//
+// Só canais de VITRINE (decisão do usuário 29/09: Online Store + Portal Gnatus
+// Headless). Os de anúncio (Google, Meta) ficam de fora de propósito: publicar
+// 1.905 produtos sem foto em ads seria ruim de um jeito difícil de desfazer.
+const CANAIS = () => String(process.env.SHOPIFY_CANAIS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
+const M_PUBLICAR = `
+  mutation($id: ID!, $input: [PublicationInput!]!) {
+    publishablePublish(id: $id, input: $input) {
+      publishable { availablePublicationsCount { count } }
+      userErrors { field message }
+    }
+  }`;
+
+// Publica nos canais configurados. Idempotente no Shopify: republicar não duplica.
+async function publicar(productId) {
+  const canais = CANAIS();
+  if (!canais.length) return 0;
+  const d = await Api.gql(M_PUBLICAR, {
+    id: productId,
+    input: canais.map((publicationId) => ({ publicationId }))
+  });
+  Api.checarUserErrors(d?.publishablePublish, 'publicar');
+  return canais.length;
+}
+
+
 // Produto de variante única: o Shopify ainda exige a opção "Title"/"Default Title".
 function inputCriacao(p) {
   return {
@@ -122,6 +155,12 @@ async function criarProduto(p) {
   const prod = d?.productSet?.product;
   const variante = prod?.variants?.nodes?.[0];
   if (!prod?.id) throw new Error(`criar ${p.codigo}: Shopify não devolveu o produto`);
+
+  // ACTIVE não basta: sem publicar num canal o produto não aparece na loja. Falha
+  // aqui NÃO derruba a criação — o produto existe e pode ser publicado depois.
+  try { await publicar(trim(prod.id)); }
+  catch (e) { console.warn("[shopify] publicar " + p.codigo + ": " + e.message); }
+
   return { productId: trim(prod.id), variantId: trim(variante?.id) };
 }
 
@@ -492,6 +531,7 @@ async function panorama({ Pg, Protheus }) {
     ativo: disponivel(),
     simular: SIMULAR(),
     statusNovo: STATUS_NOVO(),
+    canais: CANAIS().length,
     arquivar: ARQUIVAR(),
     loja: Api.SHOP(),
     versaoApi: Api.VERSAO(),
@@ -521,4 +561,4 @@ async function ultimosLogs(Pg, limite = 15) {
        FROM tab_shopify_log ORDER BY criado_em DESC LIMIT @lim`, { lim: limite });
 }
 
-module.exports = { disponivel, seed, sincronizar, panorama, ultimosLogs, SIMULAR, ARQUIVAR, STATUS_NOVO };
+module.exports = { disponivel, seed, sincronizar, panorama, ultimosLogs, publicar, SIMULAR, ARQUIVAR, STATUS_NOVO, CANAIS };
