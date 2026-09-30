@@ -268,12 +268,14 @@ module.exports = (app) => ({
       const meses = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
       const serie = crInadRows.map(r => {
         const k8 = trim(r.ymes);                 // AAAAMM nas outras visoes, AAAAMMDD na carteira
+        // (o campo vai como refData, nao "ref": o grafico espalha os campos do ponto
+        //  como props e "ref" e reservada do React — derrubava a tela inteira.)
         const k = k8.slice(0, 6);
         const ano = k.slice(0, 4), mes = Number(k.slice(4, 6));
         const cr = toN(r.contasReceber), inad = toN(r.inadimplencia);
         const pct = cr > 0 ? (inad / cr) * 100 : 0;
         return {
-          ymes: k, ref: k8, ano, mes, label: `${meses[mes - 1]}/${ano.slice(2)}`,
+          ymes: k, refData: k8, ano, mes, label: `${meses[mes - 1]}/${ano.slice(2)}`,
           // contasReceber = BASE do % (nome mantido por compatibilidade): na safra e o
           // saldo em aberto; por vencimento e o valor que venceu no mes.
           contasReceber: Number(cr.toFixed(2)),
@@ -519,7 +521,7 @@ module.exports = (app) => ({
         visao,
         rotulo_base: porCart ? 'Carteira em aberto' : (porVenc ? 'Valor que venceu' : 'Contas a Receber'),
         // Na carteira o KPI e a posicao de agora; o periodo so define a janela do grafico.
-        posicao_em: porCart && ultimo ? ultimo.ref : null,
+        posicao_em: porCart && ultimo ? ultimo.refData : null,
         excluir1a29: porCart ? excl1a29 : undefined,
         excluir360mais: porCart ? excl360 : undefined,
         equipe: equipe || null,
