@@ -5,7 +5,18 @@
 // - Filtro escondido (status flagados) aplicado quando ?filtroEscondido=1 (checkbox do operador).
 // - Equipes = B2B / B2C (B2C = Comercial Varejo, Digital, Representantes).
 //
-// DUAS VISOES (?visao=, decisao 17/09):
+// TRES VISOES (?visao=):
+//  - carteira (PADRAO da tela desde 30/09): POSICAO DE HOJE. Base = tudo que a
+//    empresa tem a receber (SE1 saldo>0, titulos de venda), numerador = a parte
+//    dessa carteira que esta VENCIDA (a partir de 1 dia, sem teto). E a pergunta que
+//    o financeiro faz: "de tudo que tenho a receber, quanto esta vencido?".
+//    Os checkboxes desta visao EXCLUEM faixas (?excluir1a29 / ?excluir360mais) —
+//    ao contrario das outras duas, onde eles incluem.
+//    A serie mensal e a mesma conta refeita no fechamento de cada mes: em aberto
+//    naquela data = emitido ate la e ainda nao baixado (E1_BAIXA vazia ou posterior).
+//    O periodo escolhido define so a JANELA DO GRAFICO; o KPI e sempre hoje.
+//
+// AS OUTRAS DUAS (decisao 17/09):
 //  - emissao (safra, padrao do backend): titulos EMITIDOS no periodo; base = saldo em
 //    aberto (E1_SALDO>0). Pergunta: quanto da carteira aberta esta vencida.
 //  - vencimento: titulos que VENCERAM no periodo (de 01/01 do ano inicial ATE HOJE),
@@ -79,29 +90,41 @@ module.exports = (app) => ({
     const inicioStr = `${anoMin}0101`;
     const fimStr    = `${anoMax}1231`;
 
-    const visao = /^venc/i.test(String(req.query.visao || '')) ? 'vencimento' : 'emissao';
+    const visaoQ = String(req.query.visao || '');
+    const visao = /^cart/i.test(visaoQ) ? 'carteira' : (/^venc/i.test(visaoQ) ? 'vencimento' : 'emissao');
     const porVenc = visao === 'vencimento';
+    const porCart = visao === 'carteira';
+    // Na posicao da carteira os dois checkboxes EXCLUEM faixas (o padrao mostra tudo
+    // que esta vencido); nas outras visoes eles continuam incluindo.
+    const excl1a29 = trim(req.query.excluir1a29) === '1';
+    const excl360  = trim(req.query.excluir360mais) === '1';
     // Fragmentos que mudam por visao (os demais filtros sao identicos nas duas).
     // Por vencimento o periodo termina HOJE: vencimento futuro ainda nao "venceu" e so
     // diluiria a base com titulos que nao podem estar inadimplentes.
-    const EIXO    = porVenc ? 'se1.E1_VENCREA' : 'se1.E1_EMISSAO';
+    const EIXO    = porVenc ? 'se1.E1_VENCREA' : 'se1.E1_EMISSAO';   // nao usado na visao carteira
     // O "hoje" do corte sai do banco (GETDATE), o mesmo relogio do calculo de atraso —
     // o relogio da VPS pode estar em outro fuso e virar o dia antes.
     const HOJE_SQL = 'CONVERT(char(8), GETDATE(), 112)';
-    const PERIODO = porVenc
-      ? `se1.E1_VENCREA BETWEEN @ini AND (CASE WHEN ${HOJE_SQL} < @fim THEN ${HOJE_SQL} ELSE @fim END)`
-      : 'se1.E1_EMISSAO BETWEEN @ini AND @fim';
-    const ESCOPO  = porVenc ? `AND RTRIM(se1.E1_NATUREZ) IN ('10101','10201')` : '';
+    // A carteira de hoje nao tem recorte de periodo: titulo antigo em aberto continua
+    // sendo dinheiro a receber. O ano escolhido so move a janela do grafico.
+    const PERIODO = porCart
+      ? '1 = 1'
+      : (porVenc
+        ? `se1.E1_VENCREA BETWEEN @ini AND (CASE WHEN ${HOJE_SQL} < @fim THEN ${HOJE_SQL} ELSE @fim END)`
+        : 'se1.E1_EMISSAO BETWEEN @ini AND @fim');
+    const ESCOPO  = (porVenc || porCart) ? `AND RTRIM(se1.E1_NATUREZ) IN ('10101','10201')` : '';
     // Base do %: saldo em aberto (safra) x valor original que venceu (vencimento).
     const BASE    = porVenc ? 'se1.E1_VALOR' : 'se1.E1_SALDO';
     // Na safra o universo ja e so saldo>0; por vencimento entram tambem os pagos.
     const SO_ABERTOS = porVenc ? '' : 'AND se1.E1_SALDO > 0';
-    const ROTULO_BASE = porVenc ? 'valor que venceu' : 'contas a receber';
+    const ROTULO_BASE = porCart ? 'carteira em aberto' : (porVenc ? 'valor que venceu' : 'contas a receber');
 
     const ATRASO = `DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), CONVERT(date, GETDATE()))`;
     // Inadimplencia = 30..360 dias de atraso (default). Piso baixa p/ 1 dia com
     // @inc1a29=1 e teto sobe p/ >360 com @inc360=1 (checkboxes da tela).
-    const INAD_COND = `(${ATRASO} >= (CASE WHEN @inc1a29 = 1 THEN 1 ELSE 30 END) AND (${ATRASO} <= 360 OR @inc360 = 1))`;
+    const INAD_COND = porCart
+      ? `(${ATRASO} >= ${excl1a29 ? 30 : 1}${excl360 ? ` AND ${ATRASO} <= 360` : ''})`
+      : `(${ATRASO} >= (CASE WHEN @inc1a29 = 1 THEN 1 ELSE 30 END) AND (${ATRASO} <= 360 OR @inc360 = 1))`;
     const BU_EXPR = `COALESCE(NULLIF(RTRIM(bu_sx5.X5_DESCRI), ''), RTRIM(sc5.C5_ZTIPO) + ' (Desconhecido)')`;
 
     const sqlParams = { ini: inicioStr, fim: fimStr, inc360, inc1a29 };
@@ -169,11 +192,59 @@ module.exports = (app) => ({
                 ON sc5.C5_FILIAL = se1.E1_FILIAL AND sc5.C5_NUM = se1.E1_PEDIDO AND sc5.D_E_L_E_T_ <> '*'
               ${joinSx5Bu}` : '';
 
+      // Serie da visao CARTEIRA: a posicao refeita no fechamento de cada mes da janela,
+      // com o ultimo ponto em HOJE. Em aberto numa data D = emitido ate D e ainda nao
+      // baixado (E1_BAIXA vazia ou posterior a D); o valor em aberto e o saldo atual
+      // para quem nunca foi baixado e o valor original para quem foi baixado depois de D.
+      // (Baixa parcial sem data de baixa e praticamente inexistente na base: R$ 0,00.)
+      const serieDaCarteira = async () => {
+        const hojeRow = await Protheus.connectAndQuery(`SELECT ${HOJE_SQL} hoje`, {});
+        const hoje = trim(hojeRow[0] && hojeRow[0].hoje) || `${anoMax}1231`;
+        const refs = [];
+        for (let ano = anoMin; ano <= anoMax; ano++) {
+          for (let m = 1; m <= 12; m++) {
+            const fim = `${ano}${String(m).padStart(2, '0')}${String(new Date(ano, m, 0).getDate()).padStart(2, '0')}`;
+            if (fim < hoje) refs.push(fim);
+          }
+        }
+        refs.push(hoje);   // ultimo ponto = posicao de agora
+
+        // Aberto na data: ja emitido e ainda devendo — ou porque continua com saldo hoje
+        // (inclusive quem teve baixa PARCIAL), ou porque so foi quitado depois daquela data.
+        const ABERTO = `se1.E1_EMISSAO <= d.ref
+              AND (se1.E1_SALDO > 0
+                OR (RTRIM(ISNULL(se1.E1_BAIXA, '')) <> '' AND se1.E1_BAIXA > d.ref))`;
+        // Quanto estava em aberto naquela data: quem so foi baixado depois devia o valor
+        // cheio; nos demais casos o que resta hoje ja e o retrato correto.
+        const VALOR_EM = `CASE WHEN RTRIM(ISNULL(se1.E1_BAIXA, '')) <> '' AND se1.E1_BAIXA > d.ref
+                               THEN se1.E1_VALOR ELSE se1.E1_SALDO END`;
+        const ATRASO_EM = `DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), CONVERT(date, d.ref, 112))`;
+        const VENCIDO_EM = `(${ATRASO_EM} >= ${excl1a29 ? 30 : 1}${excl360 ? ` AND ${ATRASO_EM} <= 360` : ''})`;
+
+        return Protheus.connectAndQuery(`
+          SELECT d.ref ymes,
+                 SUM(CASE WHEN ${ABERTO} THEN ${VALOR_EM} ELSE 0 END) contasReceber,
+                 SUM(CASE WHEN ${ABERTO} THEN ${VALOR_EM} ELSE 0 END) emAberto,
+                 SUM(CASE WHEN ${ABERTO} AND ${VENCIDO_EM} THEN ${VALOR_EM} ELSE 0 END) inadimplencia,
+                 SUM(CASE WHEN ${ABERTO} AND ${VENCIDO_EM} THEN 1 ELSE 0 END) qtdInad
+            FROM SE1010 se1 WITH (NOLOCK)
+            ${fi.inadJoins}
+            CROSS JOIN (VALUES ${refs.map(r => `('${r}')`).join(',')}) AS d(ref)
+           WHERE se1.D_E_L_E_T_ <> '*'
+             AND se1.E1_FILIAL = '01'
+             AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
+             ${ESCOPO}
+             ${fi.inadWhere}
+             ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
+           GROUP BY d.ref
+           ORDER BY d.ref`, sqlParams);
+      };
+
       // 1) Base + Inadimplencia (30-360) por mes do EIXO da visao.
       //    Safra: base = saldo em aberto, universo so saldo>0 (identico ao anterior).
       //    Vencimento: base = valor que venceu (pagos inclusos), so titulos de venda.
       //    A inadimplencia exige saldo>0 nas duas (na safra e redundante).
-      const crInadRows = await Protheus.connectAndQuery(`
+      const crInadRows = porCart ? await serieDaCarteira() : await Protheus.connectAndQuery(`
         SELECT SUBSTRING(${EIXO}, 1, 6) ymes,
                SUM(${BASE}) contasReceber,
                SUM(CASE WHEN se1.E1_SALDO > 0 THEN se1.E1_SALDO ELSE 0 END) emAberto,
@@ -196,12 +267,13 @@ module.exports = (app) => ({
 
       const meses = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
       const serie = crInadRows.map(r => {
-        const k = trim(r.ymes);
+        const k8 = trim(r.ymes);                 // AAAAMM nas outras visoes, AAAAMMDD na carteira
+        const k = k8.slice(0, 6);
         const ano = k.slice(0, 4), mes = Number(k.slice(4, 6));
         const cr = toN(r.contasReceber), inad = toN(r.inadimplencia);
         const pct = cr > 0 ? (inad / cr) * 100 : 0;
         return {
-          ymes: k, ano, mes, label: `${meses[mes - 1]}/${ano.slice(2)}`,
+          ymes: k, ref: k8, ano, mes, label: `${meses[mes - 1]}/${ano.slice(2)}`,
           // contasReceber = BASE do % (nome mantido por compatibilidade): na safra e o
           // saldo em aberto; por vencimento e o valor que venceu no mes.
           contasReceber: Number(cr.toFixed(2)),
@@ -215,10 +287,13 @@ module.exports = (app) => ({
         };
       });
 
-      const totCR   = serie.reduce((s, x) => s + x.contasReceber, 0);
-      const totAberto = serie.reduce((s, x) => s + x.emAberto, 0);
-      const totInad = serie.reduce((s, x) => s + x.inadimplencia, 0);
-      const totQtd  = serie.reduce((s, x) => s + x.qtdTitulos, 0);
+      // Na visao carteira a serie e um ESTOQUE (posicao em cada data): somar os meses
+      // daria a mesma divida contada doze vezes. O numero da tela e o ultimo ponto.
+      const ultimo = serie.length ? serie[serie.length - 1] : null;
+      const totCR   = porCart ? (ultimo ? ultimo.contasReceber : 0) : serie.reduce((s, x) => s + x.contasReceber, 0);
+      const totAberto = porCart ? (ultimo ? ultimo.emAberto : 0) : serie.reduce((s, x) => s + x.emAberto, 0);
+      const totInad = porCart ? (ultimo ? ultimo.inadimplencia : 0) : serie.reduce((s, x) => s + x.inadimplencia, 0);
+      const totQtd  = porCart ? (ultimo ? ultimo.qtdTitulos : 0) : serie.reduce((s, x) => s + x.qtdTitulos, 0);
       const pctAtual = totCR > 0 ? (totInad / totCR) * 100 : 0;
       const ticketMedio = totQtd > 0 ? totInad / totQtd : 0;
 
@@ -257,7 +332,7 @@ module.exports = (app) => ({
       // periodo — o mesmo numero nas duas visoes. Na safra essa carteira ja e o totCR;
       // por vencimento a base e outra, entao busca a carteira por emissao a parte.
       let crPmr = totCR;
-      if (porVenc) {
+      if (porVenc || porCart) {
         try {
           const crRows = await Protheus.connectAndQuery(`
             SELECT SUM(se1.E1_SALDO) cr
@@ -442,7 +517,11 @@ module.exports = (app) => ({
         periodo: { anoMin, anoMax },
         // Visao aplicada e como a tela deve rotular a base do %.
         visao,
-        rotulo_base: porVenc ? 'Valor que venceu' : 'Contas a Receber',
+        rotulo_base: porCart ? 'Carteira em aberto' : (porVenc ? 'Valor que venceu' : 'Contas a Receber'),
+        // Na carteira o KPI e a posicao de agora; o periodo so define a janela do grafico.
+        posicao_em: porCart && ultimo ? ultimo.ref : null,
+        excluir1a29: porCart ? excl1a29 : undefined,
+        excluir360mais: porCart ? excl360 : undefined,
         equipe: equipe || null,
         formaPgto: formaSel || null,
         formas_pgto_disponiveis: formasDisponiveis,
