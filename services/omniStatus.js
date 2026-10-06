@@ -11,7 +11,9 @@ const STATUS_LIST = [
   { value: 'TITULO_PAGO_GNATUS',       label: 'Título Pago pela Gnatus' },
   { value: 'CONTRATO_RECOMPRA',        label: 'Contrato para Recompra' },
   { value: 'CLIENTE_NAO_INFORMA_DATA', label: 'Cliente Não Informa Data de Pagamento' },
-  { value: 'AGENDAMENTO_NAO_CUMPRIDO', label: 'Agendamento Não Cumprido' }
+  { value: 'AGENDAMENTO_NAO_CUMPRIDO', label: 'Agendamento Não Cumprido' },
+  { value: 'PAGO',                     label: 'Pago' },
+  { value: 'INVERSAO_PAGAMENTO',       label: 'Inversão de Pagamento' }
 ];
 const STATUS_VALIDOS = STATUS_LIST.map((s) => s.value);
 const STATUS_SET = new Set(STATUS_VALIDOS);
