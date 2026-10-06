@@ -13,7 +13,15 @@ const STATUS_LIST = [
   { value: 'CLIENTE_NAO_INFORMA_DATA', label: 'Cliente Não Informa Data de Pagamento' },
   { value: 'AGENDAMENTO_NAO_CUMPRIDO', label: 'Agendamento Não Cumprido' },
   { value: 'PAGO',                     label: 'Pago' },
-  { value: 'INVERSAO_PAGAMENTO',       label: 'Inversão de Pagamento' }
+  { value: 'INVERSAO_PAGAMENTO',       label: 'Inversão de Pagamento' },
+  { value: 'PROTESTO',                 label: 'Protesto' },
+  { value: 'TITULO_PAGO',              label: 'Título Pago' },
+  { value: 'REFINANCIAMENTO_GNATUS',   label: 'Refinanciamento Gnatus' },
+  { value: 'NOTIFICACAO_EXTRAJUDICIAL_EMAIL', label: 'Notificação Extrajudicial - E-mail' },
+  { value: 'NOTIFICACAO_EXTRAJUDICIAL_AR',    label: 'Notificação Extrajudicial - AR' },
+  { value: 'SEM_CONDICAO_PAGAMENTO',   label: 'Sem condição de pagamento' },
+  { value: 'NAO_LOCALIZADO',           label: 'Não localizado' },
+  { value: 'BLOQUEIO_SCANNER',         label: 'Bloqueio de Scanner' }
 ];
 const STATUS_VALIDOS = STATUS_LIST.map((s) => s.value);
 const STATUS_SET = new Set(STATUS_VALIDOS);
