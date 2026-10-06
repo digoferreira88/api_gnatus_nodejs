@@ -529,13 +529,31 @@ async function montarD(app, { anoBase } = {}) {
   });
   const saldoPorSku = new Map(), saldoPorSku0021 = new Map(), valorPorArmazem = new Map(), skusPorArmazem = new Map();
   let totalAll = 0, total0021 = 0;
+  // Valor residual: linha com saldo <= 0 que ainda carrega B2_VATU1. Nao e ruido de
+  // arredondamento: medido em 06/10/2026, 79 linhas (dentro de 20.052 zeradas) somam
+  // -R$ 363.517,34, e UMA delas - SKU 008420 no armazem 21 - responde por -R$ 368.951,76.
+  // E custo medio quebrado na SB2, nao estoque. Por isso o numero aparece no painel em
+  // vez de sumir: sao 79 linhas, da para auditar.
+  const residual = { linhas: 0, valor: 0, skus: new Set() };
   estoqueRows.forEach(r => {
     const cod = trim(r.cod), arm = trim(r.armazem), saldo = N(r.saldo), valor = N(r.valor);
-    totalAll += valor;
+    // O SALDO entra sempre — linha zerada e justamente como se sabe que o item
+    // existe na posicao de estoque e esta em ruptura (ver codigosEmEstoque abaixo).
     saldoPorSku.set(cod, (saldoPorSku.get(cod) || 0) + saldo);
-    if (arm === '00' || arm === '21') { total0021 += valor; saldoPorSku0021.set(cod, (saldoPorSku0021.get(cod) || 0) + saldo); }
-    valorPorArmazem.set(arm, (valorPorArmazem.get(arm) || 0) + valor);
-    if (saldo > 0) { if (!skusPorArmazem.has(arm)) skusPorArmazem.set(arm, new Set()); skusPorArmazem.get(arm).add(cod); }
+    if (arm === '00' || arm === '21') saldoPorSku0021.set(cod, (saldoPorSku0021.get(cod) || 0) + saldo);
+
+    if (saldo > 0) {
+      // O VALOR so conta onde ha saldo — e o que alinha o cockpit a Controladoria,
+      // que filtra B2_QATU > 0. Item zerado nao deveria carregar valor.
+      totalAll += valor;
+      if (arm === '00' || arm === '21') total0021 += valor;
+      valorPorArmazem.set(arm, (valorPorArmazem.get(arm) || 0) + valor);
+      if (!skusPorArmazem.has(arm)) skusPorArmazem.set(arm, new Set());
+      skusPorArmazem.get(arm).add(cod);
+    } else if (valor !== 0) {
+      // Nao some com isso: e inconsistencia da SB2 que alguem do custo precisa ver.
+      residual.linhas++; residual.valor += valor; residual.skus.add(cod);
+    }
   });
   const valorUnit = new Map();
   {
@@ -577,6 +595,8 @@ async function montarD(app, { anoBase } = {}) {
   const mesAnterior = trend.length > 1 ? trend[trend.length - 2][1] : 0;
   const estoque = {
     ref: carteira.ref, totalAll: n2(totalAll), total0021: n2(total0021),
+    // Sinaliza o que foi deixado de fora do valor, para nao virar numero invisivel.
+    residualZerado: { linhas: residual.linhas, skus: residual.skus.size, valor: n2(residual.valor) },
     momPct: mesAnterior > 0 ? Number((((totalAll / mesAnterior) - 1) * 100).toFixed(1)) : 0,
     prevVal: n2(mesAnterior),
     trend,
