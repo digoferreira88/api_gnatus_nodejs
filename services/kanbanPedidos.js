@@ -78,8 +78,12 @@ const RE_NF_REFERENCIA = /NF\.?\s*(?:N[º°O]?\.?\s*)?:?\s*(\d{4,9})/gi;
 // esconder os atrasos reais das transportadoras rastreadas.
 const TRANSP_SEM_RASTREIO = /^(GNATUS|EBAZAR)/i;
 
-// BUs que não são pedido a acompanhar: remessa simbólica (CFOP 5934) é só fiscal.
+// BUs que não são pedido a acompanhar: remessa simbólica (CFOP 5934) é só fiscal;
+// FUTURO GARANTIDO (atacado/varejo — C5_ZTIPO CTF/FGA/FGV) é compra antecipada garantida,
+// fora do painel a pedido do setor. GARANTIA/assistência (BU "GARANTIA") continua no painel.
 const BUS_FORA_DO_PAINEL = new Set(['RETORNO SIMBOLICO']);
+const BU_FORA_PREFIXO = /^FUTURO GARANTIDO/;
+const buForaDoPainel = (bu) => { const nb = normalizar(bu); return BUS_FORA_DO_PAINEL.has(nb) || BU_FORA_PREFIXO.test(nb); };
 
 // ---------------------------------------------------------------------------
 // Datas. Todos os instantes trafegam como epoch "ingênuo" em horário de Brasília
@@ -631,7 +635,7 @@ async function pedidosDoPeriodo(app, cfg, iniIso, fimIso) {
   const montados = montarPedidos(dados, { cfg, equipes, entregas, agora }).filter(p => !soParaLigar.has(p.num));
   const noPainel = new Set(montados.map(p => p.num));
   const pedidos = montados.filter(p =>
-    !BUS_FORA_DO_PAINEL.has(normalizar(p.bu)) &&
+    !buForaDoPainel(p.bu) &&
     // Remessa ligada a uma venda que está no painel aparece dentro do card da venda.
     !(p.vendaOrigem && noPainel.has(p.vendaOrigem.num)));
 
