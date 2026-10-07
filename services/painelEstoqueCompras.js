@@ -182,10 +182,49 @@ async function montarDados(app, { semCache = false } = {}) {
     lerEstrutura(Protheus), lerTipos(Protheus), lerHistorico(Pg), lerArmazensValidos(Protheus)
   ]);
 
-  const stock = estoque.map(r => [
-    trim(r.cod), trim(r.descricao), trim(r.armazem),
-    n2(r.saldoAtual), n2(r.saldoDisp), n2(r.valorEstoque), n2(r.valorEmpenho), n2(r.reserva)
-  ]);
+  // Linha com saldo <= 0 nao deveria carregar valor de estoque, mas a SB2 carrega:
+  // custo medio residual que o ERP nunca zerou. O snapshot mensal (estoqueSnapshot.js),
+  // de onde vem o HISTORICO deste painel, filtra B2_QATU > 0 e descarta essas linhas --
+  // entao o "atual" do grafico estava numa base e todos os meses anteriores, em outra.
+  // Mesma causa do fix do Cockpit S&OP (06/10/2026).
+  //
+  // As duas colunas de valor pedem tratamento DIFERENTE, e isso e o ponto:
+  //   valorEstoque e zerado  -> e ruido do ERP, saldo zero nao tem valor.
+  //   valorEmpenho FICA      -> medido em 07/10/2026: 701 unidades realmente empenhadas
+  //      sobre item sem saldo, R$ 157.618,40. Isso nao e ruido, e demanda alocada que
+  //      nao tem estoque para atender -- exatamente o que o setor de Compras precisa
+  //      ver. Continua na linha da tabela; sai so do grafico, onde a comparacao com o
+  //      historico exige a mesma base (feito no gerador do painel).
+  // O campo "maior" existe porque zerar o valor tira do usuario a resposta de "QUAL
+  // item?". Sem isso o numero agregado viraria um misterio; com isso, quem cuida de
+  // custo vai direto na linha errada do ERP.
+  const residualZerado = { linhas: 0, skus: 0, valorEstoque: 0, maior: null, empenhoSemSaldo: { linhas: 0, skus: 0, valor: 0 } };
+  const skusResiduo = new Set(), skusEmpenho = new Set();
+  const stock = estoque.map(r => {
+    const cod = trim(r.cod), saldo = n2(r.saldoAtual);
+    let valorEstoque = n2(r.valorEstoque);
+    const valorEmpenho = n2(r.valorEmpenho);
+    if (saldo <= 0) {
+      if (valorEstoque !== 0) {
+        residualZerado.linhas++; residualZerado.valorEstoque += valorEstoque; skusResiduo.add(cod);
+        if (!residualZerado.maior || Math.abs(valorEstoque) > Math.abs(residualZerado.maior.valor)) {
+          residualZerado.maior = { cod, armazem: trim(r.armazem), valor: valorEstoque };
+        }
+        valorEstoque = 0;
+      }
+      if (valorEmpenho !== 0) {
+        residualZerado.empenhoSemSaldo.linhas++;
+        residualZerado.empenhoSemSaldo.valor += valorEmpenho;
+        skusEmpenho.add(cod);
+      }
+    }
+    return [cod, trim(r.descricao), trim(r.armazem),
+      saldo, n2(r.saldoDisp), valorEstoque, valorEmpenho, n2(r.reserva)];
+  });
+  residualZerado.skus = skusResiduo.size;
+  residualZerado.empenhoSemSaldo.skus = skusEmpenho.size;
+  residualZerado.valorEstoque = n2(residualZerado.valorEstoque);
+  residualZerado.empenhoSemSaldo.valor = n2(residualZerado.empenhoSemSaldo.valor);
   // 5º elemento (nº do PC) acrescentado em 28/09/2026 para a tooltip que lista os
   // pedidos em aberto. É aditivo de propósito: o painel desestrutura só os 4
   // primeiros, então versão antiga do HTML continua funcionando.
@@ -213,6 +252,9 @@ async function montarDados(app, { semCache = false } = {}) {
   const hoje = hojeBrasilia();
   const dados = {
     historico, stock, poRaw, cartRaw, struct, compRoot, tipoMap,
+    // O que foi tirado do valor e o que ficou de fora do grafico: exposto de proposito,
+    // para nao virar numero invisivel.
+    residualZerado,
     ref: { carteira: hoje, hoje },
     // Diagnóstico do ETL — o painel ignora, mas a tela mostra a hora da leitura.
     _meta: {
