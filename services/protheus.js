@@ -69,7 +69,11 @@ function getPool() {
   return connecting;
 }
 
-const TRANSITORIO = /Connection is closed|Connection not yet open|not connected|Connection lost|ECONNRESET|ETIMEDOUT|ESOCKET|socket hang up|EPIPE/i;
+// Erros transitórios de conexão. Inclui FALHA DE CONNECT ("Failed to connect ... in
+// Nms", ECONNREFUSED): quando o link primário dá um pico e o failover cai no backup
+// fora do ar, a 1ª tentativa estoura — o retry refaz do zero (tenta o primário de novo,
+// que já voltou) e a query se cura sozinha, em vez de devolver erro pra tela.
+const TRANSITORIO = /Connection is closed|Connection not yet open|not connected|Connection lost|Failed to connect|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKET|socket hang up|EPIPE|timed out/i;
 
 async function connectAndQuery(query, params = {}, _retry = 1) {
   try {
