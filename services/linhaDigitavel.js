@@ -14,9 +14,14 @@
 //
 // Uso:
 //   const { linhaDigitavel, codigoBarras } = calcular({
-//     banco: '033', agencia: '0820', conta: '3418790', nossoNumero: '0000000183660',
+//     banco: '033', agencia: '0820', cedente: '3418790', nossoNumero: '0000000183660',
 //     carteira: '104', valor: 527.66, vencimento: '20260603'
 //   });
+//
+// ⚠️ No Santander o campo livre usa `cedente` (codigo do beneficiario), NAO
+// `conta` — passar a chave errada zera essas 7 posicoes e a linha sai diferente
+// sem reclamar. Quem chama de verdade (services/protheusBoleto.js) resolve o
+// cedente por banco antes de chamar aqui.
 //
 // Os campos NN/agencia/conta sao normalizados (apenas digitos). Valor pode
 // vir como number ou string. Vencimento aceita 'YYYYMMDD' ou 'YYYY-MM-DD'
@@ -183,4 +188,23 @@ function calcular(opts) {
   return { linhaDigitavel, codigoBarras };
 }
 
-module.exports = { calcular, fatorVencimento, mod10, mod11 };
+// Como o nosso numero deve APARECER (tela, PDF, e-mail) — o banco imprime com
+// um tamanho fixo e a gente guardava o valor cru, o que fazia o mesmo numero
+// parecer dois. Caso real 09/10/2026: titulo FT/OMN167488/06 com E1_NUMBCO
+// '00207187'; o Santander imprime '0000000207187' (13 posicoes, a ultima e' o
+// DV). Mesmo numero, so que a intranet mostrava 8 digitos e o financeiro
+// estranhou. O codigo de barras sempre esteve certo — ele ja padroniza por
+// dentro (campoLivreSantander faz pad 13).
+//
+// So o Santander tem formato definido aqui. Itau e Bradesco ficam como estao:
+// nao temos boleto oficial deles em mãos pra conferir o formato impresso, e
+// inventar um palpite bonito seria pior do que mostrar o valor cru.
+function formatarNossoNumero(banco, nn) {
+  const b = pad(banco, 3);
+  const n = onlyDigits(nn);
+  if (!n) return '';
+  if (b === '033') return n.padStart(13, '0');
+  return String(nn == null ? '' : nn).trim();
+}
+
+module.exports = { calcular, fatorVencimento, mod10, mod11, formatarNossoNumero };

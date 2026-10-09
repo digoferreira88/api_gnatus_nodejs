@@ -18,6 +18,7 @@ const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005
 const Auditoria = require('../../services/auditoria');
 const ProtheusBoleto = require('../../services/protheusBoleto');
 const BoletoPdf = require('../../services/boletoPdf');
+const LinhaDigitavel = require('../../services/linhaDigitavel');
 const PortadorCessao = require('../../services/portadorCessao');
 const Email = require('../../services/emailService');
 const Suri = require('../../services/suri');
@@ -367,7 +368,7 @@ module.exports = (app) => ({
               valor: N(r.valor), vencimento: venctoCalc,
               numeroDocumento: trim(r.numero),
               dataDocumento: se1.emissao || venctoCalc,
-              nossoNumero: trim(r.nosso_numero) || trim(lin.body?.nosso_numero),
+              nossoNumero: LinhaDigitavel.formatarNossoNumero(bko.banco, trim(r.nosso_numero) || trim(lin.body?.nosso_numero)),
               agencia: bko.agencia, conta: bko.conta,
               carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (bko.banco === '033' ? 'PENH. ELETR' : '109'),
               especieDoc: bko.especie || ESPECIE_POR_BANCO[bko.banco] || 'DM',
