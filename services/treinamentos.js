@@ -120,11 +120,20 @@ function emailAviso({ nome, treinamento, sessao, tipo }) {
   };
   const titulo = map[tipo] || 'Atualização da sua inscrição';
   const subject = `${titulo} — ${treinamento.titulo}`;
+  const quando = sessao ? `${fmtDataBR(iso(sessao.data))}${horario(sessao) ? ' — ' + horario(sessao) : ''}` : '';
+  // Alteração: a data informada é a NOVA, e o texto precisa dizer isso.
+  const alterada = tipo === 'sessao_alterada' && sessao;
+  const local = alterada ? localSessao(treinamento, sessao) : '';
+  const corpo = alterada
+    ? `<p>${esc(titulo)} do treinamento <b>${esc(treinamento.titulo)}</b>.</p>
+<p><b>Nova data:</b> ${esc(quando)}${local ? `<br><b>Local:</b> ${esc(local)}` : ''}</p>
+<p style="font-size:13px;">O evento na sua agenda corporativa já foi atualizado.</p>`
+    : `<p>${esc(titulo)} referente ao treinamento <b>${esc(treinamento.titulo)}</b>${sessao ? ` (sessão de ${esc(quando)})` : ''}.</p>`;
   const html = `<div style="font-family:Segoe UI,Arial,sans-serif;color:#0f172a;font-size:15px;line-height:1.6;">
 <p>Olá, <b>${esc(nome || 'colaborador')}</b>.</p>
-<p>${esc(titulo)} referente ao treinamento <b>${esc(treinamento.titulo)}</b>${sessao ? ` (sessão de ${esc(fmtDataBR(iso(sessao.data)))}${horario(sessao) ? ' — ' + esc(horario(sessao)) : ''})` : ''}.</p>
+${corpo}
 <p style="color:#64748b;font-size:13px;">Setor Educacional · Gnatus</p></div>`;
-  return { subject, html, text: `${titulo} — ${treinamento.titulo}` };
+  return { subject, html, text: `${titulo} — ${treinamento.titulo}${alterada ? `\nNova data: ${quando}${local ? `\nLocal: ${local}` : ''}` : ''}` };
 }
 
 // ---- Efeitos best-effort após inscrição (calendário + e-mail) ----
@@ -134,13 +143,7 @@ async function efeitosInscricao(app, { inscricao, treinamento, sessao, modalidad
 
   if (CALENDAR_ATIVO() && email) {
     try {
-      const ev = await M365.criarEventoCalendario(email, {
-        subject: `Treinamento: ${treinamento.titulo}`,
-        htmlBody: htmlEvento({ treinamento, sessao, modalidade }),
-        data: iso(sessao.data), horaInicio: trim(sessao.hora_inicio), horaFim: trim(sessao.hora_fim),
-        local: modalidade === 'online' ? 'Online (Teams)' : localSessao(treinamento, sessao),
-        online: modalidade === 'online', teamsLink: linkOnline(treinamento, sessao)
-      });
+      const ev = await M365.criarEventoCalendario(email, eventoInscrito({ treinamento, sessao, modalidade }));
       calendarEventId = ev.id || null;
       if (calendarEventId) {
         await app.services.Pg.connectAndQuery(
@@ -157,6 +160,67 @@ async function efeitosInscricao(app, { inscricao, treinamento, sessao, modalidad
     } catch (e) { avisos.push('e-mail: ' + e.message); }
   }
   return { calendarEventId, avisos };
+}
+
+// Evento do inscrito no formato do Graph — o mesmo da criação na inscrição.
+const eventoInscrito = ({ treinamento, sessao, modalidade }) => ({
+  subject: `Treinamento: ${treinamento.titulo}`,
+  htmlBody: htmlEvento({ treinamento, sessao, modalidade }),
+  data: iso(sessao.data), horaInicio: trim(sessao.hora_inicio), horaFim: trim(sessao.hora_fim),
+  local: modalidade === 'online' ? 'Online (Teams)' : localSessao(treinamento, sessao),
+  online: modalidade === 'online', teamsLink: linkOnline(treinamento, sessao)
+});
+
+/**
+ * Leva para a agenda do inscrito a data/horário/local ATUAIS da sessão dele.
+ * Remarca o evento existente (PATCH). Se ele nao existe — calendario estava
+ * desligado na inscricao, ou o proprio inscrito apagou o evento (404) — cria
+ * um novo e guarda o id. Best-effort: devolve { ok, criado?, erro? }.
+ * inscricao = { id, email, modalidade, calendar_event_id }
+ */
+async function sincronizarEventoInscricao(app, { inscricao, treinamento, sessao }) {
+  const email = trim(inscricao.email);
+  if (!CALENDAR_ATIVO() || !email) return { ok: false, skip: true };
+  const ev = eventoInscrito({ treinamento, sessao, modalidade: trim(inscricao.modalidade) });
+  const atual = trim(inscricao.calendar_event_id);
+  try {
+    if (atual) {
+      try {
+        await M365.atualizarEventoCalendario(email, atual, ev);
+        return { ok: true };
+      } catch (e) {
+        const st = e.statusCode || e.status || e.code;
+        if (!(st === 404 || st === 'ErrorItemNotFound' || /not ?found/i.test(String(e.message)))) throw e;
+      }
+    }
+    const novo = await M365.criarEventoCalendario(email, ev);
+    if (novo.id) {
+      await app.services.Pg.connectAndQuery(
+        `UPDATE tab_treina_inscricao SET calendar_event_id=@c WHERE id=@id`, { c: novo.id, id: inscricao.id });
+    }
+    return { ok: true, criado: true };
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+/**
+ * Sessao remarcada pelo admin: atualiza a agenda de TODOS os inscritos ativos e,
+ * se `avisar`, manda o e-mail de alteracao com a data NOVA.
+ * Devolve { total, atualizados, falhas:[email] }.
+ */
+async function sincronizarAgendaSessao(app, { treinamento, sessao, avisar }) {
+  const insc = await app.services.Pg.connectAndQuery(`
+    SELECT id, colaborador_email email, colaborador_nome nome, modalidade, calendar_event_id
+      FROM tab_treina_inscricao WHERE sessao_id=@sid AND status='ativa'`, { sid: sessao.id });
+  const out = { total: insc.length, atualizados: 0, falhas: [] };
+  for (const i of insc) {
+    const r = await sincronizarEventoInscricao(app, { inscricao: i, treinamento, sessao });
+    if (r.ok) out.atualizados++;
+    else if (!r.skip) out.falhas.push(trim(i.email));
+    if (avisar) await avisarPorEmail(trim(i.email), { nome: trim(i.nome), tipo: 'sessao_alterada', treinamento, sessao });
+  }
+  return out;
 }
 
 async function removerEventoInscricao(app, { email, calendarEventId }) {
@@ -365,6 +429,7 @@ async function inscreverConvidado(app, { convite, treinamento, sessao, modalidad
 module.exports = {
   statusSessao, soPresencial, linkOnline, localSessao, horario, fmtDataBR, iso,
   efeitosInscricao, removerEventoInscricao, avisarPorEmail,
+  sincronizarEventoInscricao, sincronizarAgendaSessao, CALENDAR_ATIVO,
   emailConfirmacao, emailAviso, htmlEvento,
   parseEmails, garantirReuniaoSessao, excluirReuniaoSessao,
   emailConvite, enviarConvite, TEAMS_ATIVO, ORGANIZADOR,

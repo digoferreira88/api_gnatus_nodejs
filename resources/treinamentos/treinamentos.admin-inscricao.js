@@ -71,9 +71,20 @@ module.exports = (app) => ({
         } else {
           await Pg.connectAndQuery(`UPDATE tab_treina_inscricao SET sessao_id=@nova WHERE id=@id AND status='ativa'`, { nova, id });
         }
-        await Treina.avisarPorEmail(trim(p.colaborador_email), { nome: trim(p.colaborador_nome), tipo: 'sessao_alterada', treinamento: { titulo: p.titulo }, sessao: { data: p.data, hora_inicio: p.hora_inicio, hora_fim: p.hora_fim } });
-        Auditoria.registrar(app, { modulo: 'Treinamentos', submodulo: 'Admin', acao: 'MOVER_INSCRICAO', severidade: 'INFO', req, entidade: 'inscricao', entidadeId: String(id), descricao: `Admin moveu ${trim(p.colaborador_nome)} de sessão em "${p.titulo}"`, meta: { de: p.sessao_id, para: nova } });
-        return res.json({ ok: true, acao, sessaoId: nova });
+        // Agenda e e-mail com a sessão de DESTINO (antes o e-mail levava a data antiga
+        // e o evento do participante ficava na sessão de onde ele saiu).
+        const t = (await Pg.connectAndQuery(
+          `SELECT id, titulo, objetivo, descricao, instrutor, setor_responsavel, local_padrao, teams_link, modalidades
+             FROM tab_treina_treinamento WHERE id=@tid`, { tid: p.treinamento_id }))[0];
+        const sNova = (await Pg.connectAndQuery(
+          `SELECT id, data, hora_inicio, hora_fim, local, teams_link FROM tab_treina_sessao WHERE id=@nova`, { nova }))[0];
+        const agenda = await Treina.sincronizarEventoInscricao(app, {
+          inscricao: { id, email: p.colaborador_email, modalidade: p.modalidade, calendar_event_id: p.calendar_event_id },
+          treinamento: t, sessao: sNova
+        });
+        await Treina.avisarPorEmail(trim(p.colaborador_email), { nome: trim(p.colaborador_nome), tipo: 'sessao_alterada', treinamento: t, sessao: sNova });
+        Auditoria.registrar(app, { modulo: 'Treinamentos', submodulo: 'Admin', acao: 'MOVER_INSCRICAO', severidade: 'INFO', req, entidade: 'inscricao', entidadeId: String(id), descricao: `Admin moveu ${trim(p.colaborador_nome)} de sessão em "${p.titulo}"`, meta: { de: p.sessao_id, para: nova, agenda } });
+        return res.json({ ok: true, acao, sessaoId: nova, agendaAtualizada: !!agenda.ok });
       }
 
       return res.status(400).json({ message: 'ação inválida (cancelar|mover).' });
