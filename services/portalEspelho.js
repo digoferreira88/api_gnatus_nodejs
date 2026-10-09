@@ -262,7 +262,43 @@ async function publicar(Pg) {
   const ids = pendentes.map(p => p.id);
   await Pg.connectAndQuery(
     `UPDATE tab_portal_espelho SET publicado_em = NOW() WHERE id = ANY(@ids::int[])`, { ids });
-  return { status: 'enviado', enviados: ids.length, destino };
+
+  // A conexão é sempre iniciada daqui, então os pedidos de 2ª via que o cliente
+  // fez no portal voltam NA RESPOSTA desta publicação — assim não precisamos
+  // abrir uma porta da internet para a intranet.
+  let recebidas = 0;
+  try {
+    const corpo = await resp.json().catch(() => ({}));
+    recebidas = await ingerirSolicitacoes(Pg, corpo && corpo.solicitacoes);
+  } catch (e) {
+    console.warn('portalEspelho: resposta sem pedidos legíveis —', e.message);
+  }
+
+  return { status: 'enviado', enviados: ids.length, destino, solicitacoes_recebidas: recebidas };
+}
+
+// Pedidos de 2ª via vindos do portal. Idempotente pelo id de lá: a mesma
+// resposta chegando duas vezes não vira dois pedidos na fila do financeiro.
+async function ingerirSolicitacoes(Pg, lista) {
+  if (!Array.isArray(lista) || !lista.length) return 0;
+  const Via = require('./boleto2Via');
+  let criadas = 0;
+  for (const s of lista) {
+    try {
+      const r = await Via.criar(Pg, {
+        origem: 'portal',
+        origem_id: trim(s.id) || null,
+        ref: trim(s.ref),
+        contato: trim(s.contato),
+        mensagem: trim(s.mensagem)
+      });
+      if (r.solicitacao && !r.jaExistia) criadas++;
+      if (r.erro) console.warn(`portalEspelho: pedido ${trim(s.id)} recusado — ${r.erro}`);
+    } catch (e) {
+      console.warn(`portalEspelho: pedido ${trim(s && s.id)} falhou —`, e.message);
+    }
+  }
+  return criadas;
 }
 
 // ---------------------------------------------------------------- orquestração
@@ -296,4 +332,4 @@ async function rodar(app, { por } = {}) {
   return { ...resumo, ...pub, erro, duracao_ms: Date.now() - t0 };
 }
 
-module.exports = { montar, gravar, publicar, rodar, telefoneDe, emailDe };
+module.exports = { montar, gravar, publicar, rodar, telefoneDe, emailDe, ingerirSolicitacoes };
