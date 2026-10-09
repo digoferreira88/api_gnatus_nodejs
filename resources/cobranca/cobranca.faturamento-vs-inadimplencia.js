@@ -64,6 +64,7 @@ const CFOPS_VENDA = [
 ];
 
 const FatInadFiltros = require('../../services/cobrancaFatInadFiltros');
+const FiltroEscondido = require('../../services/cobrancaFiltroEscondido');
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
 
 module.exports = (app) => ({
@@ -150,30 +151,14 @@ module.exports = (app) => ({
       } catch (e) { console.warn('fat-vs-inad equipe:', e.message); }
     }
 
-    // ===== Filtro escondido (checkbox do operador): exclui clientes com status flagado =====
-    // Mesma regra do dashboard: quando LIGADO, status_excluidos (tab_cobranca_filtro_status) ->
-    // clientes com esse status de cobranca sao removidos de TUDO (CR, inad, aging...).
-    const clientesExcluidosSql = [];
+    // ===== Filtro escondido (checkbox do operador): exclui titulos com status flagado =====
+    // Mesma regra do dashboard (services/cobrancaFiltroEscondido): vale o status do
+    // TITULO e, na falta, o do cliente. Faturamento (SF2) segue pelo cliente.
+    let fe = FiltroEscondido.VAZIO;
     if (filtroEscondido) {
-      try {
-        const cfgRows = await Pg.connectAndQuery(`SELECT status_excluidos FROM tab_cobranca_filtro_status WHERE id = 1`, {});
-        let ex = cfgRows[0] && cfgRows[0].status_excluidos;
-        if (typeof ex === 'string') { try { ex = JSON.parse(ex); } catch { ex = []; } }
-        const setEx = new Set(Array.isArray(ex) ? ex : []);
-        if (setEx.size) {
-          const stRows = await Pg.connectAndQuery(`SELECT cliente_cod, cliente_loja, status FROM tab_cobranca_status_cliente`, {});
-          stRows.forEach(s => {
-            if (setEx.has(trim(s.status))) {
-              const cod = trim(s.cliente_cod).replace(/'/g, ''), loja = trim(s.cliente_loja).replace(/'/g, '');
-              if (cod) clientesExcluidosSql.push({ cod, loja });
-            }
-          });
-        }
-      } catch (e) { console.warn('fat-vs-inad filtro escondido:', e.message); }
+      try { fe = await FiltroEscondido.montar({ Pg }); }
+      catch (e) { console.warn('fat-vs-inad filtro escondido:', e.message); }
     }
-    const excluiSql = (colCli, colLoja) => clientesExcluidosSql.length
-      ? ` AND (RTRIM(${colCli}) + '|' + RTRIM(${colLoja})) NOT IN (${clientesExcluidosSql.map(c => `'${c.cod}|${c.loja}'`).join(',')})`
-      : '';
 
     // Filtros da tela (cliente/uf/bu/forma/carteira/equipe) -> fragmentos SQL (helper compartilhado)
     const fi = await FatInadFiltros.montar({ Pg }, req.query);
@@ -235,7 +220,7 @@ module.exports = (app) => ({
              AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
              ${ESCOPO}
              ${fi.inadWhere}
-             ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
+             ${fe.se1Sql('se1')}
            GROUP BY d.ref
            ORDER BY d.ref`, sqlParams);
       };
@@ -259,7 +244,7 @@ module.exports = (app) => ({
            AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
            ${ESCOPO}
            ${fi.inadWhere}
-           ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
+           ${fe.se1Sql('se1')}
          GROUP BY SUBSTRING(${EIXO}, 1, 6)
          ORDER BY ymes`,
         sqlParams
@@ -319,7 +304,7 @@ module.exports = (app) => ({
            WHERE sf2.D_E_L_E_T_ <> '*' AND sf2.F2_FILIAL = '01'
              AND sf2.F2_EMISSAO BETWEEN @ini AND @fim
              ${fi.fatWhere}
-             ${excluiSql('sf2.F2_CLIENTE', 'sf2.F2_LOJA')}
+             ${fe.clienteSql('sf2.F2_CLIENTE', 'sf2.F2_LOJA')}
            GROUP BY SUBSTRING(sf2.F2_EMISSAO, 1, 6)`,
           sqlParams);
         fatRows.forEach(r => { const y = trim(r.ymes); const v = toN(r.faturado); if (y) fatPorMes[y] = v; totFat += v; });
@@ -345,7 +330,7 @@ module.exports = (app) => ({
                AND se1.E1_EMISSAO BETWEEN @ini AND @fim
                AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
                ${fi.inadWhere}
-               ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}`,
+               ${fe.se1Sql('se1')}`,
             sqlParams);
           crPmr = toN(crRows[0]?.cr);
         } catch (e) { console.warn('fat-vs-inad carteira(PMR):', e.message); crPmr = 0; }
@@ -364,7 +349,7 @@ module.exports = (app) => ({
              AND ${PERIODO}
              AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
              ${ESCOPO}
-             ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
+             ${fe.se1Sql('se1')}
            GROUP BY RTRIM(se1.E1_FORMAPG)
            ORDER BY SUM(${BASE}) DESC`,
           { ini: inicioStr, fim: fimStr });
@@ -399,7 +384,7 @@ module.exports = (app) => ({
            ${ESCOPO}
            ${condBuInad}
            ${condForma}
-           ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
+           ${fe.se1Sql('se1')}
          GROUP BY se1.E1_CLIENTE, se1.E1_LOJA, sa1.A1_NOME, se1.E1_NOMCLI, sa1.A1_EST
          ORDER BY SUM(se1.E1_SALDO) DESC`,
         sqlParams
@@ -424,7 +409,7 @@ module.exports = (app) => ({
            ${ESCOPO}
            ${condBuInad}
            ${condForma}
-           ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
+           ${fe.se1Sql('se1')}
          GROUP BY ${FAIXA_CASE}`,
         sqlParams
       );
@@ -457,7 +442,7 @@ module.exports = (app) => ({
              ${ESCOPO}
              ${condBuInad}
              ${condForma}
-             ${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}
+             ${fe.se1Sql('se1')}
            GROUP BY ${BU_EXPR}`,
           sqlParams
         );

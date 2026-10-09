@@ -69,6 +69,7 @@ const CFOPS_VENDA = [
 ];
 
 const FatInadFiltros = require('../../services/cobrancaFatInadFiltros');
+const FiltroEscondido = require('../../services/cobrancaFiltroEscondido');
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002, 9003]);
 
@@ -205,37 +206,18 @@ module.exports = (app) => ({
       // Quando a operadora liga o "checkbox cego" (filtroEscondido=1), remove do
       // dashboard INTEIRO (KPIs + listagem + aging + ABC + safra) os titulos de
       // clientes cujo status de cobranca esta na lista de status EXCLUIDOS
-      // configurada pela gestora (tab_cobranca_filtro_status). Status e por CLIENTE.
+      // configurada pela gestora (tab_cobranca_filtro_status). Vale o status
+      // EFETIVO do titulo: o proprio do titulo ou, na falta, o do cliente
+      // (services/cobrancaFiltroEscondido). Faturamento (SF2) segue pelo cliente.
       const filtroEscondido = /^(1|true|sim|on)$/i.test(String(req.query.filtroEscondido || ''));
-      const clientesExcluidos = new Set();     // "cod-loja" a esconder (titulos)
-      const clientesExcluidosSql = [];         // {cod,loja} sanitizados (safra SQL)
+      let fe = FiltroEscondido.VAZIO;
       if (filtroEscondido) {
-        try {
-          const cfgRows = await Pg.connectAndQuery(
-            `SELECT status_excluidos FROM tab_cobranca_filtro_status WHERE id = 1`, {});
-          let ex = cfgRows[0] && cfgRows[0].status_excluidos;
-          if (typeof ex === 'string') { try { ex = JSON.parse(ex); } catch { ex = []; } }
-          const setEx = new Set(Array.isArray(ex) ? ex : []);
-          if (setEx.size) {
-            const stRows = await Pg.connectAndQuery(
-              `SELECT cliente_cod, cliente_loja, status FROM tab_cobranca_status_cliente`, {});
-            stRows.forEach(s => {
-              if (setEx.has(trim(s.status))) {
-                const cod = trim(s.cliente_cod), loja = trim(s.cliente_loja);
-                clientesExcluidos.add(`${cod}-${loja}`);
-                clientesExcluidosSql.push({ cod: cod.replace(/[^A-Za-z0-9]/g, ''), loja: loja.replace(/[^A-Za-z0-9]/g, '') });
-              }
-            });
-          }
-        } catch (e) { console.warn('cobranca/dashboard filtroEscondido:', e.message); }
+        try { fe = await FiltroEscondido.montar({ Pg }); }
+        catch (e) { console.warn('cobranca/dashboard filtroEscondido:', e.message); }
       }
-      // Clausula SQL (NOT IN) pra excluir os mesmos clientes das queries de safra.
-      const excluiSql = (colCli, colLoja) => clientesExcluidosSql.length
-        ? ` AND (RTRIM(${colCli}) + '|' + RTRIM(${colLoja})) NOT IN (${clientesExcluidosSql.map(c => `'${c.cod}|${c.loja}'`).join(',')})`
-        : '';
       // Universo efetivo de titulos apos o filtro escondido (base de TUDO abaixo).
-      const rowsEfetivo = clientesExcluidos.size
-        ? rowsP.filter(r => !clientesExcluidos.has(`${trim(r.clienteCod)}-${trim(r.clienteLoja)}`))
+      const rowsEfetivo = fe.ativo
+        ? rowsP.filter(r => !fe.excluiTitulo(r.clienteCod, r.clienteLoja, r.prefixo, r.numero, r.parcela, r.tipo))
         : rowsP;
 
       // Filtros pos-enriquecimento (carteira/equipe/aging/acao/periodo/ano)
@@ -549,7 +531,7 @@ module.exports = (app) => ({
                AND sd2.D2_CLIENTE = sf2.F2_CLIENTE AND sd2.D2_LOJA = sf2.F2_LOJA AND sd2.D_E_L_E_T_ <> '*'
                AND sd2.D2_CF IN (${cfopList})${fi.fatJoins}
              WHERE sf2.D_E_L_E_T_ <> '*' AND sf2.F2_FILIAL = @filial
-               AND sf2.F2_EMISSAO BETWEEN @ini AND @fim${fi.fatWhere}${excluiSql('sf2.F2_CLIENTE', 'sf2.F2_LOJA')}`, spFat);
+               AND sf2.F2_EMISSAO BETWEEN @ini AND @fim${fi.fatWhere}${fe.clienteSql('sf2.F2_CLIENTE', 'sf2.F2_LOJA')}`, spFat);
           const seRows = await Protheus.connectAndQuery(`
             SELECT
               SUM(se1.E1_SALDO) em_aberto,
@@ -559,7 +541,7 @@ module.exports = (app) => ({
              WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = @filial
                AND se1.E1_SALDO > 0 AND ISDATE(se1.E1_VENCREA) = 1
                AND se1.E1_EMISSAO BETWEEN @ini AND @fim
-               AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')${fi.inadWhere}${excluiSql('se1.E1_CLIENTE', 'se1.E1_LOJA')}`, { filial, ini: iniMes, fim: fimMes, ...fi.params });
+               AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')${fi.inadWhere}${fe.se1Sql('se1')}`, { filial, ini: iniMes, fim: fimMes, ...fi.params });
           const faturamento = toN(fatRows[0]?.faturado);
           const emAberto = toN(seRows[0]?.em_aberto);
           const inad = toN(seRows[0]?.inadimplente);
