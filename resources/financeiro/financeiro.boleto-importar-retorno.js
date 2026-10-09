@@ -451,6 +451,10 @@ module.exports = (app) => ({
         }
       }
 
+      // Titulo alfanumerico no 033 (ex.: FT/OMN167488/06, borderô 418812): a
+      // remessa trunca o seu numero em 6 posicoes. Desde a COBR001-20261009-R43
+      // o Diego cruza o 033 pela chave do uso da empresa (038-062) e devolve
+      // `criterio`/`uso_chave` por item, entao essas linhas vao normalmente.
       const resultados = [];
       for (const parte of partes) {
         const cart = multi ? acharCarteira(carteiras, parte.conta) : null;

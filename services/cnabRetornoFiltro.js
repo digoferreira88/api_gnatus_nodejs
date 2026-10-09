@@ -13,43 +13,99 @@
 // NAO sao recalculados: o parser do Diego (dry-run) tolera; o import real via
 // FINA205 esta sob validacao.
 
-// Bloco prefixo(3) + numero(6) + 3 espacos + parcela(2 ou 2 espacos) + (DP|NF)
-const RX_CHAVE = /([A-Z0-9 ]{3})(\d{6})   (\d{2}| {2})(DP|NF)/;
+// ===================== SANTANDER 033 (CNAB400 retorno) =====================
+// Layout POSICIONAL. Posicoes 0-indexed:
+//
+//   [37..62)   Uso da empresa (25) = prefixo(3) + numero(9) + parcela(2) + tipo(3)
+//              ex.: "PED094610   04DP " · "FT OMN16748806BOL"
+//   [62..70)   Nosso Numero (8) atribuido pelo banco
+//   [108..110) Codigo de ocorrencia (02=entrada confirmada, 06=liquidacao...)
+//   [110..116) Data da ocorrencia DDMMAA
+//   [116..126) Seu numero (10) — trunca o numero em 6 posicoes; nao e' chave.
+//              Desde a COBR001-R43 o Diego tambem cruza o 033 pelo uso da empresa.
+//   [152..165) Valor do titulo (13, 2 decimais implicitas)
+//
+// 🔴 Ate 09/10/2026 isto era uma regex que exigia numero de 6 DIGITOS e especie
+// DP|NF. O financeiro passou a gerar titulos alfanumericos (borderô 418812:
+// prefixo FT, numero OMN167488, tipo BOL) e essas linhas sumiam do parse em
+// silencio: nao registravam pelo .RET nem passavam pelo filtro de ja-baixados.
+// O uso da empresa volta do banco INTEIRO, entao a chave sai dele.
+const SA = { USO: [37, 62], NN: [62, 70], OCOR: [108, 110], DATA: [110, 116], SEU: [116, 126], VALOR: [152, 165] };
 
-// Linha completa Santander CNAB400 (retorno): apos a especie (DP|NF) vem
-//   9 espacos + nosso_numero(8 dig) + ... gap ... + ocorrencia(3 dig: 1 sub +
-//   2 cod) + data(6). Validado contra PDFs do banco (088318/02 -> 0000000191620,
-//   091811/04 -> 0000000191612) em 2026-06.
-const RX_DETALHE = /([A-Z0-9 ]{3})(\d{6})   (\d{2}| {2})(DP|NF) {9}(\d{8})\s+\d(\d{2})\d{6}/;
+// Quebra o "uso da empresa" (25) em prefixo/numero/parcela/especie. Mesmo
+// recorte no Santander e no Bradesco.
+function partirUso(uso) {
+  return {
+    prefixo: uso.slice(0, 3).trim(),
+    numero: uso.slice(3, 12).trim(),
+    parcela: uso.slice(12, 14).trim(),
+    especie: uso.slice(14, 17).trim()
+  };
+}
 
-// Extrai (prefixo, numero, parcela) de uma linha-detalhe; null se nao casar.
+// Extrai (prefixo, numero, parcela) de uma linha-detalhe Santander; null se a
+// linha nao for detalhe ou estiver fora do layout.
 function chaveLinha(l) {
-  const m = String(l || '').match(RX_CHAVE);
-  if (!m) return null;
-  return { prefixo: m[1].trim(), numero: m[2], parcela: m[3].trim() };
+  const s = String(l || '');
+  if (s[0] !== '1' || s.length < SA.SEU[1]) return null;
+  if (!/^\d{8}$/.test(s.slice(SA.NN[0], SA.NN[1]))) return null;
+  const u = partirUso(s.slice(SA.USO[0], SA.USO[1]));
+  if (!u.numero) return null;
+  return { prefixo: u.prefixo, numero: u.numero, parcela: u.parcela };
 }
 
 // Parse completo das linhas-detalhe (tipo '1'): inclui ocorrencia e nosso numero.
-// Retorna [{prefixo, numero, parcela, especie, nossoNumero(8 dig), ocorrencia(2 dig)}].
+// Retorna [{prefixo, numero, parcela, especie, nossoNumero(8 dig), ocorrencia(2 dig), seuNumero, valor}].
 function parseDetalhes(conteudo) {
   const linhas = String(conteudo || '').split(/\r?\n/);
   const out = [];
   for (let i = 0; i < linhas.length; i++) {
     const l = linhas[i];
-    if (!l || l[0] !== '1') continue;
-    const m = l.match(RX_DETALHE);
-    if (!m) continue;
+    const c = chaveLinha(l);
+    if (!c) continue;
+    const ocor = l.slice(SA.OCOR[0], SA.OCOR[1]);
+    if (!/^\d{2}$/.test(ocor)) continue;
     out.push({
       linha: i + 1,
-      prefixo: m[1].trim(),
-      numero: m[2],
-      parcela: m[3].trim(),
-      especie: m[4],
-      nossoNumero: m[5],          // 8 digitos (ex.: '00191620')
-      ocorrencia: m[6]            // 2 digitos (02=entrada confirmada, 03=rejeitada, 06=liquidacao...)
+      ...partirUso(l.slice(SA.USO[0], SA.USO[1])),
+      nossoNumero: l.slice(SA.NN[0], SA.NN[1]),   // 8 digitos (ex.: '00191620')
+      ocorrencia: ocor,                           // 02=entrada confirmada, 03=rejeitada, 06=liquidacao...
+      dataOcorrencia: l.slice(SA.DATA[0], SA.DATA[1]),
+      seuNumero: l.slice(SA.SEU[0], SA.SEU[1]).trim(),
+      valor: Number(l.slice(SA.VALOR[0], SA.VALOR[1])) / 100
     });
   }
   return out;
+}
+
+/**
+ * Remonta o arquivo so com as linhas-detalhe que `manter(linha)` aprovar,
+ * preservando header e trailer e renumerando a sequencia (ultimos 6 digitos)
+ * quando a largura e' fixa. Os totais do trailer NAO sao recalculados — o
+ * parser do Diego tolera (mesma premissa do filtro de ja-baixados).
+ * Sem nenhuma linha removida devolve o conteudo original, byte a byte.
+ */
+function remontar(conteudo, manter) {
+  const eol = String(conteudo).includes('\r\n') ? '\r\n' : '\n';
+  const linhas = String(conteudo).split(/\r?\n/);
+  const temVaziaFinal = linhas.length && linhas[linhas.length - 1] === '';
+  const corpo = temVaziaFinal ? linhas.slice(0, -1) : linhas;
+  if (corpo.length < 3) return { conteudo, mantidos: Math.max(corpo.length - 2, 0), total: Math.max(corpo.length - 2, 0) };
+
+  const header = corpo[0];
+  const trailer = corpo[corpo.length - 1];
+  const detalhes = corpo.slice(1, -1);
+  const mantidos = detalhes.filter(manter);
+  if (mantidos.length === detalhes.length) {
+    return { conteudo, mantidos: detalhes.length, total: detalhes.length };
+  }
+
+  const L = header.length;
+  const larguraUnica = corpo.every(l => l.length === L) && L > 6;
+  const renum = (l, n) => larguraUnica ? (l.slice(0, L - 6) + String(n).padStart(6, '0')) : l;
+  let seq = 1;
+  const out = [renum(header, seq++), ...mantidos.map(l => renum(l, seq++)), renum(trailer, seq)];
+  return { conteudo: out.join(eol) + eol, mantidos: mantidos.length, total: detalhes.length };
 }
 
 // ===================== BRADESCO 237 (CNAB400 retorno) =====================
@@ -81,10 +137,7 @@ function parseDetalhesBradesco(conteudo) {
     if (!/^\d+$/.test(nn) || !/^\d{2}$/.test(ocor)) continue;  // linha fora do layout -> ignora
     out.push({
       linha: i + 1,
-      prefixo: uso.slice(0, 3).trim(),
-      numero: uso.slice(3, 12).trim(),
-      parcela: uso.slice(12, 14).trim(),
-      especie: uso.slice(14, 16).trim(),
+      ...partirUso(uso),
       nossoNumero: nn,                                        // 11 digitos, sem DV
       dvNossoNumero: l[BR.DV],                                // pode ser digito ou 'P'
       ocorrencia: ocor,                                       // 02=entrada confirmada, 06=liquidado...
@@ -192,36 +245,14 @@ function extrairChaves(conteudo) {
  * @returns {{conteudo, removidos:[{prefixo,numero,parcela}], mantidos:number, total:number}}
  */
 function filtrarBaixados(conteudo, baixadosSet) {
-  const eol = String(conteudo).includes('\r\n') ? '\r\n' : '\n';
-  const linhas = String(conteudo).split(/\r?\n/);
-  const temVaziaFinal = linhas.length && linhas[linhas.length - 1] === '';
-  const corpo = temVaziaFinal ? linhas.slice(0, -1) : linhas;
-  if (corpo.length < 3) return { conteudo, removidos: [], mantidos: corpo.length, total: corpo.length };
-
-  const header = corpo[0];
-  const trailer = corpo[corpo.length - 1];
-  const detalhes = corpo.slice(1, -1);
-  const L = header.length;
-
   const removidos = [];
-  const mantidos = detalhes.filter(l => {
+  const r = remontar(conteudo, (l) => {
     const c = chaveLinha(l);
     if (!c) return true;                                   // nao parseou -> mantem (seguro)
     if (baixadosSet.has(`${c.prefixo}|${c.numero}|${c.parcela}`)) { removidos.push(c); return false; }
     return true;
   });
-
-  if (!removidos.length) {
-    return { conteudo, removidos: [], mantidos: detalhes.length, total: detalhes.length };
-  }
-
-  // Renumera a sequencia (ultimos 6 digitos) so se largura fixa consistente.
-  const larguraUnica = corpo.every(l => l.length === L) && L > 6;
-  const renum = (l, n) => larguraUnica ? (l.slice(0, L - 6) + String(n).padStart(6, '0')) : l;
-
-  let seq = 1;
-  const out = [renum(header, seq++), ...mantidos.map(l => renum(l, seq++)), renum(trailer, seq)];
-  return { conteudo: out.join(eol) + eol, removidos, mantidos: mantidos.length, total: detalhes.length };
+  return { conteudo: r.conteudo, removidos, mantidos: r.mantidos, total: r.total };
 }
 
 module.exports = {

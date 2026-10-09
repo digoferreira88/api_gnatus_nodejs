@@ -16,6 +16,36 @@ const ProtheusCarteira = require('../../services/protheusCarteira');
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
 
+const chaveTitulo = (t) => [t.prefixo, t.numero, t.parcela, t.cliente_cod, t.cliente_loja].map(trim).join('|');
+
+// E1_TIPO dos titulos na SE1, por chave sem o tipo. Mais de um tipo na mesma
+// chave e' possivel (ex.: NF e DP de mesmo numero), por isso devolve lista.
+// RA/NCC ficam de fora, como na lista de elegiveis: nunca viram boleto.
+async function tiposDaSe1(Protheus, titulos) {
+  const out = new Map();
+  const BATCH = 80;
+  for (let i = 0; i < titulos.length; i += BATCH) {
+    const slice = titulos.slice(i, i + BATCH);
+    const p = {};
+    const ors = slice.map((t, k) => {
+      p[`pf${k}`] = trim(t.prefixo); p[`nu${k}`] = trim(t.numero); p[`pa${k}`] = trim(t.parcela);
+      p[`cl${k}`] = trim(t.cliente_cod); p[`lo${k}`] = trim(t.cliente_loja);
+      return `(RTRIM(E1_PREFIXO)=@pf${k} AND RTRIM(E1_NUM)=@nu${k} AND RTRIM(E1_PARCELA)=@pa${k} AND RTRIM(E1_CLIENTE)=@cl${k} AND RTRIM(E1_LOJA)=@lo${k})`;
+    }).join(' OR ');
+    const rows = await Protheus.connectAndQuery(`
+      SELECT RTRIM(E1_PREFIXO) prefixo, RTRIM(E1_NUM) numero, RTRIM(E1_PARCELA) parcela,
+             RTRIM(E1_CLIENTE) cliente_cod, RTRIM(E1_LOJA) cliente_loja, RTRIM(E1_TIPO) tipo
+        FROM SE1010 WITH (NOLOCK)
+       WHERE D_E_L_E_T_<>'*' AND E1_FILIAL='01' AND RTRIM(E1_TIPO) NOT IN ('RA','NCC') AND (${ors})`, p);
+    rows.forEach(r => {
+      const k = chaveTitulo(r);
+      if (!out.has(k)) out.set(k, []);
+      if (!out.get(k).includes(trim(r.tipo))) out.get(k).push(trim(r.tipo));
+    });
+  }
+  return out;
+}
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/boleto-lote/:id/enviar-protheus',
@@ -62,6 +92,29 @@ module.exports = (app) => ({
         return res.status(400).json({ message: 'Lote sem titulos.' });
       }
 
+      // 2.1) Tipo real do titulo. O gerar-bordero do Diego faz DbSeek na chave
+      // completa (prefixo+numero+parcela+TIPO); o antigo default 'NF' fazia um
+      // titulo BOL (alfanumerico, ex.: FT/OMN167488/06) voltar
+      // TITULO_NAO_ENCONTRADO e ficar fora do borderô. Sem tipo no lote, busca
+      // na SE1; se nao houver exatamente um, para em vez de adivinhar.
+      const semTipo = titulos.filter(t => !trim(t.tipo));
+      if (semTipo.length) {
+        const tipos = await tiposDaSe1(app.services.Protheus, semTipo);
+        const pendentes = [];
+        for (const t of semTipo) {
+          const achados = tipos.get(chaveTitulo(t)) || [];
+          if (achados.length === 1) t.tipo = achados[0];
+          else pendentes.push([trim(t.prefixo), trim(t.numero), trim(t.parcela)].filter(Boolean).join('/') + (achados.length ? ` (tipos ${achados.join(', ')})` : ' (não está na SE1)'));
+        }
+        if (pendentes.length) {
+          return res.status(409).json({
+            codigo_erro: 'TIPO_INDEFINIDO',
+            message: `Não deu para identificar o tipo de ${pendentes.length} título(s) na SE1: ${pendentes.slice(0, 10).join('; ')}${pendentes.length > 10 ? '…' : ''}. Recrie o lote a partir da lista de títulos.`,
+            titulos: pendentes
+          });
+        }
+      }
+
       // 3) Chama Protheus via service
       const operadorEmail = trim(user.EMAIL) || `id_${user.ID}`;
       const observacao = `Lote #${id} via Intranet GNATUS por ${operadorEmail}`;
@@ -74,7 +127,7 @@ module.exports = (app) => ({
         observacao,
         titulos: titulos.map(t => ({
           prefixo: trim(t.prefixo), numero: trim(t.numero), parcela: trim(t.parcela),
-          tipo: trim(t.tipo) || 'NF',
+          tipo: trim(t.tipo),
           cliente: trim(t.cliente_cod), loja: trim(t.cliente_loja)
         }))
       });
