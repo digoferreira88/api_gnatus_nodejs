@@ -1,7 +1,7 @@
 // GET /tecnologia/vendedor-avatar/:codigo
 // Serve a imagem (bytea) com cache headers. ENDPOINT ANONIMO — o <img src=...>
 // nao manda Authorization. Conteudo eh foto profissional do vendedor; baixa
-// sensibilidade. Cache 1d + ETag pra navegador nao re-buscar a cada render.
+// sensibilidade. Cache com revalidacao por ETag: troca de foto aparece na hora.
 
 const trim = (v) => String(v || '').trim();
 
@@ -35,7 +35,9 @@ module.exports = (app) => ({
       }
 
       res.setHeader('Content-Type', trim(r.mime_type) || 'image/webp');
-      res.setHeader('Cache-Control', 'public, max-age=86400, must-revalidate');
+      // no-cache = o navegador guarda, mas confere o ETag a cada uso (304 barato).
+      // Com max-age=86400 a foto trocada so aparecia no ranking no dia seguinte.
+      res.setHeader('Cache-Control', 'public, no-cache');
       res.setHeader('ETag', etag);
       return res.end(r.bytes);
     } catch (err) {
