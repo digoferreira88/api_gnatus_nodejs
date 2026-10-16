@@ -17,6 +17,8 @@
 //   - POST /financeiro/boleto-adotar-se1  (botão manual)
 //   - POST /financeiro/boleto-importar-retorno  (auto, após import REAL ok)
 
+const PortadorCessao = require('./portadorCessao');
+
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
 
@@ -40,6 +42,13 @@ async function adotarSe1({ Pg, Protheus, user, filtroBanco }) {
     `se1.E1_VALOR > 0`
   ];
   if (filtroBanco) { params.banco = filtroBanco; conds.push(`RTRIM(se1.E1_PORTADO) = @banco`); }
+  // Portador de CESSÃO fica fora: o nosso número que vale é o que o FUNDO
+  // registrou no banco e ele só existe no .RET (no BFC o E1_NUMBCO tem outra
+  // faixa, gerada pelo Protheus). Esses entram pelo boleto-adotar-retorno.
+  PortadorCessao.codigos().forEach((c, i) => { params[`ces${i}`] = c; });
+  if (PortadorCessao.codigos().length) {
+    conds.push(`RTRIM(se1.E1_PORTADO) NOT IN (${PortadorCessao.codigos().map((_, i) => `@ces${i}`).join(',')})`);
+  }
 
   const seRows = await Protheus.connectAndQuery(`
     SELECT RTRIM(se1.E1_PREFIXO) prefixo, RTRIM(se1.E1_NUM) numero,
@@ -73,6 +82,24 @@ async function adotarSe1({ Pg, Protheus, user, filtroBanco }) {
       mensagem: `${seRows.length} título(s) REGISTRADO(s) na SE1 já estão em lotes da intranet.` };
   }
 
+  return criarLotesRetroativos({
+    Pg, Protheus, user, titulos: novos,
+    rotulo: 'adotado SE1',
+    ocorrenciaDesc: 'Entrada confirmada (adotado da SE1)',
+    observacao: `Lote retroativo criado por "adotar-SE1" em ${new Date().toISOString()}. Remessa original feita fora da intranet (Protheus direto ou borderô externo).`
+  });
+}
+
+/**
+ * Cria 1 lote RETORNADO por carteira (portador+agência+conta) com os títulos
+ * dados, já REGISTRADOS e com o nosso número informado. Quem chama decide de
+ * onde vem o nosso número: a SE1 (adotarSe1) ou o .RET (adotar-retorno, nos
+ * portadores de cessão, onde o número do fundo difere do E1_NUMBCO).
+ *
+ * titulos: [{ prefixo, numero, parcela, tipo, cliente_cod, cliente_loja,
+ *             numbco, portador, agencia, conta, bordero, valor, vencimento }]
+ */
+async function criarLotesRetroativos({ Pg, Protheus, user, titulos: novos, rotulo, ocorrenciaDesc, observacao }) {
   // 3) Nomes dos clientes em batch (SA1) — snapshot no lote_titulo
   const chavesClientes = [...new Set(novos.map(r => `${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`))];
   const clienteNomes = new Map();
@@ -105,7 +132,10 @@ async function adotarSe1({ Pg, Protheus, user, filtroBanco }) {
   for (const [carteiraKey, titulos] of porCarteira.entries()) {
     const [bancoCod, agencia, conta] = carteiraKey.split('|');
     const valorTotal = titulos.reduce((s, t) => s + N(t.valor), 0);
-    const nomeBanco = `${BANCO_NOMES[bancoCod] || bancoCod} · ag ${agencia} · cc ${conta} (adotado SE1)`;
+    const cessao = PortadorCessao.get(bancoCod);
+    const nomeBanco = cessao
+      ? `${cessao.nome} · cessão (${rotulo})`
+      : `${BANCO_NOMES[bancoCod] || bancoCod} · ag ${agencia} · cc ${conta} (${rotulo})`;
 
     const loteRows = await Pg.connectAndQuery(`
       INSERT INTO tab_boleto_envio_lote
@@ -121,7 +151,7 @@ async function adotarSe1({ Pg, Protheus, user, filtroBanco }) {
         uid: user?.ID || null, uname: trim(user?.NOME) || 'sistema',
         bcod: bancoCod, bnom: nomeBanco, ag: agencia, cc: conta,
         qt: titulos.length, vt: valorTotal,
-        obs: `Lote retroativo criado por "adotar-SE1" em ${new Date().toISOString()}. Remessa original feita fora da intranet (Protheus direto ou borderô externo).`
+        obs: observacao
       });
     const idLote = loteRows[0].id;
 
@@ -144,13 +174,13 @@ async function adotarSe1({ Pg, Protheus, user, filtroBanco }) {
            status_banco, ocorrencia_cod, ocorrencia_desc, nosso_numero, bordero_protheus,
            valor_liquidado, data_liquidacao)
         VALUES (@id, @pre, @num, @par, @cli, @loja,
-                'REGISTRADO', '02', 'Entrada confirmada (adotado da SE1)',
+                'REGISTRADO', '02', @odesc,
                 @nn, @bord, 0, NULL)
         ON CONFLICT DO NOTHING`,
         {
           id: idLote, pre: trim(t.prefixo), num: trim(t.numero), par: trim(t.parcela),
           cli: trim(t.cliente_cod), loja: trim(t.cliente_loja),
-          nn: trim(t.numbco), bord: trim(t.bordero)
+          nn: trim(t.numbco), bord: trim(t.bordero), odesc: ocorrenciaDesc
         });
     }
 
@@ -167,4 +197,4 @@ async function adotarSe1({ Pg, Protheus, user, filtroBanco }) {
   };
 }
 
-module.exports = { adotarSe1, BANCO_NOMES };
+module.exports = { adotarSe1, criarLotesRetroativos, BANCO_NOMES };

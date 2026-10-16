@@ -8,6 +8,8 @@
 // Comportamento identico ao handler original, inclusive a guarda de
 // nao-rebaixamento de status.
 
+const PortadorCessao = require('./portadorCessao');
+
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
 
@@ -62,10 +64,15 @@ function classificarStatus(ocorren, dataBaixa, valorLiq) {
  */
 async function sincronizarLote({ Pg, Protheus, id }) {
   const cab = await Pg.connectAndQuery(
-    `SELECT id, status FROM tab_boleto_envio_lote WHERE id = @id`, { id }
+    `SELECT id, status, banco_cod FROM tab_boleto_envio_lote WHERE id = @id`, { id }
   );
   if (!cab.length) return { encontrado: false };
   const lote = cab[0];
+  // Portador de CESSÃO (FIDC): o nosso número que vale é o que o fundo
+  // registrou no banco, e ele vem do .RET (boleto-adotar-retorno). O E1_NUMBCO
+  // da SE1 é outra faixa (no BFC, a do Protheus: 00006630xxx x 99111230xxx do
+  // fundo) — a sincronização NUNCA o leva para a linha de retorno.
+  const nnDaSe1 = !PortadorCessao.ehCessao(lote.banco_cod);
 
   const titulos = await Pg.connectAndQuery(
     `SELECT prefixo, numero, parcela, cliente_cod, cliente_loja
@@ -172,7 +179,7 @@ async function sincronizarLote({ Pg, Protheus, id }) {
         prefixo: trim(t.prefixo), numero: trim(t.numero), parcela: trim(t.parcela),
         cliente_cod: trim(t.cliente_cod), cliente_loja: trim(t.cliente_loja),
         status: cls.status, oc_cod: cls.cod, oc_desc: cls.desc,
-        nn:   se ? trim(se.nosso_numero) : null,
+        nn:   se && nnDaSe1 ? trim(se.nosso_numero) : null,
         bord: se ? trim(se.bordero) : null,
         vlq:  se ? N(se.valor_liquidado) : 0,
         dlq:  se ? trim(se.data_baixa) : null

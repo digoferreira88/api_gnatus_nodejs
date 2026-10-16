@@ -119,11 +119,29 @@ function remontar(conteudo, manter) {
 //   [81]      DV do Nosso Numero          ex.: "1"  (pode ser 'P' no Bradesco)
 //   [108..110) Codigo de ocorrencia (2)   ex.: "02" = entrada confirmada
 //   [110..116) Data da ocorrencia DDMMAA
+//   [116..126) Seu numero (10)
+//   [146..152) Vencimento DDMMAA
 //   [152..165) Valor do titulo (13, 2 decimais implicitas)
 //
 // ⚠️ O DV do Bradesco pode ser a letra 'P' (quando o resto do mod11 da 10), por
 // isso `dvNossoNumero` e' string e o NN cru NAO deve ser tratado como numero.
-const BR = { USO: [37, 62], NN: [70, 81], DV: 81, OCOR: [108, 110], DATA: [110, 116], VALOR: [152, 165] };
+//
+// ⚠️ Grupo BFC (portador 699, 1o retorno real em 30/09/2026): o USO DA EMPRESA
+// VEM EM BRANCO. Prefixo/numero/parcela saem vazios e a unica identificacao do
+// titulo e' o seu numero, no formato "92276-3" (numero sem o zero a esquerda,
+// hifen, parcela sem zero, sem prefixo). Quem resolve o titulo e' o
+// boleto-adotar-retorno, contra a SE1 do portador — ver `chaveDoSeuNumero`.
+const BR = { USO: [37, 62], NN: [70, 81], DV: 81, OCOR: [108, 110], DATA: [110, 116], SEU: [116, 126], VENC: [146, 152], VALOR: [152, 165] };
+
+/**
+ * Seu numero no formato do BFC ("92276-3", "88281-10") -> { numero, parcela },
+ * sem zeros a esquerda nos dois. null para qualquer outro formato.
+ */
+function chaveDoSeuNumero(seu) {
+  const m = String(seu || '').trim().match(/^(\d{1,9})-(\d{1,2})$/);
+  if (!m) return null;
+  return { numero: m[1].replace(/^0+(?=\d)/, ''), parcela: m[2].replace(/^0+(?=\d)/, '') };
+}
 
 function parseDetalhesBradesco(conteudo) {
   const linhas = String(conteudo || '').split(/\r?\n/);
@@ -142,6 +160,8 @@ function parseDetalhesBradesco(conteudo) {
       dvNossoNumero: l[BR.DV],                                // pode ser digito ou 'P'
       ocorrencia: ocor,                                       // 02=entrada confirmada, 06=liquidado...
       dataOcorrencia: l.slice(BR.DATA[0], BR.DATA[1]),        // DDMMAA
+      seuNumero: l.slice(BR.SEU[0], BR.SEU[1]).trim(),
+      vencimento: l.slice(BR.VENC[0], BR.VENC[1]),            // DDMMAA
       valor: Number(l.slice(BR.VALOR[0], BR.VALOR[1])) / 100
     });
   }
@@ -257,6 +277,6 @@ function filtrarBaixados(conteudo, baixadosSet) {
 
 module.exports = {
   filtrarBaixados, extrairChaves, chaveLinha,
-  parseDetalhes, parseDetalhesBradesco, parseDetalhesPorBanco,
+  parseDetalhes, parseDetalhesBradesco, parseDetalhesPorBanco, chaveDoSeuNumero,
   contaDaLinha, contasDoArquivo, dividirPorConta
 };

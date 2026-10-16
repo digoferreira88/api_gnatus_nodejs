@@ -48,13 +48,16 @@ const PORTADORES = {
   // pro BORDERO. O Diego confirmou que a remessa usa o mesmo .REM do Bradesco,
   // entao o campo livre 237 e o parser do retorno ja servem.
   //
-  // ⚠️ BOLETO AINDA NAO CONFIGURADO: faltam agencia/conta/carteira do fundo no
-  // Bradesco e o CNPJ do beneficiario. Ficam VAZIOS de proposito — `dadosBoleto`
-  // devolve `boletoPendente` e quem gera boleto/linha recusa, em vez de emitir
-  // com coordenada inventada, que seria um boleto impagavel.
+  // 🔒 QUEM EMITE O BOLETO E' O FUNDO (financeiro, 16/10/2026): o BFC registra
+  // o titulo no Bradesco com nosso numero proprio e manda o boleto ao cliente.
+  // A intranet so REGISTRA/acompanha pelo .RET (boleto-adotar-retorno) e nunca
+  // emite — um 2o boleto para o mesmo titulo confundiria o cliente. Por isso
+  // `boletoPeloFundo`, que trava a emissao mesmo se alguem preencher
+  // agencia/conta no .env.
   '699': {
     portador: '699',
     nome: 'Grupo BFC',
+    boletoPeloFundo: true,
     bancoBoleto: '237',
     agencia: '',
     conta: '',
@@ -71,7 +74,7 @@ const PORTADORES = {
 
 // O boleto so pode ser emitido quando as coordenadas do fundo existem. Sem elas
 // da pra fazer bordero (que usa a ag/conta do Protheus), mas nao boleto.
-const boletoConfigurado = (p) => !!(p && trim(p.agencia) && trim(p.conta) && trim(p.carteira));
+const boletoConfigurado = (p) => !!(p && !p.boletoPeloFundo && trim(p.agencia) && trim(p.conta) && trim(p.carteira));
 
 // Aplica overrides de .env por portador (ex.: PORTADOR_044_AGENCIA=1234).
 function comOverrides(p) {
@@ -111,7 +114,10 @@ function dadosBoleto({ banco, agencia, conta } = {}) {
     return {
       banco: p.bancoBoleto, agencia: '', conta: '', carteira: '',
       cessao: true, portador: p.portador, boletoPendente: true,
-      motivo: `O boleto do portador ${p.portador} (${p.nome}) ainda não está configurado: faltam agência, conta e carteira do fundo no banco ${p.bancoBoleto}. O borderô funciona; a emissão de boleto não.`
+      boletoPeloFundo: !!p.boletoPeloFundo,
+      motivo: p.boletoPeloFundo
+        ? `O boleto do portador ${p.portador} (${p.nome}) é emitido e enviado pelo próprio fundo. A intranet só registra e acompanha o título.`
+        : `O boleto do portador ${p.portador} (${p.nome}) ainda não está configurado: faltam agência, conta e carteira do fundo no banco ${p.bancoBoleto}. O borderô funciona; a emissão de boleto não.`
     };
   }
   return {

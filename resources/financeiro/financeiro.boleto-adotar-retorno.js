@@ -1,31 +1,51 @@
 // POST /financeiro/boleto-adotar-retorno
 // Body: { conteudo_base64, banco, agencia, conta, simular? }
 //
-// Registra titulos a partir do ARQUIVO DE RETORNO (.RET) do Santander — caminho
-// 100% intranet, SEM depender do Diego gravar no Protheus.
+// Registra titulos a partir do ARQUIVO DE RETORNO (.RET) — caminho 100%
+// intranet, SEM depender do Diego gravar no Protheus. Serve ao Santander (033)
+// e aos portadores de CESSAO (044 Acreditar, 699 Grupo BFC).
 //
-// Contexto: o importar-retorno do Diego nao casa o titulo Santander (procura por
-// E1_NUMBCO, que esta vazio — e' justamente o retorno que deveria preenche-lo) e
-// devolve tudo NAO_LOCALIZADO. Mas o NOSSO NUMERO atribuido pelo banco ESTA no
-// .RET, e a intranet ja calcula a linha digitavel localmente. Entao lemos o
-// nosso numero do arquivo e gravamos na propria base -> o boleto fica disparavel.
+// Contexto: o importar-retorno do Diego nao casava o titulo Santander (procurava
+// por E1_NUMBCO, vazio). Mas o NOSSO NUMERO atribuido pelo banco ESTA no .RET, e
+// a intranet calcula a linha digitavel localmente. Entao lemos o nosso numero do
+// arquivo e gravamos na propria base -> o boleto fica disparavel.
 //
-// Acao principal = BACKFILL: os titulos normalmente ja foram curados num lote
-// (status_banco='PENDENTE', nosso_numero vazio). Para cada entrada confirmada
-// (ocorrencia '02') do .RET, atualizamos a linha de retorno correspondente:
-// seta nosso_numero (do arquivo) e status_banco='REGISTRADO'. Titulos do .RET
-// que nao estejam em lote algum sao listados como "orfaos" (nao criamos lote
-// novo aqui — use a aba de curadoria + adotar; raro).
+// Nos portadores de cessao, alem disso, o nosso numero que vale e' o que o
+// FUNDO registrou no banco, que pode nao ser o E1_NUMBCO (no BFC a SE1 tem a
+// faixa 00006630xxx do Protheus e o fundo registrou 99111230xxx). Este e' o
+// unico caminho que grava o nosso numero desses portadores na intranet.
 //
-// simular:true (default) -> so mostra o que SERIA atualizado, nao grava.
+// Como a linha do .RET vira titulo:
+//   - uso da empresa (038-062) preenchido -> chave direto dele (Santander, Acreditar);
+//   - uso da empresa EM BRANCO (Grupo BFC) -> pelo SEU NUMERO "92276-3" contra a
+//     SE1 do portador. So aceita candidato UNICO com valor e vencimento iguais
+//     aos do arquivo; o resto volta em `nao_identificados`, sem adivinhar.
+//
+// Destino de cada titulo identificado:
+//   1. ja tem linha de retorno num lote -> atualiza (REGISTRADO + nosso numero);
+//   2. esta num lote, mas ainda sem linha de retorno (lote nunca sincronizado)
+//      -> cria a linha de retorno nesse lote;
+//   3. nao esta em lote nenhum -> cessao: cria lote retroativo (como o
+//      adotar-SE1); Santander: lista como orfao (comportamento de sempre).
+//
+// simular:true (default) -> so mostra o que SERIA feito, nao grava.
 // Permissao 8005.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const Auditoria = require('../../services/auditoria');
 const Cnab = require('../../services/cnabRetornoFiltro');
 const PortadorCessao = require('../../services/portadorCessao');
+const BoletoAdotar = require('../../services/boletoAdotar');
 
 const trim = (v) => String(v || '').trim();
+const centavos = (v) => Math.round(Number(v || 0) * 100);
+const semZeros = (v) => trim(v).replace(/^0+(?=\d)/, '');
+const ddmmaaParaIso = (s) => (/^\d{6}$/.test(String(s || ''))
+  ? `20${s.slice(4, 6)}${s.slice(2, 4)}${s.slice(0, 2)}` : '');
+const chaveDe = (t) => `${trim(t.prefixo)}|${trim(t.numero)}|${trim(t.parcela)}`;
+
+// Lotes cujo titulo ja passou pelo Protheus (borderô gerado).
+const LOTE_ENVIADO = ['ENVIADO_PROTHEUS', 'RETORNADO', 'DISPARADO'];
 
 // Borderôs de TESTE — títulos que existem na SE1 mas cujos boletos NÃO serão
 // honrados (homologação com o FIDC). São IGNORADOS aqui pra que um retorno de
@@ -37,6 +57,62 @@ const BORDEROS_TESTE = () => new Set(
   String(process.env.BOLETO_BORDEROS_TESTE || '001514')
     .split(',').map((s) => s.trim()).filter(Boolean)
 );
+
+/**
+ * Resolve na SE1, pelo SEU NUMERO, as linhas cujo uso da empresa veio em branco
+ * (retorno do Grupo BFC). Procura so no portador; exige candidato UNICO e
+ * valor + vencimento iguais aos do arquivo.
+ *
+ * Medido no 1o retorno real (30/09/2026, 363 linhas): 303 com 1 candidato,
+ * 60 com 2 (o 2o em outro portador — o filtro do portador resolve), valor e
+ * vencimento conferindo em todas.
+ *
+ * Devolve um item por linha, na mesma ordem:
+ *   { ok:true, chave:{prefixo,numero,parcela} }
+ *   { ok:false, motivo: SEU_NUMERO_INVALIDO | NAO_LOCALIZADO | AMBIGUO |
+ *                       VALOR_DIVERGENTE | VENCIMENTO_DIVERGENTE, ... }
+ */
+async function resolverPeloSeuNumero(Protheus, linhas, portador) {
+  const alvo = linhas.map((d) => ({ d, k: Cnab.chaveDoSeuNumero(d.seuNumero) }));
+  // E1_NUM costuma ter 6 posicoes com zero a esquerda ("092276"); o arquivo
+  // vem sem o zero ("92276"). Procura as duas formas.
+  const nums = [...new Set(alvo.filter((a) => a.k).flatMap((a) => [a.k.numero, a.k.numero.padStart(6, '0')]))];
+  const se = [];
+  const BATCH = 400;
+  for (let i = 0; i < nums.length; i += BATCH) {
+    const slice = nums.slice(i, i + BATCH);
+    const p = { port: portador };
+    slice.forEach((n, j) => { p[`n${j}`] = n; });
+    const rows = await Protheus.connectAndQuery(`
+      SELECT RTRIM(E1_PREFIXO) prefixo, RTRIM(E1_NUM) numero, RTRIM(E1_PARCELA) parcela,
+             E1_VALOR valor, RTRIM(E1_VENCTO) vencto, RTRIM(E1_VENCREA) vencrea
+        FROM SE1010 WITH (NOLOCK)
+       WHERE D_E_L_E_T_<>'*' AND E1_FILIAL='01' AND RTRIM(E1_PORTADO)=@port
+         AND RTRIM(E1_TIPO) NOT IN ('RA','NCC')
+         AND RTRIM(E1_NUM) IN (${slice.map((_, j) => `@n${j}`).join(',')})`, p);
+    se.push(...rows);
+  }
+
+  return alvo.map(({ d, k }) => {
+    const base = { seuNumero: trim(d.seuNumero), nossoNumero: d.nossoNumero, valor: d.valor };
+    if (!k) return { ...base, ok: false, motivo: 'SEU_NUMERO_INVALIDO' };
+    const c = se.filter((x) => semZeros(x.numero) === k.numero && semZeros(x.parcela) === k.parcela);
+    if (!c.length) return { ...base, ok: false, motivo: 'NAO_LOCALIZADO' };
+    if (c.length > 1) {
+      return { ...base, ok: false, motivo: 'AMBIGUO', candidatos: c.map((x) => [x.prefixo, x.numero, x.parcela].filter(Boolean).join('/')) };
+    }
+    const x = c[0];
+    const titulo = [x.prefixo, x.numero, x.parcela].filter(Boolean).join('/');
+    if (centavos(x.valor) !== centavos(d.valor)) {
+      return { ...base, ok: false, motivo: 'VALOR_DIVERGENTE', titulo, valorSe1: Number(x.valor) };
+    }
+    const venc = ddmmaaParaIso(d.vencimento);
+    if (venc && venc !== trim(x.vencto) && venc !== trim(x.vencrea)) {
+      return { ...base, ok: false, motivo: 'VENCIMENTO_DIVERGENTE', titulo, vencimento: venc, vencimentoSe1: trim(x.vencto) };
+    }
+    return { ...base, ok: true, chave: { prefixo: x.prefixo, numero: x.numero, parcela: x.parcela } };
+  });
+}
 
 module.exports = (app) => ({
   verb: 'post',
@@ -70,33 +146,62 @@ module.exports = (app) => ({
       if (!confirmados.length) {
         return res.json({ ok: true, atualizados: 0, candidatos: 0, mensagem: 'Nenhuma entrada confirmada (02) com nosso numero no arquivo.' });
       }
+
+      // ----- Chave de cada linha -----
+      const identificados = confirmados.filter(d => trim(d.numero));
+      const semUso = confirmados.filter(d => !trim(d.numero));
+      const naoIdentificados = [];
+      let criterio = 'uso_empresa';
+      if (semUso.length) {
+        if (!cessao) {
+          semUso.forEach(d => naoIdentificados.push({ ok: false, motivo: 'SEM_CHAVE', seuNumero: trim(d.seuNumero), nossoNumero: d.nossoNumero, valor: d.valor }));
+        } else {
+          criterio = identificados.length ? 'uso_empresa+seu_numero' : 'seu_numero';
+          const r = await resolverPeloSeuNumero(Protheus, semUso, banco);
+          r.forEach((x, i) => {
+            if (x.ok) identificados.push({ ...semUso[i], ...x.chave });
+            else naoIdentificados.push(x);
+          });
+        }
+      }
+
       // mapa chave (prefixo|numero|parcela) -> nosso numero
       const nossoPorChave = new Map();
-      confirmados.forEach(d => nossoPorChave.set(`${d.prefixo}|${d.numero}|${d.parcela}`, d.nossoNumero));
+      identificados.forEach(d => nossoPorChave.set(chaveDe(d), d.nossoNumero));
 
-      // Guard (titulo ja baixado) + borderô (E1_NUMBOR) por chave. O borderô
-      // vai pro tab_boleto_envio_lote_retorno.bordero_protheus pra a tela de
-      // Disparar poder filtrar por borderô.
+      // Guard (titulo ja baixado) + borderô (E1_NUMBOR) + dados do titulo, por
+      // chave. O borderô vai pro tab_boleto_envio_lote_retorno.bordero_protheus
+      // pra a tela de Disparar poder filtrar por borderô. RA/NCC ficam fora: um
+      // adiantamento baixado com o mesmo numero/parcela nao pode fazer a NF
+      // parecer baixada.
       const baixados = new Set();
       const numborPorChave = new Map();
+      const se1PorChave = new Map();     // so quando ha exatamente 1 titulo na chave
+      const se1Contagem = new Map();
+      const keys = [...nossoPorChave.keys()];
       const BATCH = 80;
-      for (let b = 0; b < confirmados.length; b += BATCH) {
-        const slice = confirmados.slice(b, b + BATCH); const p = {};
-        const ors = slice.map((t, j) => { p[`pf${j}`]=t.prefixo;p[`nu${j}`]=t.numero;p[`pa${j}`]=t.parcela;
+      for (let b = 0; b < keys.length; b += BATCH) {
+        const slice = keys.slice(b, b + BATCH); const p = {};
+        const ors = slice.map((k, j) => { const [pf, nu, pa] = k.split('|'); p[`pf${j}`]=pf;p[`nu${j}`]=nu;p[`pa${j}`]=pa;
           return `(RTRIM(E1_PREFIXO)=@pf${j} AND RTRIM(E1_NUM)=@nu${j} AND RTRIM(E1_PARCELA)=@pa${j})`; }).join(' OR ');
         const rows = await Protheus.connectAndQuery(`
           SELECT RTRIM(E1_PREFIXO) prefixo, RTRIM(E1_NUM) numero, RTRIM(E1_PARCELA) parcela,
-                 RTRIM(E1_STATUS) status, RTRIM(E1_BAIXA) baixa, RTRIM(E1_NUMBOR) numbor
-            FROM SE1010 WITH (NOLOCK) WHERE D_E_L_E_T_<>'*' AND E1_FILIAL='01' AND (${ors})`, p);
+                 RTRIM(E1_STATUS) status, RTRIM(E1_BAIXA) baixa, RTRIM(E1_NUMBOR) numbor,
+                 RTRIM(E1_TIPO) tipo, RTRIM(E1_CLIENTE) cliente_cod, RTRIM(E1_LOJA) cliente_loja,
+                 RTRIM(E1_PORTADO) portador, RTRIM(E1_AGEDEP) agencia, RTRIM(E1_CONTA) conta,
+                 E1_VALOR valor, E1_VENCREA vencimento
+            FROM SE1010 WITH (NOLOCK)
+           WHERE D_E_L_E_T_<>'*' AND E1_FILIAL='01' AND RTRIM(E1_TIPO) NOT IN ('RA','NCC') AND (${ors})`, p);
         rows.forEach(r => {
-          const k = `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}`;
+          const k = chaveDe(r);
           if (trim(r.status)==='B' || trim(r.baixa).length>=8) baixados.add(k);
           if (trim(r.numbor)) numborPorChave.set(k, trim(r.numbor));
+          se1Contagem.set(k, (se1Contagem.get(k) || 0) + 1);
+          se1PorChave.set(k, r);
         });
       }
 
       // Linhas de retorno existentes que casam com as chaves do .RET
-      const keys = [...nossoPorChave.keys()];
       const existentes = [];
       for (let b = 0; b < keys.length; b += BATCH) {
         const slice = keys.slice(b, b + BATCH); const p = {};
@@ -110,14 +215,39 @@ module.exports = (app) => ({
       }
       const existentesPorChave = new Map();
       existentes.forEach(r => {
-        const k = `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}`;
+        const k = chaveDe(r);
         if (!existentesPorChave.has(k)) existentesPorChave.set(k, []);
         existentesPorChave.get(k).push(r);
       });
 
-      // Classifica. Atualiza se: PENDENTE, ou sem nosso numero, ou sem borderô
-      // (este ultimo permite backfill do borderô em titulos ja registrados).
+      // Titulos em lote enviado ao Protheus, mas sem linha de retorno ainda
+      // (lote nunca sincronizado). Prefere o lote do mesmo borderô.
+      const semRetorno = keys.filter(k => !existentesPorChave.has(k));
+      const lotePorChave = new Map();
+      for (let b = 0; b < semRetorno.length; b += BATCH) {
+        const slice = semRetorno.slice(b, b + BATCH); const p = {};
+        const ors = slice.map((k, i) => { const [pf, nu, pa] = k.split('|'); p[`pf${i}`]=pf;p[`nu${i}`]=nu;p[`pa${i}`]=pa;
+          return `(COALESCE(TRIM(t.prefixo),'')=@pf${i} AND TRIM(t.numero)=@nu${i} AND COALESCE(TRIM(t.parcela),'')=@pa${i})`; }).join(' OR ');
+        const rows = await Pg.connectAndQuery(`
+          SELECT t.id_lote, COALESCE(TRIM(t.prefixo),'') prefixo, TRIM(t.numero) numero, COALESCE(TRIM(t.parcela),'') parcela,
+                 TRIM(t.cliente_cod) cliente_cod, TRIM(t.cliente_loja) cliente_loja,
+                 COALESCE(TRIM(l.lote_protheus),'') lote_protheus
+            FROM tab_boleto_envio_lote_titulo t
+            JOIN tab_boleto_envio_lote l ON l.id = t.id_lote
+           WHERE l.status IN (${LOTE_ENVIADO.map(s => `'${s}'`).join(',')}) AND (${ors})
+           ORDER BY t.id_lote DESC`, p);
+        rows.forEach(r => {
+          const k = chaveDe(r);
+          const atual = lotePorChave.get(k);
+          const doBordero = r.lote_protheus && r.lote_protheus === (numborPorChave.get(k) || '');
+          if (!atual || (doBordero && !atual.doBordero)) lotePorChave.set(k, { ...r, doBordero });
+        });
+      }
+
+      // Classifica.
       const aAtualizar = [];   // {id, id_lote, nosso, numbor}
+      const aInserir = [];     // {id_lote, prefixo, numero, parcela, cliente_cod, cliente_loja, nosso, numbor}
+      const aAdotar = [];      // linhas SE1 com numbco = nosso numero do .RET
       let jaOk = 0, baixadoSkip = 0, testeSkip = 0;
       const testes = BORDEROS_TESTE();
       const orfaos = [];
@@ -126,37 +256,66 @@ module.exports = (app) => ({
         // Borderô de TESTE (boleto não será honrado) -> nunca registrar, senão
         // vira disparável e o cliente REAL recebe um boleto de homologação.
         if (testes.has(numborPorChave.get(k) || '')) { testeSkip++; continue; }
-        const rows = existentesPorChave.get(k);
-        if (!rows || !rows.length) { orfaos.push(k); continue; }
         const numbor = numborPorChave.get(k) || '';
-        const pend = rows.find(r =>
-          trim(r.status_banco) !== 'REGISTRADO' || !trim(r.nosso_numero) ||
-          (numbor && !trim(r.bordero_protheus)));
-        if (pend) aAtualizar.push({ id: pend.id, id_lote: pend.id_lote, nosso, numbor });
-        else jaOk++;
+        const rows = existentesPorChave.get(k);
+        if (rows && rows.length) {
+          // Cessão: o número do fundo prevalece sobre qualquer outro já gravado
+          // (ex.: o E1_NUMBCO do Protheus que uma sincronização antiga trouxe).
+          // Santander: só preenche quando está vazio, como sempre foi.
+          const nnPendente = (r) => (cessao ? trim(r.nosso_numero) !== trim(nosso) : !trim(r.nosso_numero));
+          const pend = rows.find(r =>
+            trim(r.status_banco) !== 'REGISTRADO' || nnPendente(r) ||
+            (numbor && !trim(r.bordero_protheus)));
+          if (pend) aAtualizar.push({ id: pend.id, id_lote: pend.id_lote, nosso, numbor });
+          else jaOk++;
+          continue;
+        }
+        const lt = lotePorChave.get(k);
+        if (lt) { aInserir.push({ ...lt, nosso, numbor }); continue; }
+        // Fora de qualquer lote. Cessao: adota com o nosso numero do .RET, se a
+        // SE1 tem UM titulo nessa chave (senao nao ha como saber cliente/loja).
+        const se = se1PorChave.get(k);
+        if (cessao && se && se1Contagem.get(k) === 1) aAdotar.push({ ...se, numbco: nosso, bordero: numbor });
+        else orfaos.push(k);
       }
 
+      const porMotivo = {};
+      naoIdentificados.forEach(x => { porMotivo[x.motivo] = (porMotivo[x.motivo] || 0) + 1; });
       const resumo = {
         banco, banco_layout: bancoLayout, cessao: !!cessao,
+        boleto_pelo_fundo: !!(cessao && cessao.boletoPeloFundo),
+        criterio,
         candidatos: confirmados.length,
+        identificados: nossoPorChave.size,
         a_atualizar: aAtualizar.length,
+        a_inserir: aInserir.length,          // em lote, sem linha de retorno ainda
+        a_adotar: aAdotar.length,            // fora de lote (cessão): lote retroativo
         ja_registrados: jaOk,
         ja_baixados: baixadoSkip,
         ignorados_teste: testeSkip,     // borderô de homologação — não vira disparável
-        orfaos: orfaos.length
+        orfaos: orfaos.length,
+        nao_identificados: naoIdentificados.length,
+        nao_identificados_por_motivo: porMotivo,
+        nao_identificados_lista: naoIdentificados.slice(0, 50)
       };
+      const total = aAtualizar.length + aInserir.length + aAdotar.length;
+      const destino = resumo.boleto_pelo_fundo
+        ? 'O boleto desse portador é emitido pelo fundo: aqui o título fica registrado para acompanhamento.'
+        : 'Ficam disparáveis em "Disparar boletos".';
 
       if (simular) {
         return res.json({ ok: true, simular: true, ...resumo,
-          mensagem: `${aAtualizar.length} título(s) seriam registrados (nosso número do .RET) e ficariam disparáveis. ${orfaos.length} órfão(s) (não estão em lote).` });
+          mensagem: `${total} título(s) seriam registrados com o nosso número do .RET. ${destino}`
+            + (naoIdentificados.length ? ` ${naoIdentificados.length} linha(s) não identificada(s).` : '')
+            + (orfaos.length ? ` ${orfaos.length} órfão(s) (não estão em lote).` : '') });
       }
 
-      if (!aAtualizar.length) {
+      if (!total) {
         return res.json({ ok: true, simular: false, atualizados: 0, ...resumo, mensagem: 'Nada novo a registrar.' });
       }
 
-      // Backfill: seta nosso_numero + REGISTRADO nas linhas pendentes
       const lotesTocados = new Set();
+      // (1) Backfill: seta nosso_numero + REGISTRADO nas linhas pendentes
       for (const u of aAtualizar) {
         await Pg.connectAndQuery(`
           UPDATE tab_boleto_envio_lote_retorno
@@ -166,30 +325,70 @@ module.exports = (app) => ({
            WHERE id = @id`, { id: u.id, nn: u.nosso, bord: u.numbor || '' });
         lotesTocados.add(u.id_lote);
       }
-      // Atualiza status dos lotes tocados pra RETORNADO se nao houver mais PENDENTE
+      // (2) Titulo em lote, sem linha de retorno: cria a linha
+      for (const t of aInserir) {
+        await Pg.connectAndQuery(`
+          INSERT INTO tab_boleto_envio_lote_retorno
+            (id_lote, prefixo, numero, parcela, cliente_cod, cliente_loja,
+             status_banco, ocorrencia_cod, ocorrencia_desc, nosso_numero, bordero_protheus,
+             valor_liquidado, data_liquidacao, sincronizado_em)
+          VALUES (@id, @pre, @num, @par, @cli, @loja,
+                  'REGISTRADO', '02', 'Entrada confirmada (.RET lido pela intranet)', @nn, @bord,
+                  0, NULL, NOW())
+          ON CONFLICT DO NOTHING`,
+          { id: t.id_lote, pre: t.prefixo || null, num: t.numero, par: t.parcela || null,
+            cli: t.cliente_cod, loja: t.cliente_loja, nn: t.nosso, bord: t.numbor || null });
+        lotesTocados.add(t.id_lote);
+      }
+      // Lote fica RETORNADO so quando TODOS os titulos dele tem linha de
+      // retorno e nenhuma esta pendente — senao um lote parcialmente retornado
+      // sumiria da fila. DISPARADO nunca volta para RETORNADO.
       for (const idLote of lotesTocados) {
         await Pg.connectAndQuery(`
           UPDATE tab_boleto_envio_lote
-             SET status = 'RETORNADO', sincronizado_em = NOW(),
+             SET status = CASE
+                   WHEN status = 'ENVIADO_PROTHEUS'
+                    AND NOT EXISTS (SELECT 1 FROM tab_boleto_envio_lote_retorno WHERE id_lote = @id AND status_banco = 'PENDENTE')
+                    AND (SELECT COUNT(*) FROM tab_boleto_envio_lote_retorno WHERE id_lote = @id)
+                        >= (SELECT COUNT(*) FROM tab_boleto_envio_lote_titulo WHERE id_lote = @id)
+                   THEN 'RETORNADO' ELSE status END,
+                 sincronizado_em = NOW(),
                  qt_registrados = (SELECT COUNT(*) FROM tab_boleto_envio_lote_retorno WHERE id_lote = @id AND status_banco = 'REGISTRADO')
-           WHERE id = @id
-             AND NOT EXISTS (SELECT 1 FROM tab_boleto_envio_lote_retorno WHERE id_lote = @id AND status_banco = 'PENDENTE')`,
+           WHERE id = @id`,
           { id: idLote });
+      }
+      // (3) Cessao fora de lote: lote retroativo com o nosso numero do fundo
+      let adocao = null;
+      if (aAdotar.length) {
+        adocao = await BoletoAdotar.criarLotesRetroativos({
+          Pg, Protheus, user, titulos: aAdotar,
+          rotulo: 'adotado .RET',
+          ocorrenciaDesc: 'Entrada confirmada (.RET lido pela intranet)',
+          observacao: `Lote retroativo criado pelo "Registrar pelo .RET" em ${new Date().toISOString()}: títulos do portador ${banco} registrados pelo fundo, sem lote na intranet. Nosso número = o do arquivo de retorno.`
+        });
+        (adocao.lotes || []).forEach(l => lotesTocados.add(l.id));
       }
 
       Auditoria.registrar(app, {
         modulo: 'Financeiro', submodulo: 'EnvioBoleto',
         acao: 'ADOTAR_RETORNO', severidade: 'CRITICO', req,
         entidade: 'lote', entidadeId: [...lotesTocados].join(','),
-        descricao: `Registrou ${aAtualizar.length} título(s) do retorno Santander pelo nosso número do .RET (sem Protheus). Lotes: ${[...lotesTocados].join(',')}`,
-        meta: { banco, ...resumo, lotes: [...lotesTocados] }
+        descricao: `Registrou ${total} título(s) do portador ${banco} pelo nosso número do .RET (sem Protheus)`
+          + ` — ${aAtualizar.length} atualizado(s), ${aInserir.length} em lote sem retorno, ${aAdotar.length} adotado(s) em lote novo`
+          + (naoIdentificados.length ? `; ${naoIdentificados.length} não identificado(s)` : '')
+          + `. Lotes: ${[...lotesTocados].join(',')}`,
+        meta: { ...resumo, nao_identificados_lista: naoIdentificados.slice(0, 200), lotes: [...lotesTocados] }
       });
 
-      return res.json({ ok: true, simular: false, atualizados: aAtualizar.length, lotes: [...lotesTocados], ...resumo,
-        mensagem: `${aAtualizar.length} título(s) registrado(s) pelo .RET. Já aparecem em "Disparar boletos".` });
+      return res.json({ ok: true, simular: false, atualizados: total, lotes: [...lotesTocados], ...resumo,
+        lotes_criados: adocao ? adocao.lotes_criados : 0,
+        mensagem: `${total} título(s) registrado(s) pelo .RET. ${destino}` });
     } catch (err) {
       console.error('boleto-adotar-retorno:', err);
       return res.status(500).json({ message: 'Erro: ' + err.message });
     }
   }
 });
+
+// Exportado para teste (o loader so usa o default).
+module.exports.resolverPeloSeuNumero = resolverPeloSeuNumero;
