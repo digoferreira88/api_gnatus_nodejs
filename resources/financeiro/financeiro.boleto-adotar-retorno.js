@@ -201,16 +201,20 @@ module.exports = (app) => ({
         });
       }
 
-      // Linhas de retorno existentes que casam com as chaves do .RET
+      // Linhas de retorno existentes que casam com as chaves do .RET — só em
+      // lotes DESTE banco. Um título que passou por dois bancos tem linha nos
+      // lotes dos dois; o .RET do Santander não pode mexer na linha do Itaú.
       const existentes = [];
       for (let b = 0; b < keys.length; b += BATCH) {
-        const slice = keys.slice(b, b + BATCH); const p = {};
+        const slice = keys.slice(b, b + BATCH); const p = { banco };
         const ors = slice.map((k, i) => { const [pf, nu, pa] = k.split('|'); p[`pf${i}`]=pf;p[`nu${i}`]=nu;p[`pa${i}`]=pa;
-          return `(COALESCE(TRIM(prefixo),'')=@pf${i} AND TRIM(numero)=@nu${i} AND COALESCE(TRIM(parcela),'')=@pa${i})`; }).join(' OR ');
+          return `(COALESCE(TRIM(r.prefixo),'')=@pf${i} AND TRIM(r.numero)=@nu${i} AND COALESCE(TRIM(r.parcela),'')=@pa${i})`; }).join(' OR ');
         const rows = await Pg.connectAndQuery(`
-          SELECT id, id_lote, COALESCE(TRIM(prefixo),'') prefixo, TRIM(numero) numero, COALESCE(TRIM(parcela),'') parcela,
-                 status_banco, COALESCE(TRIM(nosso_numero),'') nosso_numero, COALESCE(TRIM(bordero_protheus),'') bordero_protheus
-            FROM tab_boleto_envio_lote_retorno WHERE ${ors}`, p);
+          SELECT r.id, r.id_lote, COALESCE(TRIM(r.prefixo),'') prefixo, TRIM(r.numero) numero, COALESCE(TRIM(r.parcela),'') parcela,
+                 r.status_banco, COALESCE(TRIM(r.nosso_numero),'') nosso_numero, COALESCE(TRIM(r.bordero_protheus),'') bordero_protheus
+            FROM tab_boleto_envio_lote_retorno r
+            JOIN tab_boleto_envio_lote l ON l.id = r.id_lote
+           WHERE TRIM(l.banco_cod) = @banco AND (${ors})`, p);
         rows.forEach(r => existentes.push(r));
       }
       const existentesPorChave = new Map();
@@ -225,7 +229,7 @@ module.exports = (app) => ({
       const semRetorno = keys.filter(k => !existentesPorChave.has(k));
       const lotePorChave = new Map();
       for (let b = 0; b < semRetorno.length; b += BATCH) {
-        const slice = semRetorno.slice(b, b + BATCH); const p = {};
+        const slice = semRetorno.slice(b, b + BATCH); const p = { banco };
         const ors = slice.map((k, i) => { const [pf, nu, pa] = k.split('|'); p[`pf${i}`]=pf;p[`nu${i}`]=nu;p[`pa${i}`]=pa;
           return `(COALESCE(TRIM(t.prefixo),'')=@pf${i} AND TRIM(t.numero)=@nu${i} AND COALESCE(TRIM(t.parcela),'')=@pa${i})`; }).join(' OR ');
         const rows = await Pg.connectAndQuery(`
@@ -234,7 +238,7 @@ module.exports = (app) => ({
                  COALESCE(TRIM(l.lote_protheus),'') lote_protheus
             FROM tab_boleto_envio_lote_titulo t
             JOIN tab_boleto_envio_lote l ON l.id = t.id_lote
-           WHERE l.status IN (${LOTE_ENVIADO.map(s => `'${s}'`).join(',')}) AND (${ors})
+           WHERE TRIM(l.banco_cod) = @banco AND l.status IN (${LOTE_ENVIADO.map(s => `'${s}'`).join(',')}) AND (${ors})
            ORDER BY t.id_lote DESC`, p);
         rows.forEach(r => {
           const k = chaveDe(r);
@@ -251,8 +255,17 @@ module.exports = (app) => ({
       let jaOk = 0, baixadoSkip = 0, testeSkip = 0;
       const testes = BORDEROS_TESTE();
       const orfaos = [];
+      const outroPortador = [];   // título que hoje está em outro banco no Protheus
       for (const [k, nosso] of nossoPorChave.entries()) {
         if (baixados.has(k)) { baixadoSkip++; continue; }
+        // Saiu deste banco depois da remessa (transferido ou devolvido à
+        // carteira): a entrada confirmada do .RET é de um registro que não vale
+        // mais. Registrar aqui recriaria o problema do borderô 418817.
+        const seAtual = se1PorChave.get(k);
+        if (seAtual && trim(seAtual.portador) !== banco) {
+          outroPortador.push(`${k.split('|').filter(Boolean).join('/')} → ${trim(seAtual.portador) || 'sem portador'}`);
+          continue;
+        }
         // Borderô de TESTE (boleto não será honrado) -> nunca registrar, senão
         // vira disparável e o cliente REAL recebe um boleto de homologação.
         if (testes.has(numborPorChave.get(k) || '')) { testeSkip++; continue; }
@@ -293,6 +306,8 @@ module.exports = (app) => ({
         ja_registrados: jaOk,
         ja_baixados: baixadoSkip,
         ignorados_teste: testeSkip,     // borderô de homologação — não vira disparável
+        outro_portador: outroPortador.length,
+        outro_portador_lista: outroPortador.slice(0, 50),
         orfaos: orfaos.length,
         nao_identificados: naoIdentificados.length,
         nao_identificados_por_motivo: porMotivo,
@@ -307,6 +322,7 @@ module.exports = (app) => ({
         return res.json({ ok: true, simular: true, ...resumo,
           mensagem: `${total} título(s) seriam registrados com o nosso número do .RET. ${destino}`
             + (naoIdentificados.length ? ` ${naoIdentificados.length} linha(s) não identificada(s).` : '')
+            + (outroPortador.length ? ` ${outroPortador.length} título(s) ignorado(s): hoje estão em outro banco no Protheus.` : '')
             + (orfaos.length ? ` ${orfaos.length} órfão(s) (não estão em lote).` : '') });
       }
 

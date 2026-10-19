@@ -81,11 +81,14 @@ let loteSeq = 900;
 const temChave = (p, nu, pa) => Object.keys(p).some(k => /^nu\d+$/.test(k) && p[k] === nu && p['pa' + k.slice(2)] === pa);
 const Pg = { connectAndQuery: async (sql, p) => {
   pgCalls.push({ sql, p });
-  if (/FROM tab_boleto_envio_lote_retorno WHERE \(/.test(sql)) {
+  if (/FROM tab_boleto_envio_lote_retorno r\s+JOIN tab_boleto_envio_lote l/.test(sql)) {
+    // so linhas de lotes DO banco do arquivo
+    assert.ok(/TRIM\(l\.banco_cod\) = @banco/.test(sql) && p.banco === '699');
     return temChave(p, '092276', '03')
       ? [{ id: 11, id_lote: 5, prefixo: '1', numero: '092276', parcela: '03', status_banco: 'PENDENTE', nosso_numero: '00006630210', bordero_protheus: '418809' }] : [];
   }
   if (/FROM tab_boleto_envio_lote_titulo t/.test(sql)) {
+    assert.ok(/TRIM\(l\.banco_cod\) = @banco/.test(sql) && p.banco === '699');
     return temChave(p, '092276', '02')
       ? [{ id_lote: 5, prefixo: '1', numero: '092276', parcela: '02', cliente_cod: 'C1', cliente_loja: '01', lote_protheus: '418809' }] : [];
   }
@@ -144,12 +147,28 @@ const call = (body) => new Promise((ok) => {
     if (/FROM tab_boleto_envio_lote WHERE id/.test(sql)) return [{ id: p.id, status: 'ENVIADO_PROTHEUS', banco_cod: p.id === 5 ? '699' : '033' }];
     if (/FROM tab_boleto_envio_lote_titulo WHERE id_lote/.test(sql)) return [{ prefixo: '1', numero: '092276', parcela: '03', cliente_cod: 'C1', cliente_loja: '01' }];
     return []; } };
-  const PrS = { connectAndQuery: async () => [{ prefixo: '1', numero: '092276', parcela: '03', cliente_cod: 'C1', cliente_loja: '01', ocorren: '', bordero: '418809', nosso_numero: '00006630210', data_baixa: '', valor_liquidado: 0 }] };
+  let portadorSe1 = '699', ocorSe1 = '';
+  const PrS = { connectAndQuery: async (sql) => {
+    assert.ok(/E1_TIPO\) NOT IN \('RA','NCC'\)/.test(sql));
+    return [{ prefixo: '1', numero: '092276', parcela: '03', cliente_cod: 'C1', cliente_loja: '01', ocorren: ocorSe1, bordero: '418809', nosso_numero: '00006630210', data_baixa: '', valor_liquidado: 0, portador: portadorSe1 }];
+  } };
+  const insRet = () => syncPg.find(c => /INSERT INTO tab_boleto_envio_lote_retorno/.test(c.sql)).p;
   await S.sincronizarLote({ Pg: PgS, Protheus: PrS, id: 5 });
-  assert.strictEqual(syncPg.find(c => /INSERT INTO tab_boleto_envio_lote_retorno/.test(c.sql)).p.nn, null);
-  syncPg.length = 0;
+  assert.strictEqual(insRet().nn, null);                         // cessao: NN nunca vem da SE1
+  syncPg.length = 0; portadorSe1 = '033';
   await S.sincronizarLote({ Pg: PgS, Protheus: PrS, id: 6 });
-  assert.strictEqual(syncPg.find(c => /INSERT INTO tab_boleto_envio_lote_retorno/.test(c.sql)).p.nn, '00006630210');
+  assert.strictEqual(insRet().nn, '00006630210');                // Santander no proprio banco: igual a antes
+
+  // --- borderô 418817 (19/10): titulo de lote Santander que foi para o Itau
+  syncPg.length = 0; portadorSe1 = '341'; ocorSe1 = '21';
+  await S.sincronizarLote({ Pg: PgS, Protheus: PrS, id: 6 });
+  const tr = insRet();
+  assert.strictEqual(tr.status, 'TRANSFERIDO');                  // sai do disparo/PDF/portal (exigem REGISTRADO)
+  assert.ok(/portador 341 \(borderô 418809\)/.test(tr.oc_desc), tr.oc_desc);
+  assert.strictEqual(tr.nn, null); assert.strictEqual(tr.bord, null);  // nada do outro banco
+  syncPg.length = 0; portadorSe1 = '';                            // devolvido a carteira
+  await S.sincronizarLote({ Pg: PgS, Protheus: PrS, id: 6 });
+  assert.strictEqual(insRet().status, 'TRANSFERIDO'); assert.ok(/sem portador/.test(insRet().oc_desc));
 
   // --- adotarSe1 exclui cessao
   const sqls = []; const A = R('services/boletoAdotar.js');

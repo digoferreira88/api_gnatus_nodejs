@@ -58,6 +58,29 @@ function classificarStatus(ocorren, dataBaixa, valorLiq) {
 }
 
 /**
+ * O título saiu do banco do lote: foi transferido para outro portador ou voltou
+ * para a carteira (E1_PORTADO vazio). A linha do lote antigo vira TRANSFERIDO e
+ * sai do disparo, do PDF e do portal (todos exigem REGISTRADO).
+ *
+ * 🔴 Borderô 418817 (Itaú, 19/10/2026): 3 títulos tinham passado antes por
+ * borderôs Santander (418796/418800/418815). A sincronização desses lotes
+ * Santander lia a SE1 só pela chave do título e copiava o estado ATUAL — já
+ * no Itaú: borderô 418817, ocorrência 21 e nosso número Itaú. Resultado: no
+ * filtro do borderô 418817 apareciam 6 linhas "Santander", com nosso número do
+ * Itaú, e um boleto gerado delas sairia com código de barras inválido.
+ */
+function statusTransferido(se) {
+  const port = trim(se.portador);
+  const bor = trim(se.bordero);
+  return {
+    status: 'TRANSFERIDO', cod: '',
+    desc: port
+      ? `Título transferido para o portador ${port}${bor ? ` (borderô ${bor})` : ''} — não dispare por este lote`
+      : 'Título retirado do banco (sem portador no Protheus) — não dispare por este lote'
+  };
+}
+
+/**
  * Sincroniza um lote com a SE1. Nao valida permissao nem status — quem chama
  * decide (o handler HTTP valida dono/admin e STATUS_SINCRONIZAVEIS).
  * @returns {Promise<{encontrado:boolean, semTitulos?:boolean, novoStatus?:string, stats?:object, qtTitulos?:number}>}
@@ -108,9 +131,11 @@ async function sincronizarLote({ Pg, Protheus, id }) {
              RTRIM(se1.E1_NUMBOR)  bordero,
              RTRIM(se1.E1_NUMBCO)  nosso_numero,
              RTRIM(se1.E1_BAIXA)   data_baixa,
-             se1.E1_VALLIQ         valor_liquidado
+             se1.E1_VALLIQ         valor_liquidado,
+             RTRIM(se1.E1_PORTADO) portador
         FROM SE1010 se1 WITH (NOLOCK)
        WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
+         AND RTRIM(se1.E1_TIPO) NOT IN ('RA','NCC')
          AND (${condicoes})`;
     const r = await Protheus.connectAndQuery(sql, params);
     seRows.push(...r);
@@ -123,15 +148,18 @@ async function sincronizarLote({ Pg, Protheus, id }) {
     seByKey.set(key, r);
   });
 
-  const stats = { PENDENTE: 0, REGISTRADO: 0, LIQUIDADO: 0, BAIXADO: 0, REJEITADO: 0, DESCONHECIDO: 0, NAO_ENCONTRADO: 0 };
+  const stats = { PENDENTE: 0, REGISTRADO: 0, LIQUIDADO: 0, BAIXADO: 0, REJEITADO: 0, DESCONHECIDO: 0, NAO_ENCONTRADO: 0, TRANSFERIDO: 0 };
   for (const t of titulos) {
     const key = [trim(t.prefixo), trim(t.numero), trim(t.parcela), trim(t.cliente_cod), trim(t.cliente_loja)].join('|');
     const se = seByKey.get(key);
     let cls;
+    let saiuDoBanco = false;
     if (!se) {
       cls = { status: 'NAO_ENCONTRADO', cod: '', desc: 'Título não encontrado na SE1 (deletado?)' };
     } else {
       cls = classificarStatus(se.ocorren, se.data_baixa, se.valor_liquidado);
+      saiuDoBanco = cls.status !== 'LIQUIDADO' && trim(se.portador) !== trim(lote.banco_cod);
+      if (saiuDoBanco) cls = statusTransferido(se);
     }
     stats[cls.status] = (stats[cls.status] || 0) + 1;
 
@@ -179,10 +207,12 @@ async function sincronizarLote({ Pg, Protheus, id }) {
         prefixo: trim(t.prefixo), numero: trim(t.numero), parcela: trim(t.parcela),
         cliente_cod: trim(t.cliente_cod), cliente_loja: trim(t.cliente_loja),
         status: cls.status, oc_cod: cls.cod, oc_desc: cls.desc,
-        nn:   se && nnDaSe1 ? trim(se.nosso_numero) : null,
-        bord: se ? trim(se.bordero) : null,
-        vlq:  se ? N(se.valor_liquidado) : 0,
-        dlq:  se ? trim(se.data_baixa) : null
+        // Título que saiu do banco deste lote: nada da SE1 vem para cá — o nosso
+        // número e o borderô de lá são do OUTRO banco (borderô 418817, 19/10).
+        nn:   se && nnDaSe1 && !saiuDoBanco ? trim(se.nosso_numero) : null,
+        bord: se && !saiuDoBanco ? trim(se.bordero) : null,
+        vlq:  se && !saiuDoBanco ? N(se.valor_liquidado) : 0,
+        dlq:  se && !saiuDoBanco ? trim(se.data_baixa) : null
       }
     );
   }
@@ -265,4 +295,4 @@ async function lotesDosTitulos({ Pg, chaves }) {
   return [...ids];
 }
 
-module.exports = { STATUS_SINCRONIZAVEIS, MAP_OCORRENCIA, classificarStatus, sincronizarLote, lotesDosTitulos };
+module.exports = { STATUS_SINCRONIZAVEIS, MAP_OCORRENCIA, classificarStatus, statusTransferido, sincronizarLote, lotesDosTitulos };
