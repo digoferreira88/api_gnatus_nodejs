@@ -100,7 +100,8 @@ module.exports = (app) => ({
           RTRIM(PE.estatus) estatus, ISNULL(PE.estatus_cod,0) estatus_cod,
           RTRIM(sc5.C5_ZEXPRES) zexpres, RTRIM(sc5.C5_CONDPAG) condpag, RTRIM(cnd.E4_DESCRI) cond_desc,
           ISNULL(b2.B2_CM1,0) b2_cm1, RTRIM(sc5.C5_ZGERFIN) geratp,
-          CAST(ISNULL(sc5.C5_VLMINFT,0) AS NUMERIC(14,2)) recminfat
+          CAST(ISNULL(sc5.C5_VLMINFT,0) AS NUMERIC(14,2)) recminfat,
+          RTRIM(sc5.C5_ZTRIANG) ztriang
         FROM SC6010 sc6 WITH (NOLOCK)
         LEFT JOIN SC5010 sc5 WITH (NOLOCK) ON sc6.C6_NUM = sc5.C5_NUM
         LEFT JOIN SA1010 sa1 WITH (NOLOCK) ON sc5.C5_CLIENTE = sa1.A1_COD AND sc5.C5_LOJACLI = sa1.A1_LOJA
@@ -154,6 +155,8 @@ module.exports = (app) => ({
       if (podeCusto) cols.push(
         { h:'Saldo Faturado', w:14, f:'m' }, { h:'Saldo Reposição', w:14, f:'m' }, { h:'% Margem Total', w:12, f:'p' }
       );
+      // C5_ZTRIANG (S=Sim;N=Não) — sempre a ULTIMA coluna, depois das de custo
+      cols.push({ h:'Triangulação', w:12, f:'t', c:1 });
       const nCols = cols.length;
 
       // indices (1-based) usados em realces condicionais
@@ -235,6 +238,8 @@ module.exports = (app) => ({
           up(r.tes), up(r.cfop), up(r.uf), up(regiao(r.uf))
         ];
         if (podeCusto) vals.push(tot4, tot5, tot6);
+        const ztriang = up(r.ztriang);
+        vals.push(ztriang === 'S' ? 'SIM' : ztriang === 'N' ? 'NÃO' : ztriang);
         if (primeira) docNum = num;
 
         const row = ws.addRow(vals);
