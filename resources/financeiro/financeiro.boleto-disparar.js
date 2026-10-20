@@ -54,6 +54,12 @@ function fmtData(v) {
   return `${s.slice(6, 8)}/${s.slice(4, 6)}/${s.slice(0, 4)}`;
 }
 const fmtBRL = (v) => N(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// timestamptz -> 'dd/mm/yyyy hh:mm' no horario de Brasilia
+const fmtDataHora = (v) => {
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d)) return trim(v);
+  return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
 // Escapa pra interpolar com seguranca dentro do HTML do e-mail.
 const esc = (s) => String(s || '').replace(/[&<>"']/g, (c) => (
@@ -174,6 +180,10 @@ module.exports = (app) => ({
     if (!ids.length) {
       return res.status(400).json({ message: 'Informe ao menos 1 boleto em ids[].' });
     }
+    // Reenvio deliberado de boleto disparado ha menos de JANELA min. Sem isto, o
+    // boleto recente e' pulado (JA_DISPARADO) — ver a "reserva" no laco abaixo.
+    const reenviar = req.body?.reenviar === true;
+    const janelaMin = Math.max(0, Number(process.env.BOLETO_DISPARO_JANELA_MIN || 30));
 
     const querWhats = canais.includes('WHATSAPP');
     const querEmail = canais.includes('EMAIL');
@@ -190,6 +200,7 @@ module.exports = (app) => ({
         SELECT r.id, r.id_lote, r.prefixo, r.numero, r.parcela,
                r.cliente_cod, r.cliente_loja, r.nosso_numero,
                r.status_banco, r.disparado_em, r.canais_disparo,
+               COALESCE(r.disparado_em::text, '') AS disparado_em_txt,
                t.cliente_nome, t.valor, t.vencimento, t.tipo,
                l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta
           FROM tab_boleto_envio_lote_retorno r
@@ -274,7 +285,7 @@ module.exports = (app) => ({
       }
 
       const resultados = [];
-      let okCount = 0, falhaCount = 0;
+      let okCount = 0, falhaCount = 0, jaCount = 0;
 
       for (const r of rows) {
         const ref = { id: r.id, numero: trim(r.numero), parcela: trim(r.parcela), cliente: trim(r.cliente_nome) };
@@ -333,6 +344,37 @@ module.exports = (app) => ({
           });
           continue;
         }
+
+        // 3.2) RESERVA do boleto antes de mandar qualquer coisa ao cliente.
+        // 🔴 20/10/2026 (borderô 418817): 30 boletos levaram ~2min47s, a tela
+        // desistiu em 120s e mostrou "0 disparados / 30 falhas" — mas o servidor
+        // seguiu e enviou tudo. A nova tentativa comecou com a 1a ainda rodando
+        // e 10 clientes receberam o boleto 2 vezes.
+        // A reserva grava disparado_em SO se ele ainda for o valor lido no
+        // inicio (compare-and-set): se outra requisicao ja reservou/enviou, esta
+        // pula. E pula tambem quem foi disparado ha menos de JANELA min, salvo
+        // reenvio deliberado (reenviar:true).
+        const anterior = trim(r.disparado_em_txt);
+        const reserva = await Pg.connectAndQuery(`
+          UPDATE tab_boleto_envio_lote_retorno SET disparado_em = NOW()
+           WHERE id = @id
+             AND COALESCE(disparado_em::text, '') = @ant
+             AND (@reenviar::int = 1 OR disparado_em IS NULL OR disparado_em < NOW() - (@janela::int * INTERVAL '1 minute'))
+          RETURNING id`, { id: r.id, ant: anterior, reenviar: reenviar ? 1 : 0, janela: janelaMin });
+        if (!reserva.length) {
+          jaCount++;
+          resultados.push({
+            ...ref, status: 'JA_DISPARADO',
+            mensagem: anterior
+              ? `Já disparado em ${fmtDataHora(r.disparado_em)} — não reenviado (evita boleto duplicado ao cliente).`
+              : 'Outro disparo deste boleto está em andamento — não reenviado.'
+          });
+          continue;
+        }
+        // Devolve a reserva quando nada chegou ao cliente.
+        const desfazReserva = () => Pg.connectAndQuery(
+          `UPDATE tab_boleto_envio_lote_retorno SET disparado_em = NULLIF(@ant, '')::timestamptz WHERE id = @id`,
+          { id: r.id, ant: anterior }).catch((e) => console.warn('boleto-disparar: desfazer reserva —', e.message));
 
         const enviados = [];
         const erros = [];
@@ -446,6 +488,7 @@ module.exports = (app) => ({
           okCount++;
           resultados.push({ ...ref, status: 'DISPARADO', canais: enviados, avisos: erros.length ? erros : undefined });
         } else {
+          await desfazReserva();
           falhaCount++;
           resultados.push({ ...ref, status: 'FALHA', mensagem: erros.join('; ') || 'Nenhum canal disponível.' });
         }
@@ -459,14 +502,16 @@ module.exports = (app) => ({
         acao: 'DISPARO_BOLETO', severidade: falhaCount > 0 ? 'ALERTA' : 'AVISO',
         req, entidade: 'boleto_retorno',
         entidadeId: ids.length === 1 ? String(ids[0]) : `lote_${rows[0]?.id_lote || '?'}_${ids.length}ids`,
-        descricao: `Disparou ${okCount} boleto(s) por ${canais.join('+')} (${falhaCount} falha(s) de ${rows.length})`,
-        meta: { ids, canais, ok: okCount, falha: falhaCount, total: rows.length }
+        descricao: `Disparou ${okCount} boleto(s) por ${canais.join('+')} (${falhaCount} falha(s) de ${rows.length})`
+          + (jaCount ? ` · ${jaCount} já disparado(s), não reenviado(s)` : ''),
+        meta: { ids, canais, ok: okCount, falha: falhaCount, ja_disparados: jaCount, total: rows.length, reenviar: reenviar || undefined }
       });
 
       return res.json({
         ok: okCount > 0,
         disparados: okCount,
         falhas: falhaCount,
+        ja_disparados: jaCount,
         total: rows.length,
         whatsapp_pendente_template: querWhats && !whatsHabilitado,
         resultados
