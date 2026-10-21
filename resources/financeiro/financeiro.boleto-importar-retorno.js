@@ -42,6 +42,7 @@ const ProtheusRetorno = require('../../services/protheusRetorno');
 const CnabFiltro = require('../../services/cnabRetornoFiltro');
 const BoletoAdotar = require('../../services/boletoAdotar');
 const BoletoSincronizar = require('../../services/boletoSincronizar');
+const PortadorCessao = require('../../services/portadorCessao');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
@@ -349,6 +350,18 @@ module.exports = (app) => ({
 
     if (!conteudoBase64) {
       return res.status(400).json({ message: 'Envie o conteudo do arquivo (.RET) em conteudo_base64.' });
+    }
+    // Portador de CESSAO (FIDC) nao passa pelo endpoint do Diego — nem na
+    // previa. 21/10/2026: com o retorno do Grupo BFC (uso da empresa em branco)
+    // a previa do Protheus casou as 363 linhas com UM titulo antigo (1/007255/03,
+    // portador 003, ja baixado) e o import real so nao gravou porque a SEE do
+    // 699 nao tem EE_DIRREC. O caminho certo e' o boleto-adotar-retorno
+    // ("Registrar pelo .RET"), que resolve pelo seu numero dentro do portador.
+    if (PortadorCessao.ehCessao(banco)) {
+      return res.status(409).json({
+        ok: false, codigo_erro: 'USE_REGISTRAR_PELO_RET',
+        mensagem: `O retorno do portador ${banco} (cessão) não é importado pelo Protheus. Use o botão "Registrar pelo .RET": ele identifica os títulos dentro do portador e grava o nosso número do fundo.`
+      });
     }
     // No import REAL o endpoint Diego precisa de banco+agencia+conta pra fazer
     // o DbSeek na SA6/SEE (achar a carteira / EE_DIRREC). Sem isso da LAYOUT_NAO_SUPORTADO.
