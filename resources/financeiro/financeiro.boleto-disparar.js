@@ -18,7 +18,6 @@ const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005
 const Auditoria = require('../../services/auditoria');
 const ProtheusBoleto = require('../../services/protheusBoleto');
 const BoletoPdf = require('../../services/boletoPdf');
-const LinhaDigitavel = require('../../services/linhaDigitavel');
 const PortadorCessao = require('../../services/portadorCessao');
 const Email = require('../../services/emailService');
 const Suri = require('../../services/suri');
@@ -29,8 +28,6 @@ const BENEFICIARIO_GNATUS = {
   cnpj: '09609356000100',
   endereco: 'AV DOS MACONS, 405 - JARDIM RAMOS - BARRETOS - SP - CEP 14783-167'
 };
-const ESPECIE_POR_BANCO = { '341': 'DMI', '033': 'DM' };
-const CARTEIRA_LABEL = { '101': 'PENH. ELETR', '109': '109' };
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
@@ -199,7 +196,7 @@ module.exports = (app) => ({
       const rows = await Pg.connectAndQuery(`
         SELECT r.id, r.id_lote, r.prefixo, r.numero, r.parcela,
                r.cliente_cod, r.cliente_loja, r.nosso_numero,
-               r.status_banco, r.disparado_em, r.canais_disparo,
+               r.status_banco, r.disparado_em, r.canais_disparo, r.data_ocorrencia,
                COALESCE(r.disparado_em::text, '') AS disparado_em_txt,
                t.cliente_nome, t.valor, t.vencimento, t.tipo,
                l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta
@@ -313,6 +310,14 @@ module.exports = (app) => ({
         const bko = PortadorCessao.dadosBoleto({
           banco: trim(r.banco_cod), agencia: trim(r.banco_agencia), conta: trim(r.banco_conta)
         });
+        // TRAVA: o fundo (ex.: Grupo BFC) ja envia o boleto ao cliente. A
+        // intranet gera o PDF para consulta, mas nao dispara — senao o cliente
+        // recebe o mesmo boleto duas vezes.
+        if (bko.disparoBloqueado) {
+          falhaCount++;
+          resultados.push({ ...ref, status: 'LINHA_INDISPONIVEL', codigo_erro: 'BOLETO_ENVIADO_PELO_FUNDO', mensagem: bko.motivoDisparo });
+          continue;
+        }
         // TRAVA: sem agencia/conta o campo livre do codigo de barras sai ZERADO
         // (codigo do beneficiario em branco) e o boleto fica impagavel. NAO envia.
         if (!trim(bko.agencia) || !trim(bko.conta)) {
@@ -389,33 +394,14 @@ module.exports = (app) => ({
             // linha (senao a ficha visualmente diverge do codigo de barras).
             // Usamos venctoCalc = E1_VENCTO original (ja calculado acima).
             const se1 = se1L || { emissao: '', jurosDia: 0, multaPct: 0 };
-            const instrucoes = [
-              ...(bko.instrucoes || []),                       // cessao: avisos do fundo
-              ...BoletoPdf.montarInstrucoes({
-                jurosDia: se1.jurosDia, multaPct: se1.multaPct,
-                valor: r.valor, vencimento: venctoCalc
-              })
-            ];
-            const pdfBuf = await BoletoPdf.gerarBoletoPdf({
-              banco: bko.banco,
-              beneficiario: bko.cessao && bko.beneficiarioFinal
-                ? { ...bko.beneficiarioFinal, endereco: BENEFICIARIO_GNATUS.endereco }
-                : BENEFICIARIO_GNATUS,
-              beneficiarioFinal: bko.cessao ? BENEFICIARIO_GNATUS : null,
+            const pdfBuf = await BoletoPdf.gerarBoletoPdf(BoletoPdf.opcoesPdfBoleto({
+              bko, r, se1, venctoCalc, lin, beneficiarioGnatus: BENEFICIARIO_GNATUS,
               pagador: {
                 nome: contato.nome || trim(r.cliente_nome), cgc: contato.cgc || '',
                 endereco: contato.endereco || '', bairro: contato.bairro || '',
                 municipio: contato.municipio || '', uf: contato.uf || '', cep: contato.cep || ''
-              },
-              valor: N(r.valor), vencimento: venctoCalc,
-              numeroDocumento: trim(r.numero),
-              dataDocumento: se1.emissao || venctoCalc,
-              nossoNumero: LinhaDigitavel.formatarNossoNumero(bko.banco, trim(r.nosso_numero) || trim(lin.body?.nosso_numero)),
-              agencia: bko.agencia, conta: bko.conta,
-              carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (bko.banco === '033' ? 'PENH. ELETR' : '109'),
-              especieDoc: bko.especie || ESPECIE_POR_BANCO[bko.banco] || 'DM',
-              linhaDigitavel: linha, codigoBarras, instrucoes
-            });
+              }
+            }));
             const fname = `boleto_${trim(r.numero)}${trim(r.parcela) ? '-' + trim(r.parcela) : ''}.pdf`;
             pdfAttachment = { name: fname, contentType: 'application/pdf', content: pdfBuf };
           } catch (e) {

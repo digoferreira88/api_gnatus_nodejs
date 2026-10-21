@@ -117,7 +117,9 @@ function renderBloco(doc, opts, kind) {
     banco, beneficiario, pagador, valor, vencimento,
     numeroDocumento, dataDocumento, nossoNumero,
     agencia, conta, carteira, especieDoc, linhaDigitavel,
-    codigoBarrasPng, instrucoes, beneficiarioFinal
+    codigoBarrasPng, instrucoes, beneficiarioFinal,
+    // Ajustes de layout por portador (cessao/FIDC replica a ficha do fundo):
+    localPagamento, codigoBeneficiario, dataProcessamento, especieMoeda, labelBeneficiarioFinal
   } = opts;
   const meta = BANCOS[trim(banco)] || BANCOS['033'];
 
@@ -172,7 +174,7 @@ function renderBloco(doc, opts, kind) {
 
   // Linha 1: Local Pagamento (75%) | Vencimento (25%)
   const wLocal = W * 0.75, wVenc = W - wLocal;
-  drawCell(x0, y, wLocal, 26, 'Local de Pagamento', meta.localPgto, { bold: true, size: 8 });
+  drawCell(x0, y, wLocal, 26, 'Local de Pagamento', trim(localPagamento) || meta.localPgto, { bold: true, size: 8 });
   drawCell(x0 + wLocal, y, wVenc, 26, 'Vencimento', fmtData(vencimento), { bold: true, size: 11, align: 'right' });
   y += 26;
 
@@ -184,7 +186,9 @@ function renderBloco(doc, opts, kind) {
   doc.font('Helvetica').fontSize(7.5).fillColor('#000')
     .text(`${beneficiario.cnpj ? 'CNPJ ' + fmtCgc(beneficiario.cnpj) + '   ' : ''}${trim(beneficiario.endereco || '')}`,
       x0 + 3, y + 19, { width: wLocal - 6, lineBreak: false });
-  drawCell(x0 + wLocal, y, wVenc, 30, 'Agencia / Cod. Beneficiario', `${trim(agencia)} / ${trim(conta)}`, { bold: true, size: 10, align: 'right' });
+  drawCell(x0 + wLocal, y, wVenc, 30, 'Agencia / Cod. Beneficiario',
+    trim(codigoBeneficiario) ? `${trim(agencia)}/${trim(codigoBeneficiario)}` : `${trim(agencia)} / ${trim(conta)}`,
+    { bold: true, size: 10, align: 'right' });
   y += 30;
 
   // Linha 3: 5 colunas
@@ -195,7 +199,7 @@ function renderBloco(doc, opts, kind) {
   drawCell(cx, y, c2w, 22, 'No. do Documento', trim(numeroDocumento), { bold: true, align: 'center', size: 9 }); cx += c2w;
   drawCell(cx, y, c3w, 22, 'Especie doc.', trim(especieDoc) || 'DM', { bold: true, align: 'center', size: 9 }); cx += c3w;
   drawCell(cx, y, c4w, 22, 'Aceite', meta.aceite || 'N', { bold: true, align: 'center', size: 8 }); cx += c4w;
-  drawCell(cx, y, c5w, 22, 'Data Processamento', fmtData(new Date().toISOString().slice(0, 10).replace(/-/g, '')), { bold: true, align: 'center', size: 9 }); cx += c5w;
+  drawCell(cx, y, c5w, 22, 'Data Processamento', fmtData(trim(dataProcessamento) || new Date().toISOString().slice(0, 10).replace(/-/g, '')), { bold: true, align: 'center', size: 9 }); cx += c5w;
   drawCell(cx, y, c6w, 22, 'Nosso Numero', trim(nossoNumero), { bold: true, align: 'right', size: 10 });
   y += 22;
 
@@ -203,7 +207,7 @@ function renderBloco(doc, opts, kind) {
   cx = x0;
   drawCell(cx, y, c1w, 22, 'Uso do Banco', '', { align: 'center', size: 9 }); cx += c1w;
   drawCell(cx, y, c2w, 22, 'Carteira', trim(carteira) || '101', { bold: true, align: 'center', size: 9 }); cx += c2w;
-  drawCell(cx, y, c3w, 22, 'Especie Moeda', 'REAL', { bold: true, align: 'center', size: 9 }); cx += c3w;
+  drawCell(cx, y, c3w, 22, 'Especie Moeda', trim(especieMoeda) || 'REAL', { bold: true, align: 'center', size: 9 }); cx += c3w;
   drawCell(cx, y, c4w, 22, 'Quantidade', '', { align: 'center', size: 9 }); cx += c4w;
   drawCell(cx, y, c5w, 22, '(x) Valor', 'R$ 0,00', { bold: true, align: 'right', size: 9 }); cx += c5w;
   drawCell(cx, y, c6w, 22, '(=) Valor do Documento', fmtBRL(valor), { bold: true, align: 'right', size: 10 });
@@ -255,10 +259,14 @@ function renderBloco(doc, opts, kind) {
   // Em CESSAO (FIDC) o beneficiario do boleto e' o FUNDO e o "beneficiario final"
   // (sacador/avalista) e' a Gnatus — preenchido via opts.beneficiarioFinal.
   doc.rect(x0, y, W, 16).lineWidth(0.5).strokeColor('#000').stroke();
-  doc.font('Helvetica').fontSize(6).fillColor('#000').text('Beneficiario Final', x0 + 2, y + 1);
+  doc.font('Helvetica').fontSize(6).fillColor('#000').text(trim(labelBeneficiarioFinal) || 'Beneficiario Final', x0 + 2, y + 1);
   if (beneficiarioFinal && trim(beneficiarioFinal.nome)) {
+    // Com rotulo proprio (ex.: "Sacador/Avalista" no boleto do BFC) segue o
+    // texto do fundo: "NOME - CPF/CNPJ: 00.000.000/0000-00".
+    const cnpjTxt = trim(beneficiarioFinal.cnpj)
+      ? (trim(labelBeneficiarioFinal) ? ' - CPF/CNPJ: ' : '  CNPJ ') + fmtCgc(beneficiarioFinal.cnpj) : '';
     doc.font('Helvetica-Bold').fontSize(7).fillColor('#000').text(
-      trim(beneficiarioFinal.nome) + (trim(beneficiarioFinal.cnpj) ? '  CNPJ ' + fmtCgc(beneficiarioFinal.cnpj) : ''),
+      trim(beneficiarioFinal.nome) + cnpjTxt,
       x0 + 3, y + 7, { width: W - 120, lineBreak: false, ellipsis: true });
   }
   doc.font('Helvetica').fontSize(7).text('Autenticacao Mecanica', x0 + W - 110, y + 6, { width: 105, align: 'right' });
@@ -312,6 +320,88 @@ function montarInstrucoes({ jurosDia, multaPct, valor, vencimento, extras }) {
   return out;
 }
 
+const arred2 = (v) => Math.round(Number(v || 0) * 100) / 100;
+const fmtPct = (v) => String(Number(v)).replace('.', ',');
+
+// Instrucoes no texto do FUNDO (cessao). As regras vem da config do portador,
+// nao da SE1 — no BFC E1_MULTA/E1_VALJUR sao zero. Texto igual ao do boleto
+// modelo (docs/financeiro/boleto bfc.pdf).
+function montarInstrucoesFundo({ protestoDiasUteis, multaPct, jurosDiaPct, valor }) {
+  const out = [];
+  if (protestoDiasUteis) out.push(`ENVIAR PARA CARTÓRIO APOS ${protestoDiasUteis} DIAS ÚTEIS`);
+  if (multaPct) out.push(`PAGAMENTO APOS O VENCIMENTO SERA ACRESCIDO DE MULTA DE ${fmtPct(multaPct)}% (R$ ${fmtValor(arred2(N(valor) * multaPct / 100))})`);
+  if (jurosDiaPct) out.push(`JUROS DE MORA R$ ${fmtValor(arred2(N(valor) * jurosDiaPct / 100))} AO DIA APÓS VENCIMENTO`);
+  return out;
+}
+
+// "No documento" no formato do fundo: numero com 7 posicoes + "-" + parcela
+// sem zero a esquerda (1/091467/02 -> "0091467-2").
+function numeroDocumentoFundo(numero, parcela) {
+  const n = trim(numero);
+  const num = /^\d+$/.test(n) ? n.padStart(7, '0') : n;
+  const p = trim(parcela).replace(/^0+(?=\d)/, '');
+  return p ? `${num}-${p}` : num;
+}
+
+const ESPECIE_POR_BANCO = { '341': 'DMI', '033': 'DM' };
+// Carteira "legivel" — Santander e' "PENH. ELETR" (penhor eletronico, carteira 101).
+const CARTEIRA_LABEL = { '101': 'PENH. ELETR', '109': '109' };
+
+/**
+ * Opcoes do gerarBoletoPdf a partir dos dados do titulo. Fonte UNICA do PDF do
+ * download (boleto-pdf) e do anexo do e-mail (boleto-disparar) — antes as duas
+ * montagens eram copias e podiam divergir.
+ *
+ * bko   = PortadorCessao.dadosBoleto(...)  (banco/ag/conta efetivos + layout do fundo)
+ * r     = linha de retorno + titulo (numero, parcela, valor, nosso_numero, data_ocorrencia)
+ * se1   = { emissao, jurosDia, multaPct }
+ * lin   = resposta do ProtheusBoleto.linhaDigitavel
+ */
+function opcoesPdfBoleto({ bko, r, pagador, se1, venctoCalc, lin, beneficiarioGnatus }) {
+  const LinhaDigitavel = require('./linhaDigitavel');
+  const pdf = bko.pdf || {};
+  const s = se1 || {};
+  const instrucoes = bko.regrasCobranca
+    ? montarInstrucoesFundo({ ...bko.regrasCobranca, valor: r.valor })
+    : [
+      ...(bko.instrucoes || []),                       // cessao: avisos do fundo
+      ...montarInstrucoes({ jurosDia: s.jurosDia, multaPct: s.multaPct, valor: r.valor, vencimento: venctoCalc })
+    ];
+  // Datas do fundo = a da entrada confirmada no .RET (o "30/09" do modelo).
+  const dataOc = pdf.datasDaOcorrencia ? trim(r.data_ocorrencia) : '';
+  const nnCru = trim(r.nosso_numero) || trim(lin && lin.body && lin.body.nosso_numero);
+  const carteiraLin = trim(lin && lin.body && lin.body.carteira);
+  return {
+    banco: bko.banco,
+    beneficiario: bko.cessao && bko.beneficiarioFinal
+      ? { ...bko.beneficiarioFinal, endereco: pdf.beneficiarioSemEndereco ? '' : beneficiarioGnatus.endereco }  // cedido: quem cobra e' o FUNDO
+      : beneficiarioGnatus,
+    beneficiarioFinal: bko.cessao ? (pdf.sacador || beneficiarioGnatus) : null,                              // sacador/avalista = Gnatus
+    labelBeneficiarioFinal: pdf.labelBeneficiarioFinal,
+    pagador,
+    valor: N(r.valor),
+    vencimento: venctoCalc,
+    numeroDocumento: pdf.numeroDocumento === 'num7-parcela' ? numeroDocumentoFundo(r.numero, r.parcela) : trim(r.numero),
+    dataDocumento: dataOc || s.emissao || venctoCalc,
+    dataProcessamento: dataOc || undefined,
+    // Impresso no formato do banco (Santander: 13 posicoes; Bradesco do fundo:
+    // "09/99111230029-4"), nao cru — senao o mesmo numero parece outro.
+    nossoNumero: pdf.nossoNumeroBradesco
+      ? LinhaDigitavel.nossoNumeroBradescoImpresso(bko.carteira, nnCru)
+      : LinhaDigitavel.formatarNossoNumero(bko.banco, nnCru),
+    agencia: bko.agencia,
+    conta: bko.conta,
+    codigoBeneficiario: pdf.codigoBeneficiario,
+    carteira: CARTEIRA_LABEL[carteiraLin] || carteiraLin || (bko.banco === '033' ? 'PENH. ELETR' : '109'),
+    especieDoc: bko.especie || ESPECIE_POR_BANCO[bko.banco] || 'DM',
+    especieMoeda: pdf.especieMoeda,
+    localPagamento: pdf.localPagamento,
+    linhaDigitavel: trim(lin && lin.body && lin.body.linha_digitavel),
+    codigoBarras: trim(lin && lin.body && lin.body.codigo_barras),
+    instrucoes
+  };
+}
+
 // ========== API publica ==========
 async function gerarBoletoPdf(opts) {
   if (!opts || !opts.banco) throw new Error('Parametro banco obrigatorio.');
@@ -348,4 +438,4 @@ async function gerarBoletoPdf(opts) {
   return await done;
 }
 
-module.exports = { gerarBoletoPdf, BANCOS, montarInstrucoes };
+module.exports = { gerarBoletoPdf, BANCOS, montarInstrucoes, montarInstrucoesFundo, numeroDocumentoFundo, opcoesPdfBoleto };

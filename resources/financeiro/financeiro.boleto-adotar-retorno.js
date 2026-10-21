@@ -168,6 +168,10 @@ module.exports = (app) => ({
       // mapa chave (prefixo|numero|parcela) -> nosso numero
       const nossoPorChave = new Map();
       identificados.forEach(d => nossoPorChave.set(chaveDe(d), d.nossoNumero));
+      // Data da ocorrencia (entrada confirmada) por chave, YYYYMMDD. No BFC vira
+      // a data do documento/processamento do boleto (igual a ficha do fundo).
+      const dataPorChave = new Map();
+      identificados.forEach(d => { const iso = ddmmaaParaIso(d.dataOcorrencia); if (iso) dataPorChave.set(chaveDe(d), iso); });
 
       // Guard (titulo ja baixado) + borderô (E1_NUMBOR) + dados do titulo, por
       // chave. O borderô vai pro tab_boleto_envio_lote_retorno.bordero_protheus
@@ -211,7 +215,8 @@ module.exports = (app) => ({
           return `(COALESCE(TRIM(r.prefixo),'')=@pf${i} AND TRIM(r.numero)=@nu${i} AND COALESCE(TRIM(r.parcela),'')=@pa${i})`; }).join(' OR ');
         const rows = await Pg.connectAndQuery(`
           SELECT r.id, r.id_lote, COALESCE(TRIM(r.prefixo),'') prefixo, TRIM(r.numero) numero, COALESCE(TRIM(r.parcela),'') parcela,
-                 r.status_banco, COALESCE(TRIM(r.nosso_numero),'') nosso_numero, COALESCE(TRIM(r.bordero_protheus),'') bordero_protheus
+                 r.status_banco, COALESCE(TRIM(r.nosso_numero),'') nosso_numero, COALESCE(TRIM(r.bordero_protheus),'') bordero_protheus,
+                 COALESCE(TRIM(r.data_ocorrencia),'') data_ocorrencia
             FROM tab_boleto_envio_lote_retorno r
             JOIN tab_boleto_envio_lote l ON l.id = r.id_lote
            WHERE TRIM(l.banco_cod) = @banco AND (${ors})`, p);
@@ -276,19 +281,22 @@ module.exports = (app) => ({
           // (ex.: o E1_NUMBCO do Protheus que uma sincronização antiga trouxe).
           // Santander: só preenche quando está vazio, como sempre foi.
           const nnPendente = (r) => (cessao ? trim(r.nosso_numero) !== trim(nosso) : !trim(r.nosso_numero));
+          // Cessão: completa a data da ocorrência das linhas registradas antes
+          // dela existir (o PDF do BFC usa essa data).
+          const dataPendente = (r) => cessao && !!dataPorChave.get(k) && !trim(r.data_ocorrencia);
           const pend = rows.find(r =>
-            trim(r.status_banco) !== 'REGISTRADO' || nnPendente(r) ||
+            trim(r.status_banco) !== 'REGISTRADO' || nnPendente(r) || dataPendente(r) ||
             (numbor && !trim(r.bordero_protheus)));
-          if (pend) aAtualizar.push({ id: pend.id, id_lote: pend.id_lote, nosso, numbor });
+          if (pend) aAtualizar.push({ id: pend.id, id_lote: pend.id_lote, nosso, numbor, dataOc: dataPorChave.get(k) || '' });
           else jaOk++;
           continue;
         }
         const lt = lotePorChave.get(k);
-        if (lt) { aInserir.push({ ...lt, nosso, numbor }); continue; }
+        if (lt) { aInserir.push({ ...lt, nosso, numbor, dataOc: dataPorChave.get(k) || '' }); continue; }
         // Fora de qualquer lote. Cessao: adota com o nosso numero do .RET, se a
         // SE1 tem UM titulo nessa chave (senao nao ha como saber cliente/loja).
         const se = se1PorChave.get(k);
-        if (cessao && se && se1Contagem.get(k) === 1) aAdotar.push({ ...se, numbco: nosso, bordero: numbor });
+        if (cessao && se && se1Contagem.get(k) === 1) aAdotar.push({ ...se, numbco: nosso, bordero: numbor, data_ocorrencia: dataPorChave.get(k) || '' });
         else orfaos.push(k);
       }
 
@@ -337,8 +345,9 @@ module.exports = (app) => ({
           UPDATE tab_boleto_envio_lote_retorno
              SET nosso_numero = @nn, status_banco = 'REGISTRADO',
                  ocorrencia_cod = '02', ocorrencia_desc = 'Entrada confirmada (.RET lido pela intranet)',
-                 bordero_protheus = COALESCE(NULLIF(@bord, ''), bordero_protheus)
-           WHERE id = @id`, { id: u.id, nn: u.nosso, bord: u.numbor || '' });
+                 bordero_protheus = COALESCE(NULLIF(@bord, ''), bordero_protheus),
+                 data_ocorrencia = COALESCE(NULLIF(@doc, ''), data_ocorrencia)
+           WHERE id = @id`, { id: u.id, nn: u.nosso, bord: u.numbor || '', doc: u.dataOc || '' });
         lotesTocados.add(u.id_lote);
       }
       // (2) Titulo em lote, sem linha de retorno: cria a linha
@@ -347,13 +356,13 @@ module.exports = (app) => ({
           INSERT INTO tab_boleto_envio_lote_retorno
             (id_lote, prefixo, numero, parcela, cliente_cod, cliente_loja,
              status_banco, ocorrencia_cod, ocorrencia_desc, nosso_numero, bordero_protheus,
-             valor_liquidado, data_liquidacao, sincronizado_em)
+             valor_liquidado, data_liquidacao, sincronizado_em, data_ocorrencia)
           VALUES (@id, @pre, @num, @par, @cli, @loja,
                   'REGISTRADO', '02', 'Entrada confirmada (.RET lido pela intranet)', @nn, @bord,
-                  0, NULL, NOW())
+                  0, NULL, NOW(), NULLIF(@doc, ''))
           ON CONFLICT DO NOTHING`,
           { id: t.id_lote, pre: t.prefixo || null, num: t.numero, par: t.parcela || null,
-            cli: t.cliente_cod, loja: t.cliente_loja, nn: t.nosso, bord: t.numbor || null });
+            cli: t.cliente_cod, loja: t.cliente_loja, nn: t.nosso, bord: t.numbor || null, doc: t.dataOc || '' });
         lotesTocados.add(t.id_lote);
       }
       // Lote fica RETORNADO so quando TODOS os titulos dele tem linha de

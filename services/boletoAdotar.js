@@ -172,15 +172,16 @@ async function criarLotesRetroativos({ Pg, Protheus, user, titulos: novos, rotul
         INSERT INTO tab_boleto_envio_lote_retorno
           (id_lote, prefixo, numero, parcela, cliente_cod, cliente_loja,
            status_banco, ocorrencia_cod, ocorrencia_desc, nosso_numero, bordero_protheus,
-           valor_liquidado, data_liquidacao)
+           valor_liquidado, data_liquidacao, data_ocorrencia)
         VALUES (@id, @pre, @num, @par, @cli, @loja,
                 'REGISTRADO', '02', @odesc,
-                @nn, @bord, 0, NULL)
+                @nn, @bord, 0, NULL, NULLIF(@doc, ''))
         ON CONFLICT DO NOTHING`,
         {
           id: idLote, pre: trim(t.prefixo), num: trim(t.numero), par: trim(t.parcela),
           cli: trim(t.cliente_cod), loja: trim(t.cliente_loja),
-          nn: trim(t.numbco), bord: trim(t.bordero), odesc: ocorrenciaDesc
+          nn: trim(t.numbco), bord: trim(t.bordero), odesc: ocorrenciaDesc,
+          doc: trim(t.data_ocorrencia)          // .RET (adotar-retorno); vazio no adotar-SE1
         });
     }
 

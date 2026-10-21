@@ -14,7 +14,6 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8005]);
 const ProtheusBoleto = require('../../services/protheusBoleto');
 const BoletoPdf = require('../../services/boletoPdf');
-const LinhaDigitavel = require('../../services/linhaDigitavel');
 const PortadorCessao = require('../../services/portadorCessao');
 
 const trim = (v) => String(v || '').trim();
@@ -27,13 +26,6 @@ const BENEFICIARIO_GNATUS = {
   cnpj: '09609356000100',
   endereco: 'AV DOS MACONS, 405 - JARDIM RAMOS - BARRETOS - SP - CEP 14783-167'
 };
-
-// Espécie por banco. Santander usa 'DM' no Protheus, Itau usa 'DMI'. Default DM.
-const ESPECIE_POR_BANCO = { '341': 'DMI', '033': 'DM' };
-
-// Carteira "legivel" — o Diego retorna o codigo numerico, mas o boleto mostra
-// nome curto. Pra Santander e' "PENH. ELETR" (penhor eletronico, carteira 101).
-const CARTEIRA_LABEL = { '101': 'PENH. ELETR', '109': '109' };
 
 module.exports = (app) => ({
   verb: 'get',
@@ -51,7 +43,7 @@ module.exports = (app) => ({
       // 1) Retorno + lote + titulo
       const rows = await Pg.connectAndQuery(`
         SELECT r.id, r.id_lote, r.prefixo, r.numero, r.parcela,
-               r.cliente_cod, r.cliente_loja, r.nosso_numero, r.status_banco,
+               r.cliente_cod, r.cliente_loja, r.nosso_numero, r.status_banco, r.data_ocorrencia,
                t.cliente_nome, t.valor, t.vencimento, t.tipo,
                l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta
           FROM tab_boleto_envio_lote_retorno r
@@ -166,41 +158,12 @@ module.exports = (app) => ({
         });
       }
 
-      // 5) Monta instrucoes (juros R$/dia + multa apos venc). Em cessao, as
-      //    instrucoes do FUNDO vem primeiro (obrigatorias no boleto cedido).
-      const instrucoes = [
-        ...(bko.instrucoes || []),
-        ...BoletoPdf.montarInstrucoes({
-          jurosDia: se1.jurosDia,
-          multaPct: se1.multaPct,
-          valor: r.valor,
-          vencimento: venctoCalc
-        })
-      ];
-
-      // 6) Gera o PDF
-      const pdfBuffer = await BoletoPdf.gerarBoletoPdf({
-        banco: bko.banco,
-        beneficiario: bko.cessao && bko.beneficiarioFinal
-          ? { ...bko.beneficiarioFinal, endereco: BENEFICIARIO_GNATUS.endereco }   // cedido: quem cobra e' o FUNDO
-          : BENEFICIARIO_GNATUS,
-        beneficiarioFinal: bko.cessao ? BENEFICIARIO_GNATUS : null,                // sacador/avalista = Gnatus
-        pagador,
-        valor: N(r.valor),
-        vencimento: venctoCalc,
-        numeroDocumento: trim(r.numero),
-        dataDocumento: se1.emissao || venctoCalc,
-        // Impresso no formato do banco (Santander: 13 posicoes), nao cru —
-        // senao o mesmo numero parece outro quando o cliente compara com a 2a via.
-        nossoNumero: LinhaDigitavel.formatarNossoNumero(bko.banco, trim(r.nosso_numero) || trim(lin.body?.nosso_numero)),
-        agencia: bko.agencia,
-        conta: bko.conta,
-        carteira: CARTEIRA_LABEL[trim(lin.body?.carteira)] || trim(lin.body?.carteira) || (bko.banco === '033' ? 'PENH. ELETR' : '109'),
-        especieDoc: bko.especie || ESPECIE_POR_BANCO[bko.banco] || 'DM',
-        linhaDigitavel,
-        codigoBarras,
-        instrucoes
-      });
+      // 5) Gera o PDF. Instrucoes, beneficiario e formato dos campos vem do
+      //    montador unico (o mesmo do anexo do e-mail). Em cessao com layout
+      //    proprio (Grupo BFC) a ficha replica a do fundo.
+      const pdfBuffer = await BoletoPdf.gerarBoletoPdf(BoletoPdf.opcoesPdfBoleto({
+        bko, r, pagador, se1, venctoCalc, lin, beneficiarioGnatus: BENEFICIARIO_GNATUS
+      }));
 
       const filename = `boleto_${trim(r.numero)}${trim(r.parcela) ? '-' + trim(r.parcela) : ''}.pdf`;
       res.setHeader('Content-Type', 'application/pdf');

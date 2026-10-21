@@ -207,4 +207,26 @@ function formatarNossoNumero(banco, nn) {
   return String(nn == null ? '' : nn).trim();
 }
 
-module.exports = { calcular, fatorVencimento, mod10, mod11, formatarNossoNumero };
+/**
+ * DV do nosso numero no Bradesco: modulo 11 base 7 sobre carteira(2) +
+ * nosso numero(11), pesos 2..7 da direita para a esquerda. Resto 0 -> '0',
+ * resto 1 -> 'P', senao 11 - resto. Conferido nas 363 linhas do retorno real
+ * do Grupo BFC (30/09/2026), inclusive os 33 com DV 'P'.
+ */
+function dvNossoNumeroBradesco(carteira, nn) {
+  const s = (pad(carteira, 2) + pad(nn, 11)).split('').reverse();
+  let soma = 0, peso = 2;
+  for (const d of s) { soma += Number(d) * peso; peso = peso === 7 ? 2 : peso + 1; }
+  const resto = soma % 11;
+  if (resto === 0) return '0';
+  if (resto === 1) return 'P';
+  return String(11 - resto);
+}
+
+/** Nosso numero como o Bradesco imprime no boleto: "09/99111230029-4". */
+function nossoNumeroBradescoImpresso(carteira, nn) {
+  const n = pad(nn, 11);
+  return `${pad(carteira, 2)}/${n}-${dvNossoNumeroBradesco(carteira, n)}`;
+}
+
+module.exports = { calcular, fatorVencimento, mod10, mod11, formatarNossoNumero, dvNossoNumeroBradesco, nossoNumeroBradescoImpresso };

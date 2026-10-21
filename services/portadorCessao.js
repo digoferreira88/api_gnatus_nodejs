@@ -48,33 +48,53 @@ const PORTADORES = {
   // pro BORDERO. O Diego confirmou que a remessa usa o mesmo .REM do Bradesco,
   // entao o campo livre 237 e o parser do retorno ja servem.
   //
-  // 🔒 QUEM EMITE O BOLETO E' O FUNDO (financeiro, 16/10/2026): o BFC registra
-  // o titulo no Bradesco com nosso numero proprio e manda o boleto ao cliente.
-  // A intranet so REGISTRA/acompanha pelo .RET (boleto-adotar-retorno) e nunca
-  // emite — um 2o boleto para o mesmo titulo confundiria o cliente. Por isso
-  // `boletoPeloFundo`, que trava a emissao mesmo se alguem preencher
-  // agencia/conta no .env.
+  // 🔒 QUEM EMITE E ENVIA O BOLETO E' O FUNDO (financeiro, 16/10/2026): o BFC
+  // registra o titulo no Bradesco com nosso numero proprio e manda o boleto ao
+  // cliente. `boletoPeloFundo` trava o DISPARO pela intranet (e-mail/WhatsApp),
+  // para o cliente nao receber o boleto duas vezes.
+  //
+  // PDF liberado em 21/10/2026 (pedido do financeiro): a intranet gera a MESMA
+  // ficha que o fundo emite — modelo em docs/financeiro/boleto bfc.pdf, titulo
+  // 1/091467/02. Linha digitavel conferida digito a digito com esse boleto
+  // (23792.96003 99911.123000 29006.900004 9 16160000082397).
   '699': {
     portador: '699',
     nome: 'Grupo BFC',
     boletoPeloFundo: true,
     bancoBoleto: '237',
-    agencia: '',
-    conta: '',
-    carteira: '',
+    agencia: '2960',                    // do boleto do fundo: "2960/0069000-7"
+    conta: '0069000',                   // codigo do beneficiario, sem DV
+    contaDv: '7',
+    carteira: '09',
     especie: 'DM',
-    beneficiarioFinal: null,
-    instrucoes: [
-      'ATENÇÃO: Título cedido ao Grupo BFC.',
-      'Quitação válida exclusivamente por este boleto.',
-      'Não pague boletos emitidos por terceiros'
-    ]
+    beneficiarioFinal: {                // quem cobra no boleto = o FUNDO
+      nome: 'BFC FUNDO DE INVESTIMENTO EM DIREITOS CREDITÓRIOS',
+      cnpj: '11507489000109'
+    },
+    instrucoes: [],                     // o boleto do fundo nao traz aviso de cessao
+    // Regras de cobranca impressas pelo fundo. NAO vem da SE1: E1_MULTA e
+    // E1_VALJUR estao zerados nos 516 titulos do 699. Inferidas do boleto
+    // modelo (R$ 823,97 -> multa R$ 16,48 = 2%; juros R$ 3,30/dia = 0,4%/dia).
+    // ⚠️ Confirmar com o fundo se mudarem ou se houver titulo com regra propria.
+    regrasCobranca: { protestoDiasUteis: 3, multaPct: 2, jurosDiaPct: 0.4 },
+    // Layout da ficha igual a do fundo.
+    pdf: {
+      localPagamento: 'Pagável preferencialmente na Rede Bradesco ou Bradesco Expresso.',
+      codigoBeneficiario: '0069000-7',
+      beneficiarioSemEndereco: true,
+      labelBeneficiarioFinal: 'Sacador/Avalista',
+      sacador: { nome: 'GNATUS PRODUTOS MEDICOS E ODONTOLOGICOS LTDA', cnpj: '09609356000100' },
+      especieMoeda: 'R$',
+      nossoNumeroBradesco: true,        // "09/99111230029-4"
+      numeroDocumento: 'num7-parcela',  // "0091467-2"
+      datasDaOcorrencia: true           // data documento e processamento = entrada confirmada (.RET)
+    }
   }
 };
 
-// O boleto so pode ser emitido quando as coordenadas do fundo existem. Sem elas
+// O boleto so pode ser gerado quando as coordenadas do fundo existem. Sem elas
 // da pra fazer bordero (que usa a ag/conta do Protheus), mas nao boleto.
-const boletoConfigurado = (p) => !!(p && !p.boletoPeloFundo && trim(p.agencia) && trim(p.conta) && trim(p.carteira));
+const boletoConfigurado = (p) => !!(p && trim(p.agencia) && trim(p.conta) && trim(p.carteira));
 
 // Aplica overrides de .env por portador (ex.: PORTADOR_044_AGENCIA=1234).
 function comOverrides(p) {
@@ -114,10 +134,7 @@ function dadosBoleto({ banco, agencia, conta } = {}) {
     return {
       banco: p.bancoBoleto, agencia: '', conta: '', carteira: '',
       cessao: true, portador: p.portador, boletoPendente: true,
-      boletoPeloFundo: !!p.boletoPeloFundo,
-      motivo: p.boletoPeloFundo
-        ? `O boleto do portador ${p.portador} (${p.nome}) é emitido e enviado pelo próprio fundo. A intranet só registra e acompanha o título.`
-        : `O boleto do portador ${p.portador} (${p.nome}) ainda não está configurado: faltam agência, conta e carteira do fundo no banco ${p.bancoBoleto}. O borderô funciona; a emissão de boleto não.`
+      motivo: `O boleto do portador ${p.portador} (${p.nome}) ainda não está configurado: faltam agência, conta e carteira do fundo no banco ${p.bancoBoleto}. O borderô funciona; a emissão de boleto não.`
     };
   }
   return {
@@ -128,8 +145,15 @@ function dadosBoleto({ banco, agencia, conta } = {}) {
     especie: p.especie,
     beneficiarioFinal: p.beneficiarioFinal,
     instrucoes: p.instrucoes,
+    regrasCobranca: p.regrasCobranca || null,
+    pdf: p.pdf || null,
     cessao: true,
-    portador: p.portador
+    portador: p.portador,
+    // O fundo envia o boleto ao cliente: a intranet gera o PDF, mas nao dispara.
+    disparoBloqueado: !!p.boletoPeloFundo,
+    motivoDisparo: p.boletoPeloFundo
+      ? `O boleto do portador ${p.portador} (${p.nome}) é enviado ao cliente pelo próprio fundo — a intranet não dispara, para não duplicar. O PDF está disponível para consulta.`
+      : undefined
   };
 }
 

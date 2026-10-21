@@ -126,6 +126,9 @@ const call = (body) => new Promise((ok) => {
   assert.strictEqual(upd.p.nn, '99111230139');                      // NN do fundo substitui o do Protheus
   const ins = pgCalls.find(c => /INSERT INTO tab_boleto_envio_lote_retorno/.test(c.sql) && c.p.id === 5);
   assert.strictEqual(ins.p.nn, '99111230138'); assert.strictEqual(ins.p.par, '02');
+  // data da entrada confirmada (.RET 111-116 = 300926) vai para a linha — e' a data do boleto do BFC
+  assert.strictEqual(upd.p.doc, '20260930'); assert.strictEqual(ins.p.doc, '20260930');
+  assert.ok(/data_ocorrencia = COALESCE\(NULLIF\(@doc, ''\), data_ocorrencia\)/.test(upd.sql));
   const adot = pgCalls.filter(c => /INSERT INTO tab_boleto_envio_lote_retorno/.test(c.sql) && c.p.id > 900);
   assert.strictEqual(adot.length, 1); assert.strictEqual(adot[0].p.nn, '99111230137'); assert.strictEqual(adot[0].p.num, '088281');
   const loteNovo = pgCalls.find(c => /INSERT INTO tab_boleto_envio_lote\s/.test(c.sql));
@@ -133,13 +136,60 @@ const call = (body) => new Promise((ok) => {
   const st = pgCalls.find(c => /UPDATE tab_boleto_envio_lote\s+SET status = CASE/.test(c.sql));
   assert.ok(st && /'ENVIADO_PROTHEUS'/.test(st.sql));
 
-  // --- portadorCessao: 699 nunca emite, mesmo com coordenadas no .env
-  process.env.PORTADOR_699_AGENCIA = '1234'; process.env.PORTADOR_699_CONTA = '1234567'; process.env.PORTADOR_699_CARTEIRA = '09';
+  // --- portadorCessao: 699 gera o PDF (coordenadas do boleto do fundo), mas
+  //     NUNCA dispara — o fundo ja envia o boleto ao cliente (21/10/2026)
   const PC = R('services/portadorCessao.js');
   const bk = PC.dadosBoleto({ banco: '699' });
-  assert.strictEqual(bk.boletoPendente, true); assert.strictEqual(bk.boletoPeloFundo, true);
-  assert.ok(/emitido e enviado pelo próprio fundo/.test(bk.motivo));
-  assert.strictEqual(PC.dadosBoleto({ banco: '044' }).boletoPendente, undefined);   // Acreditar intacto
+  assert.strictEqual(bk.boletoPendente, undefined);
+  assert.deepStrictEqual([bk.banco, bk.agencia, bk.conta, bk.carteira], ['237', '2960', '0069000', '09']);
+  assert.strictEqual(bk.disparoBloqueado, true); assert.ok(/enviado ao cliente pelo próprio fundo/.test(bk.motivoDisparo));
+  assert.deepStrictEqual(bk.regrasCobranca, { protestoDiasUteis: 3, multaPct: 2, jurosDiaPct: 0.4 });
+  process.env.PORTADOR_699_AGENCIA = '1234';                          // override de .env nao destrava o disparo
+  assert.strictEqual(PC.dadosBoleto({ banco: '699' }).disparoBloqueado, true);
+  delete process.env.PORTADOR_699_AGENCIA;
+  const b044 = PC.dadosBoleto({ banco: '044' });
+  assert.strictEqual(b044.boletoPendente, undefined); assert.strictEqual(b044.disparoBloqueado, false);   // Acreditar intacto
+  assert.strictEqual(b044.regrasCobranca, null); assert.strictEqual(b044.pdf, null);
+
+  // --- PDF do BFC = ficha do fundo (modelo docs/financeiro/boleto bfc.pdf, 1/091467/02)
+  const BoletoPdf = R('services/boletoPdf.js'); const ProtheusBoleto = R('services/protheusBoleto.js');
+  const L = R('services/linhaDigitavel.js');
+  assert.strictEqual(L.nossoNumeroBradescoImpresso('09', '99111230029'), '09/99111230029-4');
+  assert.strictEqual(L.nossoNumeroBradescoImpresso('09', '99111230138'), '09/99111230138-P');
+  const rM = { numero: '091467', parcela: '02', nosso_numero: '99111230029', valor: 823.97, data_ocorrencia: '20260930' };
+  const linM = await ProtheusBoleto.linhaDigitavel({ banco: bk.banco, agencia: bk.agencia, conta: bk.conta, carteira: bk.carteira, nossoNumero: rM.nosso_numero, valor: rM.valor, vencimento: '20261031' });
+  const G = { nome: 'GNATUS PRODUTOS MEDICOS E ODONTOLOGICOS LTDA - EPP', cnpj: '09609356000100', endereco: 'AV DOS MACONS, 405' };
+  const oM = BoletoPdf.opcoesPdfBoleto({ bko: bk, r: rM, pagador: {}, se1: { emissao: '20260901' }, venctoCalc: '20261031', lin: linM, beneficiarioGnatus: G });
+  assert.strictEqual(oM.linhaDigitavel, '23792.96003 99911.123000 29006.900004 9 16160000082397');
+  assert.deepStrictEqual(
+    [oM.numeroDocumento, oM.nossoNumero, oM.dataDocumento, oM.dataProcessamento, oM.codigoBeneficiario, oM.especieMoeda, oM.labelBeneficiarioFinal],
+    ['0091467-2', '09/99111230029-4', '20260930', '20260930', '0069000-7', 'R$', 'Sacador/Avalista']);
+  assert.deepStrictEqual(oM.beneficiario, { nome: 'BFC FUNDO DE INVESTIMENTO EM DIREITOS CREDITÓRIOS', cnpj: '11507489000109', endereco: '' });
+  assert.deepStrictEqual(oM.instrucoes, ['ENVIAR PARA CARTÓRIO APOS 3 DIAS ÚTEIS',
+    'PAGAMENTO APOS O VENCIMENTO SERA ACRESCIDO DE MULTA DE 2% (R$ 16,48)', 'JUROS DE MORA R$ 3,30 AO DIA APÓS VENCIMENTO']);
+  assert.ok((await BoletoPdf.gerarBoletoPdf(oM)).length > 5000);
+  // sem a data da ocorrencia: cai na emissao e no dia de hoje, como os outros bancos
+  const oSemData = BoletoPdf.opcoesPdfBoleto({ bko: bk, r: { ...rM, data_ocorrencia: null }, pagador: {}, se1: { emissao: '20260901' }, venctoCalc: '20261031', lin: linM, beneficiarioGnatus: G });
+  assert.strictEqual(oSemData.dataDocumento, '20260901'); assert.strictEqual(oSemData.dataProcessamento, undefined);
+
+  // --- Santander e Itau: montador unico reproduz a montagem antiga, campo a campo
+  for (const [banco, ag, cc, nn, carteiraLin] of [['033', '0820', '130002086', '00191620', '101'], ['341', '0298', '25776', '08345215', '109']]) {
+    const bkx = PC.dadosBoleto({ banco, agencia: ag, conta: cc });
+    const linx = { body: { linha_digitavel: 'LD', codigo_barras: 'CB', carteira: carteiraLin, nosso_numero: '' } };
+    const rx = { numero: '094610', parcela: '04', nosso_numero: nn, valor: 100, data_ocorrencia: '20261001' };
+    const sx = { emissao: '20260901', jurosDia: 1.5, multaPct: 2 };
+    const o = BoletoPdf.opcoesPdfBoleto({ bko: bkx, r: rx, pagador: { nome: 'X' }, se1: sx, venctoCalc: '20261101', lin: linx, beneficiarioGnatus: G });
+    const antigo = {
+      banco, beneficiario: G, beneficiarioFinal: null, pagador: { nome: 'X' }, valor: 100, vencimento: '20261101',
+      numeroDocumento: '094610', dataDocumento: '20260901',
+      nossoNumero: L.formatarNossoNumero(banco, nn), agencia: ag, conta: cc,
+      carteira: { '101': 'PENH. ELETR', '109': '109' }[carteiraLin], especieDoc: { '341': 'DMI', '033': 'DM' }[banco],
+      linhaDigitavel: 'LD', codigoBarras: 'CB',
+      instrucoes: BoletoPdf.montarInstrucoes({ jurosDia: 1.5, multaPct: 2, valor: 100, vencimento: '20261101' })
+    };
+    for (const [k, v] of Object.entries(antigo)) assert.deepStrictEqual(o[k], v, `${banco}.${k}`);
+    for (const k of ['labelBeneficiarioFinal', 'dataProcessamento', 'codigoBeneficiario', 'especieMoeda', 'localPagamento']) assert.strictEqual(o[k], undefined, `${banco}.${k}`);
+  }
 
   // --- sincronizar: lote de cessao nao leva o E1_NUMBCO; Santander igual a antes
   const syncPg = []; const S = R('services/boletoSincronizar.js');
