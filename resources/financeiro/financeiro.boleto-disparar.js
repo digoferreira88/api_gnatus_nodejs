@@ -310,14 +310,6 @@ module.exports = (app) => ({
         const bko = PortadorCessao.dadosBoleto({
           banco: trim(r.banco_cod), agencia: trim(r.banco_agencia), conta: trim(r.banco_conta)
         });
-        // TRAVA: o fundo (ex.: Grupo BFC) ja envia o boleto ao cliente. A
-        // intranet gera o PDF para consulta, mas nao dispara — senao o cliente
-        // recebe o mesmo boleto duas vezes.
-        if (bko.disparoBloqueado) {
-          falhaCount++;
-          resultados.push({ ...ref, status: 'LINHA_INDISPONIVEL', codigo_erro: 'BOLETO_ENVIADO_PELO_FUNDO', mensagem: bko.motivoDisparo });
-          continue;
-        }
         // TRAVA: sem agencia/conta o campo livre do codigo de barras sai ZERADO
         // (codigo do beneficiario em branco) e o boleto fica impagavel. NAO envia.
         if (!trim(bko.agencia) || !trim(bko.conta)) {
@@ -418,7 +410,8 @@ module.exports = (app) => ({
               const { subject, text, html } = montarEmail({
                 nome: trim(r.cliente_nome), numero: trim(r.numero), parcela: trim(r.parcela),
                 valor: r.valor, vencimento: r.vencimento,
-                banco: nomeBancoCurto(r.banco_cod, r.banco_nome), linha
+                // Banco do BOLETO, nao o portador: cessao (044/699) sai no Bradesco.
+                banco: nomeBancoCurto(bko.banco, r.banco_nome), linha
               });
               await Email.sendEmail({
                 from: Email.SENDER_COBRANCA,   // boleto ao cliente sai de cobranca@ (nao do remetente global ti@)

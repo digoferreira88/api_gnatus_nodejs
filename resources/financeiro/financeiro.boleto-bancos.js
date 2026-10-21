@@ -71,12 +71,9 @@ module.exports = (app) => ({
           // na lista, mas o rótulo diz que boleto ainda não sai — senão o
           // operador monta o lote esperando disparar e só descobre no fim.
           boletoPendente: !PortadorCessao.boletoConfigurado(p),
-          boletoPeloFundo: !!p.boletoPeloFundo,
-          rotulo: p.boletoPeloFundo
-            ? `${p.nome} · cessão — boleto enviado pelo fundo (PDF disponível)`
-            : PortadorCessao.boletoConfigurado(p)
-              ? `${p.nome} · cessão (boleto ${p.bancoBoleto} ag ${p.agencia} cc ${p.conta})`
-              : `${p.nome} · cessão — borderô apenas (boleto ainda não configurado)`
+          rotulo: PortadorCessao.boletoConfigurado(p)
+            ? `${p.nome} · cessão (boleto ${p.bancoBoleto} ag ${p.agencia} cc ${p.conta})`
+            : `${p.nome} · cessão — borderô apenas (boleto ainda não configurado)`
         });
       }
 

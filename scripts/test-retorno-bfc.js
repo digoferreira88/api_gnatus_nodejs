@@ -115,7 +115,7 @@ const call = (body) => new Promise((ok) => {
   assert.strictEqual(b.a_atualizar, 1); assert.strictEqual(b.a_inserir, 1); assert.strictEqual(b.a_adotar, 1);
   assert.strictEqual(b.ja_baixados, 1); assert.strictEqual(b.orfaos, 0);
   assert.deepStrictEqual(b.nao_identificados_por_motivo, { VALOR_DIVERGENTE: 1, AMBIGUO: 1, NAO_LOCALIZADO: 1, VENCIMENTO_DIVERGENTE: 1 });
-  assert.strictEqual(b.boleto_pelo_fundo, true);
+  assert.ok(/Ficam disparáveis/.test(b.mensagem));
   assert.ok(!pgCalls.some(c => /UPDATE|INSERT/.test(c.sql)), 'simulacao nao pode gravar');
   assert.ok(protheusSql.filter(s => /E1_STATUS\) status/.test(s)).every(s => /NOT IN \('RA','NCC'\)/.test(s)));
 
@@ -136,19 +136,16 @@ const call = (body) => new Promise((ok) => {
   const st = pgCalls.find(c => /UPDATE tab_boleto_envio_lote\s+SET status = CASE/.test(c.sql));
   assert.ok(st && /'ENVIADO_PROTHEUS'/.test(st.sql));
 
-  // --- portadorCessao: 699 gera o PDF (coordenadas do boleto do fundo), mas
-  //     NUNCA dispara — o fundo ja envia o boleto ao cliente (21/10/2026)
+  // --- portadorCessao: 699 gera e dispara o boleto como os outros bancos
+  //     (a trava "o fundo ja envia" foi retirada pelo usuario em 21/10/2026)
   const PC = R('services/portadorCessao.js');
   const bk = PC.dadosBoleto({ banco: '699' });
   assert.strictEqual(bk.boletoPendente, undefined);
   assert.deepStrictEqual([bk.banco, bk.agencia, bk.conta, bk.carteira], ['237', '2960', '0069000', '09']);
-  assert.strictEqual(bk.disparoBloqueado, true); assert.ok(/enviado ao cliente pelo próprio fundo/.test(bk.motivoDisparo));
+  assert.ok(!('disparoBloqueado' in bk));
   assert.deepStrictEqual(bk.regrasCobranca, { protestoDiasUteis: 3, multaPct: 2, jurosDiaPct: 0.4 });
-  process.env.PORTADOR_699_AGENCIA = '1234';                          // override de .env nao destrava o disparo
-  assert.strictEqual(PC.dadosBoleto({ banco: '699' }).disparoBloqueado, true);
-  delete process.env.PORTADOR_699_AGENCIA;
   const b044 = PC.dadosBoleto({ banco: '044' });
-  assert.strictEqual(b044.boletoPendente, undefined); assert.strictEqual(b044.disparoBloqueado, false);   // Acreditar intacto
+  assert.strictEqual(b044.boletoPendente, undefined);   // Acreditar intacto
   assert.strictEqual(b044.regrasCobranca, null); assert.strictEqual(b044.pdf, null);
 
   // --- PDF do BFC = ficha do fundo (modelo docs/financeiro/boleto bfc.pdf, 1/091467/02)

@@ -304,7 +304,6 @@ module.exports = (app) => ({
       naoIdentificados.forEach(x => { porMotivo[x.motivo] = (porMotivo[x.motivo] || 0) + 1; });
       const resumo = {
         banco, banco_layout: bancoLayout, cessao: !!cessao,
-        boleto_pelo_fundo: !!(cessao && cessao.boletoPeloFundo),
         criterio,
         candidatos: confirmados.length,
         identificados: nossoPorChave.size,
@@ -322,9 +321,7 @@ module.exports = (app) => ({
         nao_identificados_lista: naoIdentificados.slice(0, 50)
       };
       const total = aAtualizar.length + aInserir.length + aAdotar.length;
-      const destino = resumo.boleto_pelo_fundo
-        ? 'O boleto desse portador é emitido pelo fundo: aqui o título fica registrado para acompanhamento.'
-        : 'Ficam disparáveis em "Disparar boletos".';
+      const destino = 'Ficam disparáveis em "Disparar boletos".';
 
       if (simular) {
         return res.json({ ok: true, simular: true, ...resumo,

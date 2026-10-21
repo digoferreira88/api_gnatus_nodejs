@@ -11,11 +11,12 @@ const assert = require('assert');
 const root = path.join(__dirname, '..');
 
 const emails = [];
+const emailsCompletos = [];
 require.cache[path.join(root, 'middlewares/requirePerm.js')] = { exports: () => () => (q, r, n) => n(), loaded: true, id: 'rp' };
 require.cache[path.join(root, 'services/auditoria.js')] = { exports: { registrar: () => {} }, loaded: true, id: 'aud' };
 require.cache[path.join(root, 'services/emailService.js')] = { exports: {
   SENDER_COBRANCA: 'cobranca@teste',
-  sendEmail: async (m) => { if (m.to === 'falha@x.com') throw new Error('Graph 500'); emails.push(m.to); return { ok: true }; }
+  sendEmail: async (m) => { if (m.to === 'falha@x.com') throw new Error('Graph 500'); emails.push(m.to); emailsCompletos.push(m); return { ok: true }; }
 }, loaded: true, id: 'mail' };
 delete process.env.SURI_TPL_BOLETO;
 
@@ -29,13 +30,16 @@ const ROWS = [
   linha(1),                                                     // livre -> envia
   linha(2),                                                     // outra requisicao ja reservou -> pula
   linha(3),                                                     // envio falha -> desfaz reserva
-  linha(4, { disparado_em: new Date('2026-10-20T13:50:00Z'), disparado_em_txt: '2026-10-20 10:50:00.123456-03' }) // recente -> pula
+  linha(4, { disparado_em: new Date('2026-10-20T13:50:00Z'), disparado_em_txt: '2026-10-20 10:50:00.123456-03' }), // recente -> pula
+  // Grupo BFC (699): dispara como os outros (21/10/2026), boleto Bradesco com PDF do fundo
+  linha(5, { id_lote: 37, prefixo: '1', numero: '091467', parcela: '02', nosso_numero: '99111230029', valor: 823.97, vencimento: '20261031',
+    banco_cod: '699', banco_nome: 'GRUPO BFC', banco_agencia: '00000', banco_conta: '0000000000', data_ocorrencia: '20260930' })
 ];
 const reservasNegadas = new Set([2, 4]);
 const pg = [];
 const Pg = { connectAndQuery: async (sql, p) => {
   pg.push({ sql, p });
-  if (/FROM tab_boleto_envio_lote_retorno r/.test(sql)) return ROWS;
+  if (/FROM tab_boleto_envio_lote_retorno r/.test(sql)) { const pedidos = Object.values(p); return ROWS.filter(x => pedidos.includes(x.id)); }
   if (/SET disparado_em = NOW\(\)\s+WHERE id = @id\s+AND COALESCE/.test(sql)) {
     assert.ok(/@reenviar::int = 1/.test(sql) && /@janela::int \* INTERVAL '1 minute'/.test(sql));
     return reservasNegadas.has(p.id) ? [] : [{ id: p.id }];
@@ -77,5 +81,12 @@ const call = (body) => new Promise((ok) => {
   pg.length = 0;
   await call({ ids: [4], canais: ['EMAIL'], reenviar: true });
   assert.strictEqual(pg.find(ehReserva).p.reenviar, 1);
+
+  // Grupo BFC (699): sai como os outros — e-mail com PDF e banco "Bradesco"
+  const rb = await call({ ids: [5], canais: ['EMAIL'] });
+  assert.strictEqual(rb.body.resultados[0].status, 'DISPARADO', JSON.stringify(rb.body.resultados[0]));
+  const mb = emailsCompletos.find(m => m.to === 'c5@x.com');
+  assert.ok(mb && /Bradesco/.test(mb.html), 'e-mail do BFC cita o banco do boleto');
+  assert.ok(mb.attachments && mb.attachments[0].content.length > 5000, 'PDF anexado');
   console.log('OK — reserva do disparo: todas as verificacoes passaram');
 })().catch(e => { console.error(e); process.exit(1); });
