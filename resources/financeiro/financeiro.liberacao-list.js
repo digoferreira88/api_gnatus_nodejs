@@ -157,8 +157,51 @@ module.exports = (app) => ({
         ${conds.join(' ')}
       ORDER BY sc5.C5_EMISSAO, sc5.C5_NUM`;
 
+    // Faturado e Vencido/A vencer por pedido saem em consultas SEPARADAS de
+    // propósito: dentro da query principal o SQL Server escolhe planos ruins (a
+    // SE1 não tem índice por E1_PEDIDO e era varrida uma vez por pedido; o SD2
+    // somava +1,6s na fila completa). Separadas, cada uma leva ~0,1s.
+    //
+    // Títulos ligados ao pedido (E1_PEDIDO, mesmo vínculo do Pago/A Pagar) com
+    // saldo em aberto, divididos pelo vencimento real:
+    //   - Vencido  = vencimento antes de hoje. É o valor que a operadora
+    //                digitava à mão em "Valor em Atraso" (conferido em 26/10/2026).
+    //   - A vencer = vencimento hoje ou depois.
+    const sqlTitulos = `
+      SELECT RTRIM(e1.E1_PEDIDO) AS pedido,
+             SUM(CASE WHEN e1.E1_VENCREA <  t.hoje THEN e1.E1_SALDO ELSE 0 END) AS vencido,
+             SUM(CASE WHEN e1.E1_VENCREA <  t.hoje THEN 1 ELSE 0 END)           AS qtdVencido,
+             MIN(CASE WHEN e1.E1_VENCREA <  t.hoje THEN e1.E1_VENCREA END)      AS maisAntigo,
+             SUM(CASE WHEN e1.E1_VENCREA >= t.hoje THEN e1.E1_SALDO ELSE 0 END) AS aVencer,
+             SUM(CASE WHEN e1.E1_VENCREA >= t.hoje THEN 1 ELSE 0 END)           AS qtdAVencer,
+             MIN(CASE WHEN e1.E1_VENCREA >= t.hoje THEN e1.E1_VENCREA END)      AS proximo
+        FROM SE1010 e1 WITH (NOLOCK)
+       CROSS JOIN (SELECT CONVERT(char(8), GETDATE(), 112) AS hoje) t
+       WHERE e1.E1_PEDIDO <> '' AND e1.D_E_L_E_T_ = '' AND e1.E1_SALDO > 0
+         AND RTRIM(e1.E1_TIPO) NOT IN ('RA', 'NCC')
+       GROUP BY e1.E1_PEDIDO`;
+
     try {
-      const rows = await Protheus.connectAndQuery(sql, params);
+      const [rows, titRows] = await Promise.all([
+        Protheus.connectAndQuery(sql, params),
+        Protheus.connectAndQuery(sqlTitulos, {})
+      ]);
+      const titMap = new Map(titRows.map(v => [trim(v.pedido), v]));
+      const r2 = (v) => Math.round(N(v) * 100) / 100;
+
+      // Faturado: notas já emitidas para os pedidos da lista (bruto − devolvido,
+      // mesma régua do Relatório de Faturamento). Usa o índice SD2 por pedido.
+      const fatMap = new Map();
+      const nums = [...new Set(rows.map(r => trim(r.pedido)))].filter(n => /^[0-9A-Za-z]+$/.test(n));
+      for (let i = 0; i < nums.length; i += 1000) {
+        const lista = nums.slice(i, i + 1000).map(n => `'${n}'`).join(',');
+        const fr = await Protheus.connectAndQuery(`
+          SELECT RTRIM(D2_PEDIDO) AS pedido, SUM(D2_VALBRUT - D2_VALDEV) AS valor
+            FROM SD2010 WITH (NOLOCK)
+           WHERE D2_FILIAL = '01' AND D_E_L_E_T_ <> '*' AND D2_PEDIDO IN (${lista})
+           GROUP BY D2_PEDIDO`, {});
+        fr.forEach(f => fatMap.set(trim(f.pedido), Math.round(N(f.valor) * 100) / 100));
+      }
 
       // Anotações da Intranet (ações/observações), indexadas por pedido.
       const anotMap = new Map();
@@ -197,6 +240,7 @@ module.exports = (app) => ({
         const restricaoPagto = recMinFat > 0 && recMinFat > pago;
 
         const anot = anotMap.get(trim(r.pedido)) || null;
+        const tit = titMap.get(trim(r.pedido)) || null;
 
         // Estágio atual. r.estatusCod NULL = pedido sem classificação na view
         // (órfão) — sinalizado explicitamente pra não passar despercebido.
@@ -231,6 +275,13 @@ module.exports = (app) => ({
           geraTp,
           totalPedido,
           valorSaldo: N(r.valorSaldo),
+          valorFaturado: fatMap.get(trim(r.pedido)) || 0,
+          valorVencido: tit ? r2(tit.vencido) : 0,
+          qtdVencidos: tit ? N(tit.qtdVencido) : 0,
+          vencidoDesde: tit ? trim(tit.maisAntigo) : '',
+          valorAVencer: tit ? r2(tit.aVencer) : 0,
+          qtdAVencer: tit ? N(tit.qtdAVencer) : 0,
+          proximoVencimento: tit ? trim(tit.proximo) : '',
           pago,
           pagar,
           totalFinan: N(r.totalFinan),
@@ -264,6 +315,9 @@ module.exports = (app) => ({
 
       // KPIs
       const totalGeral = pedidos.reduce((s, p) => s + p.totalPedido, 0);
+      const totalFaturado = pedidos.reduce((s, p) => s + p.valorFaturado, 0);
+      const totalVencido = pedidos.reduce((s, p) => s + p.valorVencido, 0);
+      const totalAVencer = pedidos.reduce((s, p) => s + p.valorAVencer, 0);
       const qtdVerificar = pedidos.filter(p => p.verificarFinanceiro).length;
       const qtdRestricao = pedidos.filter(p => p.restricaoPagto).length;
 
@@ -286,6 +340,9 @@ module.exports = (app) => ({
         filtros: { tipo, formaPgto, busca, estatus: verTodos ? 'TODOS' : String(estatusNum) },
         qtdPedidos: pedidos.length,
         totalGeral,
+        totalFaturado,
+        totalVencido,
+        totalAVencer,
         qtdVerificar,
         qtdRestricao,
         qtdOrfaos,
