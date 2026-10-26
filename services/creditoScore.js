@@ -175,4 +175,4 @@ async function calcular({ Pg, Protheus }, cod, loja) {
   };
 }
 
-module.exports = { calcular, classificar, PESOS_DEFAULT, FAIXAS_DEFAULT };
+module.exports = { calcular, classificar, desdeMeses, PESOS_DEFAULT, FAIXAS_DEFAULT };

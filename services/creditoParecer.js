@@ -31,6 +31,7 @@ function parecerTemplate(d) {
     if (b.score != null) partes.push(`Score externo do bureau: ${Math.round(b.score)}.`);
   }
   if (d.cliente.bloqueado) partes.push('Cliente BLOQUEADO no cadastro.');
+  if (d.limite) partes.push(`Limite calculado: ${brl(d.limite.calculado)} — ${d.limite.nota} ${d.limite.verificacao.texto}`);
   partes.push(`Recomendação: ${st === 'APROVAR' ? 'APROVAR' : st === 'REPROVAR' ? 'REPROVAR' : 'REVISÃO MANUAL'}.`);
   return partes.join(' ');
 }
@@ -42,7 +43,11 @@ async function gerar(d) {
   const resumo = {
     cliente: d.cliente.nome, uf: d.cliente.uf, limite: d.cliente.limite, bloqueado: d.cliente.bloqueado,
     score_interno: d.scoreInterno, classificacao: d.classificacao.label, status_sugerido: d.status,
-    indicadores: d.indicadores, bureau_externo: d.bureau || null
+    indicadores: d.indicadores, bureau_externo: d.bureau || null,
+    limite_calculado: d.limite ? {
+      valor: d.limite.calculado, regra: `${d.limite.percentual}% do faturamento dos últimos 12 meses`,
+      faturamento_12m: d.limite.faturamento12m, verificacao_score: d.limite.verificacao.texto
+    } : null
   };
   const prompt =
 `Você é um analista de crédito sênior de uma indústria. Com base EXCLUSIVAMENTE nos indicadores abaixo (NÃO invente nenhum número; use apenas os fornecidos), escreva um parecer de crédito objetivo em português, com 3 a 5 frases, destacando: situação de pagamento, principais riscos, tendência e uma recomendação clara. Seja direto e profissional, sem listar os números crus em formato de tabela.

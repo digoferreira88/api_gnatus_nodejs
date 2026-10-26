@@ -8,13 +8,60 @@ const Regras = require('./creditoRegras');
 const Parecer = require('./creditoParecer');
 const Bureau = require('./creditoBureau');
 
-const round1 = (v) => Math.round((Number(v) || 0) * 10) / 10;
+const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+const trim = (v) => String(v == null ? '' : v).trim();
+const ymdParaData = (s) => { s = trim(s); return s.length === 8 ? `${s.slice(6, 8)}/${s.slice(4, 6)}/${s.slice(0, 4)}` : ''; };
+const brl = (v) => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function sugerirLimite(scoreFinal, limiteAtual, semHistorico) {
-  if (semHistorico) return { valor: limiteAtual, nota: 'Sem histórico interno — manter até consulta externa.' };
-  const f = scoreFinal >= 750 ? 1.2 : scoreFinal >= 600 ? 1.0 : scoreFinal >= 400 ? 0.7 : 0.3;
-  return { valor: round1(limiteAtual * f),
-    nota: f > 1 ? 'Score saudável — há espaço para aumento.' : f === 1 ? 'Manter o limite atual.' : 'Score de risco — reduzir exposição.' };
+// ===== Limite calculado pelo sistema =====
+// Limite = 30% do faturamento do cliente nos últimos 12 meses.
+// "Faturamento" segue a mesma régua do Relatório de Faturamento e do Ranking:
+// SD2 nas 20 CFOPs de venda, bruto − devolvido, sem Nota Complementar de ICMS.
+const PCT_LIMITE = 0.30;
+const CFOPS_FATURAMENTO = [
+  '5105', '5106', '5116', '5117', '5119', '5405', '5933',
+  '6105', '6106', '6107', '6108', '6109', '6110', '6116', '6117',
+  '6119', '6122', '6123', '6404', '6933'
+];
+
+async function faturamento12m(Protheus, cod, loja) {
+  const desde = Score.desdeMeses(12);
+  const cfops = CFOPS_FATURAMENTO.map(c => `'${c}'`).join(',');
+  const r = await Protheus.connectAndQuery(`
+    SELECT CAST(ISNULL(SUM(CASE WHEN sd2.D2_EMISSAO >= @desde THEN sd2.D2_VALBRUT - sd2.D2_VALDEV ELSE 0 END), 0) AS NUMERIC(15,2)) fat,
+           COUNT(DISTINCT CASE WHEN sd2.D2_EMISSAO >= @desde THEN sd2.D2_SERIE + sd2.D2_DOC END) nfs,
+           MAX(sd2.D2_EMISSAO) ultima
+      FROM SD2010 sd2 WITH (NOLOCK)
+      JOIN SF2010 sf2 WITH (NOLOCK)
+        ON sf2.F2_FILIAL = sd2.D2_FILIAL AND sf2.F2_DOC = sd2.D2_DOC AND sf2.F2_SERIE = sd2.D2_SERIE
+       AND sf2.F2_CLIENTE = sd2.D2_CLIENTE AND sf2.F2_LOJA = sd2.D2_LOJA AND sf2.D_E_L_E_T_ <> '*'
+     WHERE sd2.D_E_L_E_T_ <> '*' AND sd2.D2_FILIAL = '01'
+       AND sd2.D2_CLIENTE = @cod AND sd2.D2_LOJA = @loja
+       AND sd2.D2_CF IN (${cfops})
+       AND ISNULL(sf2.F2_TIPO, 'N') <> 'I'`, { cod, loja, desde });
+  const x = r[0] || {};
+  return { valor: round2(x.fat), nfs: Number(x.nfs || 0), desde, ultima: trim(x.ultima) };
+}
+
+// Confere o limite calculado contra o score (interno, ou combinado com o Quod).
+// Faixas: >= 600 confirma · 400–599 atenção · < 400 não conceder.
+const SCORE_CONFIRMA = 600, SCORE_ATENCAO = 400;
+function verificarScore({ score, label, semHistorico, comBureau, bloqueado }) {
+  const s = Math.round(score);
+  if (bloqueado) return { nivel: 'bloqueio', texto: 'Cliente bloqueado no cadastro — não conceder.' };
+  if (semHistorico && !comBureau) {
+    return { nivel: 'neutro', texto: `Score ${s} é neutro (sem títulos nos últimos 36 meses) — não confirma o limite; complemente com consulta externa.` };
+  }
+  if (s >= SCORE_CONFIRMA) return { nivel: 'ok', texto: `Score ${s} (${label}) confirma o limite.` };
+  if (s >= SCORE_ATENCAO) return { nivel: 'atencao', texto: `Score ${s} (${label}) — avaliar antes de conceder o limite.` };
+  return { nivel: 'bloqueio', texto: `Score ${s} (${label}) — não conceder sem análise.` };
+}
+
+function notaLimite(fat) {
+  if (fat.valor > 0) return `${Math.round(PCT_LIMITE * 100)}% de ${brl(fat.valor)} faturados desde ${ymdParaData(fat.desde)} (${fat.nfs} nota(s)).`;
+  return fat.ultima
+    ? `Sem faturamento nos últimos 12 meses — último em ${ymdParaData(fat.ultima)}.`
+    : 'Cliente sem faturamento registrado.';
 }
 
 // bureau = resultado normalizado do Quod (ou null). Quando null, score_final = interno.
@@ -42,11 +89,22 @@ async function montar({ Pg, Protheus }, cod, loja, opts = {}) {
   const regra = await Regras.avaliar(Pg, ctx);
   const status = base.cliente.bloqueado ? 'REPROVAR' : regra.status;
 
-  const limiteSugerido = sugerirLimite(scoreFinal, base.cliente.limite, base.indicadores.semHistorico);
+  const fat = await faturamento12m(Protheus, cod, loja);
+  const limite = {
+    atual: base.cliente.limite,
+    calculado: round2(fat.valor * PCT_LIMITE),
+    percentual: Math.round(PCT_LIMITE * 100),
+    faturamento12m: fat.valor, nfs12m: fat.nfs, desde: fat.desde, ultimoFaturamento: fat.ultima,
+    nota: notaLimite(fat),
+    verificacao: verificarScore({
+      score: scoreFinal, label: classificacao.label, semHistorico: base.indicadores.semHistorico,
+      comBureau: !!(bureau && bureau.score != null), bloqueado: base.cliente.bloqueado
+    })
+  };
 
   const parecer = await Parecer.gerar({
     cliente: base.cliente, indicadores: base.indicadores,
-    scoreInterno: base.scoreInterno, classificacao, status, bureau
+    scoreInterno: base.scoreInterno, classificacao, status, bureau, limite
   });
 
   // score evolutivo (1 ponto/dia/cliente)
@@ -104,7 +162,7 @@ async function montar({ Pg, Protheus }, cod, loja, opts = {}) {
     componentes: base.componentes,
     indicadores: base.indicadores,
     decisao: { status, regra: regra.regra, mensagem: regra.mensagem, forcadoBloqueio: base.cliente.bloqueado, ajustes },
-    limite: { atual: base.cliente.limite, sugerido: limiteSugerido.valor, nota: limiteSugerido.nota },
+    limite,
     bureau: bureau ? { ...bureau, fonteAtiva: cfgBureau.fonteAtiva } : null,
     bureauDisponivel: Bureau.fonteDisponivel(cfgBureau.fonteAtiva),
     parecer: parecer.texto, parecerFonte: parecer.fonte,
@@ -114,4 +172,4 @@ async function montar({ Pg, Protheus }, cod, loja, opts = {}) {
   };
 }
 
-module.exports = { montar };
+module.exports = { montar, faturamento12m, verificarScore };
