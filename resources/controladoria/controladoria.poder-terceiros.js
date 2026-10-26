@@ -5,36 +5,16 @@
 //   B6_PODER3 = 'R' → marca poder de terceiros - Remessa
 //   B6_TPCF  = 'C' (cliente) | 'F' (fornecedor)
 //   B6_SALDO = quantidade ainda em poder do terceiro (após retornos)
+//   B6_IDENT = liga a remessa às linhas de retorno (B6_PODER3='D') — ver
+//              controladoria.poder-terceiros-retornos.js (NFs de retorno)
 //   Valor = SALDO × B6_PRUNIT
 //
 // Filtro: por TES (B6_TES / SF4.F4_CODIGO). Lista definida pelo Fiscal
-// (2026-05) — ver TES_INCLUIR abaixo. CFOP fica como informacao adicional
-// na linha mas nao filtra.
+// (2026-05) — ver TES_INCLUIR em _ptTes.js. CFOP fica como informacao
+// adicional na linha mas nao filtra.
 
-const trim = (v) => String(v || '').trim();
-const toN  = (v) => Number(v || 0);
+const { trim, toN, categoriaFromTes, inTesSql, protheusDateToISO } = require('./_ptTes');
 
-// TES que entram no relatorio (definidas pelo Fiscal):
-//   546 (CFOP 5908/6908) → Comodato
-//   544 (CFOP 5915/6915) → Conserto
-//   573 (CFOP 5915/6915) → Conserto
-//   563 (CFOP 5901/6901) → Industrializacao
-//   656 (CFOP 5949/6949) → Teste/Desenvolvimento
-const TES_INCLUIR = ['546', '544', '573', '563', '656'];
-const CATEGORIA_BY_TES = {
-  '546': 'Comodato',
-  '544': 'Conserto',
-  '573': 'Conserto',
-  '563': 'Industrialização',
-  '656': 'Teste/Desenvolvimento'
-};
-const categoriaFromTes = (tes) => CATEGORIA_BY_TES[trim(tes)] || null;
-
-const protheusDateToISO = (s) => {
-  s = String(s || '').replace(/\D/g, '');
-  if (s.length !== 8) return '';
-  return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
-};
 const diasDesde = (yyyymmdd) => {
   const iso = protheusDateToISO(yyyymmdd);
   if (!iso) return null;
@@ -53,9 +33,10 @@ module.exports = (app) => ({
     try {
       // SB6010 filtrada pela lista de TES definida pelo fiscal.
       // SF4010 traz a descricao e o CFOP da TES (informativo, nao filtra).
-      const inTes = TES_INCLUIR.map(t => `'${t}'`).join(',');
+      const inTes = inTesSql();
       const rows = await Protheus.connectAndQuery(
-        `SELECT RTRIM(b6.B6_PRODUTO) produto,
+        `SELECT RTRIM(b6.B6_IDENT)   ident,
+                RTRIM(b6.B6_PRODUTO) produto,
                 RTRIM(sb1.B1_DESC)   produtoDesc,
                 RTRIM(sb1.B1_TIPO)   produtoTipo,
                 RTRIM(sb1.B1_UM)     um,
@@ -98,7 +79,9 @@ module.exports = (app) => ({
         if (!categoria) return null;
         const saldo  = toN(r.saldo);
         const prunit = toN(r.prunit);
+        const qtRemetida = toN(r.qtRemetida);
         return {
+          ident: trim(r.ident),
           produto: trim(r.produto),
           produtoDesc: trim(r.produtoDesc),
           produtoTipo: trim(r.produtoTipo),
@@ -109,7 +92,9 @@ module.exports = (app) => ({
           terceiroNome: trim(r.terceiroNome) || `(${trim(r.codClifor)}/${trim(r.loja)})`,
           terceiroLocalidade: [trim(r.terceiroMun), trim(r.terceiroUf)].filter(Boolean).join(' / '),
           saldo,
-          qtRemetida: toN(r.qtRemetida),
+          qtRemetida,
+          // Enviado − saldo = soma dos retornos (conferido 26/10/2026: fecha em 100% das remessas)
+          qtRetornada: Number(Math.max(0, qtRemetida - saldo).toFixed(4)),
           prunit,
           valor: saldo * prunit,
           emissao: protheusDateToISO(r.emissao),
