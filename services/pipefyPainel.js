@@ -82,7 +82,13 @@ async function lerConfig(Pg) {
   return cfg;
 }
 
-const CARD_FIELDS = `id title due_date late expired createdAt assignees { name } current_phase { name }`;
+const CARD_FIELDS_BASE = `id title due_date late expired createdAt assignees { name } current_phase { name }`;
+// updated_at / current_phase_age alimentam "dias na fase" e "sem movimento" da
+// Visão Executiva. Pedir campo a mais NÃO custa requisição. Se o Pipefy recusar
+// algum deles, cai pro BASE e segue (a tela esconde o que depende deles).
+const CARD_FIELDS_EXT = `${CARD_FIELDS_BASE} updated_at current_phase_age`;
+let camposExt = true;
+const CARD_FIELDS = () => (camposExt ? CARD_FIELDS_EXT : CARD_FIELDS_BASE);
 
 // Cards abertos de um pipe: 1 request pega as primeiras 50 de cada fase;
 // pagina só as fases que passarem disso.
@@ -90,7 +96,7 @@ async function cardsAbertosDoPipe(pipe) {
   const cards = [];
   const d = await gql(`query($id: ID!) { pipe(id: $id) { phases {
     id name done cards_count
-    cards(first: 50) { pageInfo { hasNextPage endCursor } edges { node { ${CARD_FIELDS} } } }
+    cards(first: 50) { pageInfo { hasNextPage endCursor } edges { node { ${CARD_FIELDS()} } } }
   } } }`, { id: pipe.id });
 
   for (const fase of (d.pipe?.phases || [])) {
@@ -100,7 +106,7 @@ async function cardsAbertosDoPipe(pipe) {
     edges.forEach(e => cards.push({ ...e.node, fase: fase.name }));
     while (pageInfo?.hasNextPage) {
       const pg = await gql(`query($f: ID!, $a: String) { phase(id: $f) {
-        cards(first: 50, after: $a) { pageInfo { hasNextPage endCursor } edges { node { ${CARD_FIELDS} } } }
+        cards(first: 50, after: $a) { pageInfo { hasNextPage endCursor } edges { node { ${CARD_FIELDS()} } } }
       } }`, { f: fase.id, a: pageInfo.endCursor });
       edges = pg.phase?.cards?.edges || [];
       edges.forEach(e => cards.push({ ...e.node, fase: fase.name }));
@@ -117,6 +123,7 @@ function montarSnapshot(pipesBrutos, cfg) {
 
   const pipes = [];
   const topAtrasados = [];
+  const todosCards = [];
   const porResp = new Map();
   const porSetor = new Map();
   const setorDe = (nome) => cfg.setorPorUsuario.get(nome) || null;
@@ -163,6 +170,15 @@ function montarSnapshot(pipesBrutos, cfg) {
           responsaveis: nomes.slice(0, 2), diasAtraso, idadeDias
         });
       }
+
+      // Lista enxuta (chaves curtas: ~1.500 cards) — a Visão Executiva filtra e
+      // agrega no navegador. A rota da TV tira este campo da resposta.
+      todosCards.push({
+        id: trim(c.id), p: p.id, t: trim(c.title).slice(0, 80), f: trim(c.fase),
+        r: nomes, a: atrasado ? 1 : 0, v: diasAtraso, i: idadeDias,
+        fa: c.current_phase_age != null ? Math.floor(Number(c.current_phase_age) / 86400) : null,
+        u: c.updated_at ? dias(c.updated_at) : null
+      });
     }
 
     totalAbertos += p.cards.length;
@@ -207,8 +223,69 @@ function montarSnapshot(pipesBrutos, cfg) {
     porSetor: setores,
     porResponsavel: responsaveis.slice(0, 15),
     // Universo completo (tela de config usa pra listar todo mundo)
-    responsaveis
+    responsaveis,
+    // --- só Visão Executiva (a rota da TV remove) ---
+    cards: todosCards,
+    setorPorResp: Object.fromEntries(cfg.setorPorUsuario),
+    camposExt,
+    pipesComErro: pipesBrutos.filter(p => p.erro).map(p => p.nome)
   };
+}
+
+// ---------- histórico diário (migration 137) ----------
+// Uma linha por dia × (total | pipe | setor); a última leitura do dia vence.
+// Ciclo com pipe falhando NÃO grava — o pipe viria zerado e a série cairia à toa.
+async function gravarHistorico(Pg, snap) {
+  if (!Pg || snap.pipesComErro.length) return;
+  const nomePipe = new Map(snap.pipes.map(p => [p.id, p.nome]));
+  const acc = new Map();
+  const somar = (tipo, chave, nome, c) => {
+    const k = `${tipo}|${chave}`;
+    if (!acc.has(k)) acc.set(k, { tipo, chave, nome, abertos: 0, atrasados: 0, mais90: 0 });
+    const a = acc.get(k);
+    a.abertos++; if (c.a) a.atrasados++; if (c.i > 90) a.mais90++;
+  };
+  snap.pipes.forEach(p => acc.set(`pipe|${p.id}`, { tipo: 'pipe', chave: p.id, nome: p.nome, abertos: 0, atrasados: 0, mais90: 0 }));
+  for (const c of snap.cards) {
+    somar('total', '*', 'TOTAL', c);
+    somar('pipe', c.p, nomePipe.get(c.p), c);
+    const setores = [...new Set(c.r.map(n => snap.setorPorResp[n]).filter(Boolean))];
+    (setores.length ? setores : ['(SEM SETOR)']).forEach(s => somar('setor', s, s, c));
+  }
+  if (!acc.has('total|*')) acc.set('total|*', { tipo: 'total', chave: '*', nome: 'TOTAL', abertos: 0, atrasados: 0, mais90: 0 });
+
+  const params = {};
+  const values = [...acc.values()].map((r, i) => {
+    Object.assign(params, {
+      [`t${i}`]: r.tipo, [`c${i}`]: String(r.chave).slice(0, 80), [`n${i}`]: String(r.nome || '').slice(0, 120),
+      [`a${i}`]: r.abertos, [`x${i}`]: r.atrasados, [`m${i}`]: r.mais90
+    });
+    return `((NOW() AT TIME ZONE 'America/Sao_Paulo')::date, @t${i}, @c${i}, @n${i}, @a${i}, @x${i}, @m${i}, NOW())`;
+  });
+  await Pg.connectAndQuery(`
+    INSERT INTO tab_painel_historico (dia, tipo, chave, nome, abertos, atrasados, mais_90d, atualizado_em)
+    VALUES ${values.join(',\n')}
+    ON CONFLICT (dia, tipo, chave) DO UPDATE SET
+      nome = EXCLUDED.nome, abertos = EXCLUDED.abertos, atrasados = EXCLUDED.atrasados,
+      mais_90d = EXCLUDED.mais_90d, atualizado_em = NOW()`, params);
+}
+
+// Série dos últimos N dias (Visão Executiva). Tolerante à migration 137 ausente.
+async function lerHistorico(Pg, dias = 120) {
+  try {
+    const rows = await Pg.connectAndQuery(`
+      SELECT to_char(dia, 'YYYY-MM-DD') dia, tipo, chave, abertos, atrasados, mais_90d
+        FROM tab_painel_historico
+       WHERE dia >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date - @dias::int
+       ORDER BY dia`, { dias });
+    return rows.map(r => ({
+      dia: r.dia, tipo: trim(r.tipo), chave: trim(r.chave),
+      abertos: Number(r.abertos), atrasados: Number(r.atrasados), mais90: Number(r.mais_90d)
+    }));
+  } catch (e) {
+    console.warn('[pipefy-painel] tab_painel_historico indisponivel (migration 137?):', e.message);
+    return [];
+  }
 }
 
 // ---------- cache single-flight ----------
@@ -227,11 +304,21 @@ async function construir(Pg) {
     try {
       pipesBrutos.push({ ...alvo, cards: await cardsAbertosDoPipe(alvo) });
     } catch (e) {
+      // Pipefy recusou updated_at/current_phase_age: desliga os extras e repete o pipe
+      if (camposExt && /updated_at|current_phase_age/i.test(e.message)) {
+        camposExt = false;
+        console.warn(`[pipefy-painel] campos extras recusados (${e.message}) — seguindo sem "dias na fase"`);
+        try { pipesBrutos.push({ ...alvo, cards: await cardsAbertosDoPipe(alvo) }); continue; }
+        catch (e2) { e = e2; }
+      }
       console.warn(`[pipefy-painel] pipe ${alvo.nome} falhou (${e.message}) — segue sem ele neste ciclo`);
       pipesBrutos.push({ ...alvo, cards: [], erro: true });
     }
   }
-  return montarSnapshot(pipesBrutos, cfg);
+  const snap = montarSnapshot(pipesBrutos, cfg);
+  gravarHistorico(Pg, snap).catch(e =>
+    console.warn('[pipefy-painel] historico nao gravado (migration 137?):', e.message));
+  return snap;
 }
 
 // Snapshot vigente (cache + single-flight); em falha serve o último bom.
@@ -254,4 +341,10 @@ async function obterSnapshot(Pg) {
 // Tela de config salva -> derruba o cache pro próximo GET refletir na hora
 function invalidarCache() { cache = null; }
 
-module.exports = { disponivel, obterSnapshot, listarPipesOrg, invalidarCache };
+// Resposta da TV: sem os campos pesados da Visão Executiva
+function paraTv(snap) {
+  const { cards, setorPorResp, camposExt: _c, pipesComErro, ...resto } = snap;
+  return resto;
+}
+
+module.exports = { disponivel, obterSnapshot, listarPipesOrg, invalidarCache, lerHistorico, paraTv };

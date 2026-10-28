@@ -16,7 +16,7 @@ module.exports = (app) => ({
     }
     try {
       const snap = await PipefyPainel.obterSnapshot(app.services.Pg);
-      return res.json(snap);
+      return res.json(PipefyPainel.paraTv(snap));
     } catch (err) {
       console.error('gerencia/painel-vista:', err);
       return res.status(502).json({ message: 'Falha ao consultar o Pipefy: ' + err.message });
