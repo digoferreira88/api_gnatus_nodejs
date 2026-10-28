@@ -304,8 +304,11 @@ const CRON_NFSE_ADN = process.env.CRON_NFSE_ADN || '35 8-19/2 * * 1-5';  // :35,
 // Portal do cliente: espelho completo de 2 em 2h (varre ~40 mil títulos no
 // Protheus) e publicação curta a cada 10 min (é por ela que os pedidos de 2ª via
 // do cliente voltam para a fila do financeiro).
-const CRON_PORTAL_ESPELHO = process.env.CRON_PORTAL_ESPELHO || '40 7-19/2 * * 1-5';
-const CRON_PORTAL_PEDIDOS = process.env.CRON_PORTAL_PEDIDOS || '*/10 7-20 * * *';
+// ⚠️ A VPS roda em UTC e o node não tem TZ definida, então todo cron deste
+// arquivo é em UTC — 3 horas à frente do horário de Brasília. Os horários
+// abaixo já estão convertidos: 10h-22h UTC = 07h-19h aqui.
+const CRON_PORTAL_ESPELHO = process.env.CRON_PORTAL_ESPELHO || '40 10-22/2 * * 1-5';
+const CRON_PORTAL_PEDIDOS = process.env.CRON_PORTAL_PEDIDOS || '*/10 10-23 * * *';
 
 // (Transmite REMOVIDO em 28/07/2026: o SEFAZ DF-e passou a ser a fonte da Visão 3
 //  do Painel Fiscal, então o adapter, a tela e o token de sessão foram retirados.
@@ -542,7 +545,8 @@ function start(app) {
   // Portal do cliente — dois ritmos, porque as duas coisas custam MUITO diferente.
   //
   // O espelho completo varre ~40 mil títulos no Protheus: roda de 2 em 2 horas,
-  // no horário comercial, que é quando entram baixas e retornos do banco.
+  // no horário comercial DAQUI (o cron é em UTC, ver CRON_PORTAL_ESPELHO), que
+  // é quando entram baixas e retornos do banco.
   //
   // A publicação sozinha é barata e é por ela que os pedidos de 2ª via do
   // cliente chegam na fila do financeiro (a resposta da publicação é o único
