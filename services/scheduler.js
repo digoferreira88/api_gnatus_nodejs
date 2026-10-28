@@ -301,6 +301,12 @@ const CRON_DFE = '25 * * * *';  // todo :25
 // certificado (NFSE_CERT_PATH) E com NFSE_ADN_ATIVO=1 (fica OFF até liberarem).
 const CRON_NFSE_ADN = process.env.CRON_NFSE_ADN || '35 8-19/2 * * 1-5';  // :35, 08h-19h de 2 em 2h, seg-sex
 
+// Portal do cliente: espelho completo de 2 em 2h (varre ~40 mil títulos no
+// Protheus) e publicação curta a cada 10 min (é por ela que os pedidos de 2ª via
+// do cliente voltam para a fila do financeiro).
+const CRON_PORTAL_ESPELHO = process.env.CRON_PORTAL_ESPELHO || '40 7-19/2 * * 1-5';
+const CRON_PORTAL_PEDIDOS = process.env.CRON_PORTAL_PEDIDOS || '*/10 7-20 * * *';
+
 // (Transmite REMOVIDO em 28/07/2026: o SEFAZ DF-e passou a ser a fonte da Visão 3
 //  do Painel Fiscal, então o adapter, a tela e o token de sessão foram retirados.
 //  O alerta por e-mail já havia saído em 07/2026.)
@@ -531,6 +537,45 @@ function start(app) {
     console.log(`[scheduler] nfse-adn agendado: cron "${CRON_NFSE_ADN}"`);
   } else {
     console.log('[scheduler] nfse-adn: NFSE_CERT_PATH ausente ou NFSE_ADN_ATIVO!=1 — não agendado');
+  }
+
+  // Portal do cliente — dois ritmos, porque as duas coisas custam MUITO diferente.
+  //
+  // O espelho completo varre ~40 mil títulos no Protheus: roda de 2 em 2 horas,
+  // no horário comercial, que é quando entram baixas e retornos do banco.
+  //
+  // A publicação sozinha é barata e é por ela que os pedidos de 2ª via do
+  // cliente chegam na fila do financeiro (a resposta da publicação é o único
+  // caminho de volta). A cada 10 minutos o cliente não fica esperando.
+  if (jobs.portalEspelho) jobs.portalEspelho.cancel();
+  if (jobs.portalPedidos) jobs.portalPedidos.cancel();
+  if (String(process.env.PORTAL_URL || '').trim() && String(process.env.PORTAL_TOKEN || '').trim()) {
+    jobs.portalEspelho = schedule.scheduleJob(CRON_PORTAL_ESPELHO, async () => {
+      try {
+        const Portal = require('./portalEspelho');
+        const r = await Portal.rodar(app, { por: null });
+        console.log('[scheduler] portal-espelho:', JSON.stringify({
+          titulos: r.titulos, enviados: r.enviados, pdfs: r.pdfs_enviados,
+          pedidos: r.solicitacoes_recebidas, status: r.status, erro: r.erro
+        }));
+      } catch (err) {
+        console.error('[scheduler] erro no portal-espelho:', err.message);
+      }
+    });
+    jobs.portalPedidos = schedule.scheduleJob(CRON_PORTAL_PEDIDOS, async () => {
+      try {
+        const Portal = require('./portalEspelho');
+        const r = await Portal.publicar(app);
+        if (r.enviados || r.pdfs_enviados || r.solicitacoes_recebidas) {
+          console.log('[scheduler] portal-pedidos:', JSON.stringify(r));
+        }
+      } catch (err) {
+        console.error('[scheduler] erro no portal-pedidos:', err.message);
+      }
+    });
+    console.log(`[scheduler] portal-espelho agendado: cron "${CRON_PORTAL_ESPELHO}" · pedidos "${CRON_PORTAL_PEDIDOS}"`);
+  } else {
+    console.log('[scheduler] portal do cliente: PORTAL_URL/PORTAL_TOKEN ausentes — não agendado');
   }
 }
 
