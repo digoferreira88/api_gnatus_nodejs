@@ -228,7 +228,11 @@ async function gravar(Pg, itens) {
          publicado_em = CASE WHEN tab_portal_espelho.saldo <> EXCLUDED.saldo
                                OR tab_portal_espelho.situacao <> EXCLUDED.situacao
                                OR COALESCE(tab_portal_espelho.linha_digitavel, '') <> COALESCE(EXCLUDED.linha_digitavel, '')
-                             THEN NULL ELSE tab_portal_espelho.publicado_em END`,
+                             THEN NULL ELSE tab_portal_espelho.publicado_em END,
+         -- Mudou a linha digitável: o PDF que está no portal virou papel velho.
+         pdf_em = CASE WHEN COALESCE(tab_portal_espelho.linha_digitavel, '') <> COALESCE(EXCLUDED.linha_digitavel, '')
+                         OR NOT EXCLUDED.pode_2via
+                       THEN NULL ELSE tab_portal_espelho.pdf_em END`,
       params);
   }
 
@@ -241,27 +245,125 @@ async function gravar(Pg, itens) {
 }
 
 // ---------------------------------------------------------------- publicação
-async function publicar(Pg) {
+
+// Quantos PDFs cada rodada gera. Cada um custa duas consultas ao Protheus mais o
+// render; fazer os ~400 de uma vez seguraria a publicação por minutos. O que
+// sobra vai na rodada seguinte — `pdf_em IS NULL` é a fila.
+const PDFS_POR_RODADA = Number(process.env.PORTAL_PDFS_POR_RODADA) || 120;
+
+// O cliente precisa baixar o boleto, e o portal não pode pedir nada à intranet.
+// Então o PDF viaja no espelho, em base64, só para quem tem 2ª via liberada.
+async function anexarPdfs(app) {
+  const { Pg } = app.services;
+  const BoletoDocumento = require('./boletoDocumento');
+
+  const alvos = await Pg.connectAndQuery(
+    `SELECT e.id, e.ref,
+            (SELECT MAX(r.id)
+               FROM tab_boleto_envio_lote_retorno r
+              WHERE COALESCE(r.prefixo, '') = COALESCE(e.prefixo, '')
+                AND r.numero = e.numero
+                AND COALESCE(r.parcela, '') = COALESCE(e.parcela, '')
+                AND r.cliente_cod = e.cliente_cod AND r.cliente_loja = e.cliente_loja
+                AND COALESCE(r.nosso_numero, '') <> ''
+                AND r.status_banco = 'REGISTRADO') AS retorno_id
+       FROM tab_portal_espelho e
+      WHERE e.pode_2via AND e.pdf_em IS NULL
+      ORDER BY e.vencimento
+      LIMIT @lim`, { lim: PDFS_POR_RODADA });
+
+  const pdfs = new Map();   // ref -> base64
+  const ids = [];           // ids do espelho que ficam com pdf_em preenchido
+  let falhas = 0;
+
+  for (const a of alvos) {
+    if (!a.retorno_id) {
+      // Tem 2ª via liberada mas não achamos o registro do banco: nada a gerar.
+      // Marcar evita tentar de novo a cada rodada; se o boleto for registrado
+      // depois, a linha digitável muda e o `pdf_em` volta a NULL.
+      ids.push(a.id);
+      falhas++;
+      continue;
+    }
+    try {
+      const r = await BoletoDocumento.gerar(app, a.retorno_id);
+      if (r.ok) {
+        pdfs.set(a.ref, r.pdf.toString('base64'));
+        ids.push(a.id);
+      } else {
+        ids.push(a.id);
+        falhas++;
+        console.warn(`portalEspelho: PDF de ${a.ref} recusado — ${r.body?.message || r.status}`);
+      }
+    } catch (e) {
+      falhas++;   // sem marcar: erro de infra merece nova tentativa
+      console.warn(`portalEspelho: PDF de ${a.ref} falhou — ${e.message}`);
+    }
+  }
+  return { pdfs, ids, falhas };
+}
+
+async function publicar(app) {
+  const { Pg } = app.services;
   const destino = trim(process.env.PORTAL_URL);
   const token = trim(process.env.PORTAL_TOKEN);
   if (!destino || !token) return { status: 'inerte', enviados: 0, destino: null };
 
   const pendentes = await Pg.connectAndQuery(
     `SELECT * FROM tab_portal_espelho WHERE publicado_em IS NULL ORDER BY id LIMIT 5000`, {});
-  if (!pendentes.length) return { status: 'enviado', enviados: 0, destino };
 
+  const { pdfs, ids: idsPdf, falhas: pdfFalhas } = await anexarPdfs(app);
+
+  // Um título pode estar nas duas listas (mudou e ainda deve PDF). Junta por ref
+  // para não mandar a mesma linha duas vezes.
+  const porRef = new Map(pendentes.map(p => [p.ref, p]));
+  if (pdfs.size) {
+    const faltantes = [...pdfs.keys()].filter(ref => !porRef.has(ref));
+    if (faltantes.length) {
+      const extras = await Pg.connectAndQuery(
+        `SELECT * FROM tab_portal_espelho WHERE ref = ANY(@refs::text[])`, { refs: faltantes });
+      extras.forEach(e => porRef.set(e.ref, e));
+    }
+  }
+  const itens = [...porRef.values()].map(i => {
+    const pdf = pdfs.get(i.ref);
+    return pdf ? { ...i, boleto_pdf: pdf } : i;
+  });
+
+  // Pedidos do portal que já entraram na fila do financeiro e ainda não foram
+  // confirmados a ele. Sem isso o portal reenviaria o mesmo pedido para sempre.
+  const aConfirmar = await Pg.connectAndQuery(
+    `SELECT origem_id FROM tab_boleto_2via_solicitacao
+      WHERE origem = 'portal' AND origem_id IS NOT NULL AND confirmado_em IS NULL
+      LIMIT 500`, {});
+  const confirmados = aConfirmar.map(c => trim(c.origem_id)).filter(Boolean);
+
+  // Publica mesmo sem nada novo: é nesta resposta que os pedidos do cliente
+  // chegam, e num dia sem movimento eles ficariam parados no portal.
   const resp = await fetch(`${destino.replace(/\/+$/, '')}/espelho`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ geradoEm: new Date().toISOString(), itens: pendentes })
+    body: JSON.stringify({ geradoEm: new Date().toISOString(), itens, confirmados })
   });
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
     throw new Error(`portal respondeu ${resp.status}: ${txt.slice(0, 200)}`);
   }
+
   const ids = pendentes.map(p => p.id);
-  await Pg.connectAndQuery(
-    `UPDATE tab_portal_espelho SET publicado_em = NOW() WHERE id = ANY(@ids::int[])`, { ids });
+  if (ids.length) {
+    await Pg.connectAndQuery(
+      `UPDATE tab_portal_espelho SET publicado_em = NOW() WHERE id = ANY(@ids::int[])`, { ids });
+  }
+  if (idsPdf.length) {
+    await Pg.connectAndQuery(
+      `UPDATE tab_portal_espelho SET pdf_em = NOW() WHERE id = ANY(@ids::int[])`, { ids: idsPdf });
+  }
+  if (confirmados.length) {
+    await Pg.connectAndQuery(
+      `UPDATE tab_boleto_2via_solicitacao SET confirmado_em = NOW()
+        WHERE origem_id = ANY(@ids::text[])`, { ids: confirmados });
+  }
 
   // A conexão é sempre iniciada daqui, então os pedidos de 2ª via que o cliente
   // fez no portal voltam NA RESPOSTA desta publicação — assim não precisamos
@@ -274,7 +376,15 @@ async function publicar(Pg) {
     console.warn('portalEspelho: resposta sem pedidos legíveis —', e.message);
   }
 
-  return { status: 'enviado', enviados: ids.length, destino, solicitacoes_recebidas: recebidas };
+  return {
+    status: 'enviado',
+    enviados: ids.length,
+    pdfs_enviados: pdfs.size,
+    pdfs_sem_boleto: pdfFalhas,
+    confirmados: confirmados.length,
+    destino,
+    solicitacoes_recebidas: recebidas
+  };
 }
 
 // Pedidos de 2ª via vindos do portal. Idempotente pelo id de lá: a mesma
@@ -312,7 +422,7 @@ async function rodar(app, { por } = {}) {
     const m = await montar(app);
     resumo = m.resumo;
     await gravar(Pg, m.itens);
-    pub = await publicar(Pg);
+    pub = await publicar(app);
   } catch (e) {
     erro = e.message;
     pub.status = 'erro';
