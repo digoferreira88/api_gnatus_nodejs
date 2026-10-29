@@ -1,5 +1,6 @@
 // GET /treinamentos/admin/participantes?treinamentoId=&sessaoId=&modalidade=&departamento=&status=&q=
 // Lista de participantes (para consulta + exportação no front). Perm 20001.
+// Traz também a presença (lista de presença marcada na aba Participantes).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([20001, 0]);
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -27,11 +28,13 @@ module.exports = (app) => ({
       const rows = await Pg.connectAndQuery(`
         SELECT i.id, i.colaborador_nome, i.colaborador_email, i.departamento, i.cargo,
                i.modalidade, i.status, i.criado_em,
+               i.presente, i.presenca_em, u.nome presenca_por_nome,
                t.id treinamento_id, t.titulo,
-               s.id sessao_id, s.data, s.hora_inicio, s.hora_fim
+               s.id sessao_id, s.data, s.hora_inicio, s.hora_fim, s.local
           FROM tab_treina_inscricao i
           JOIN tab_treina_treinamento t ON t.id=i.treinamento_id
           JOIN tab_treina_sessao s ON s.id=i.sessao_id
+          LEFT JOIN tab_intranet_usr u ON u.id=i.presenca_por
           ${where}
          ORDER BY t.titulo, s.data, i.colaborador_nome
          LIMIT 5000`, p);
@@ -41,8 +44,9 @@ module.exports = (app) => ({
         departamento: trim(r.departamento), cargo: trim(r.cargo),
         treinamentoId: r.treinamento_id, treinamento: r.titulo,
         sessaoId: r.sessao_id, data: r.data ? new Date(r.data).toISOString().slice(0, 10) : '',
-        horaInicio: trim(r.hora_inicio), horaFim: trim(r.hora_fim),
-        modalidade: trim(r.modalidade), status: trim(r.status), inscritoEm: r.criado_em
+        horaInicio: trim(r.hora_inicio), horaFim: trim(r.hora_fim), local: trim(r.local),
+        modalidade: trim(r.modalidade), status: trim(r.status), inscritoEm: r.criado_em,
+        presente: !!r.presente, presencaEm: r.presenca_em || null, presencaPor: trim(r.presenca_por_nome)
       }));
       return res.json({ total: participantes.length, participantes });
     } catch (err) {

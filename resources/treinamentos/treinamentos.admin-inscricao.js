@@ -1,6 +1,7 @@
-// POST /treinamentos/admin/inscricao/:id  body: { acao: 'cancelar'|'mover', sessaoId? }
-// Admin cancela uma inscrição (libera vaga) ou move o participante de sessão
-// (troca de vaga atômica: pega a nova só se houver espaço, devolve a antiga). Perm 20001.
+// POST /treinamentos/admin/inscricao/:id  body: { acao: 'cancelar'|'mover'|'presenca', sessaoId?, presente? }
+// Admin cancela uma inscrição (libera vaga), move o participante de sessão
+// (troca de vaga atômica: pega a nova só se houver espaço, devolve a antiga)
+// ou marca/desmarca a presença (lista de presença). Perm 20001.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([20001, 0]);
 const Auditoria = require('../../services/auditoria');
@@ -29,6 +30,20 @@ module.exports = (app) => ({
          WHERE i.id=@id AND i.status='ativa'`, { id });
       if (!pre.length) return res.status(404).json({ message: 'Inscrição ativa não encontrada.' });
       const p = pre[0];
+
+      // Lista de presença: marca/desmarca quem compareceu. Não mexe em vaga,
+      // agenda nem e-mail — só registra quem marcou e quando.
+      if (acao === 'presenca') {
+        const presente = req.body?.presente === true || req.body?.presente === 'true';
+        const r = await Pg.connectAndQuery(`
+          UPDATE tab_treina_inscricao
+             SET presente=@presente::boolean, presenca_em=NOW(), presenca_por=@uid::int
+           WHERE id=@id AND status='ativa'
+          RETURNING presente, presenca_em`, { id, presente, uid: user?.id ? Number(user.id) : null });
+        if (!r.length) return res.status(404).json({ message: 'Inscrição ativa não encontrada.' });
+        Auditoria.registrar(app, { modulo: 'Treinamentos', submodulo: 'Presença', acao: presente ? 'MARCAR_PRESENCA' : 'DESMARCAR_PRESENCA', severidade: 'INFO', req, entidade: 'inscricao', entidadeId: String(id), descricao: `${presente ? 'Presença marcada' : 'Presença desmarcada'}: ${trim(p.colaborador_nome)} em "${p.titulo}"` });
+        return res.json({ ok: true, acao, presente: !!r[0].presente, presencaEm: r[0].presenca_em, presencaPor: trim(user?.nome) });
+      }
 
       if (acao === 'cancelar') {
         await Pg.connectAndQuery(`
@@ -87,7 +102,7 @@ module.exports = (app) => ({
         return res.json({ ok: true, acao, sessaoId: nova, agendaAtualizada: !!agenda.ok });
       }
 
-      return res.status(400).json({ message: 'ação inválida (cancelar|mover).' });
+      return res.status(400).json({ message: 'ação inválida (cancelar|mover|presenca).' });
     } catch (err) {
       console.error('treinamentos/admin-inscricao:', err.message);
       return res.status(500).json({ message: 'Erro: ' + err.message });
