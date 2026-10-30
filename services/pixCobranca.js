@@ -31,7 +31,20 @@ const JUROS_PERC = N(process.env.PIX_JUROS_PERC) || 1;
 // cliente que guarda o QR para pagar "na semana que vem".
 const VALIDADE_DIAS = Number(process.env.PIX_VALIDADE_DIAS) || 60;
 
-const hoje = () => new Date().toISOString().slice(0, 10);
+const hoje = () => diaIso(new Date());
+
+// O Postgres devolve DATE como objeto Date, e o Protheus devolve texto. Tratar
+// os dois como string dava "Wed Oct 2" no lugar da data — e isso ia para o
+// banco dentro da cobrança.
+function diaIso(v) {
+  if (!v) return null;
+  if (v instanceof Date) {
+    const p = (n) => String(n).padStart(2, '0');
+    return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`;
+  }
+  const m = String(v).trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? m[0] : null;
+}
 
 // --------------------------------------------------------------- criação
 // Cria a cobrança de um título do espelho. Idempotente duas vezes: pelo
@@ -88,12 +101,14 @@ async function criar(app, { ref, origem, origemId }) {
       multa: MULTA_PERC, juros: JUROS_PERC
     });
 
-  const venceu = String(t.vencimento).slice(0, 10) < hoje();
+  const vencimento = diaIso(t.vencimento);
+  if (!vencimento) return { erro: 'Título sem data de vencimento utilizável.' };
+  const venceu = vencimento < hoje();
   try {
     const r = await BB.criarCobv({
       txid,
       valor: N(t.saldo),
-      vencimento: String(t.vencimento).slice(0, 10),
+      vencimento,
       validadeDias: VALIDADE_DIAS,
       devedor: doc.length === 14
         ? { cnpj: doc, nome: trim(t.cliente_nome) }
@@ -120,8 +135,7 @@ async function criar(app, { ref, origem, origemId }) {
         loc: trim(r.loc?.location) || null,
         locId: r.loc?.id != null ? Number(r.loc.id) : null,
         // A cobv vale até `validadeAposVencimento` dias depois do vencimento.
-        expira: new Date(new Date(String(t.vencimento).slice(0, 10) + 'T12:00:00').getTime()
-          + VALIDADE_DIAS * 86400000)
+        expira: new Date(new Date(vencimento + 'T12:00:00Z').getTime() + VALIDADE_DIAS * 86400000)
       });
     return { cobranca: upd[0] };
   } catch (e) {
