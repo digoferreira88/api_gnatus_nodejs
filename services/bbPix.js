@@ -205,7 +205,20 @@ async function cancelarCobv(txid) {
 // ao banco em vez de esperar um webhook, e assim nenhuma porta da internet
 // precisa chegar na intranet.
 async function listarRecebidos({ inicio, fim, txid, pagina = 0 }) {
-  if (CFG().simular) return { pix: [], parametros: { paginacao: { quantidadeDePaginas: 0 } }, simulado: true };
+  if (CFG().simular) {
+    // Gancho de teste: BB_PIX_SIMULAR_PAGOS=txid1,txid2 faz a conciliação achar
+    // esses pagamentos. É como se vê a fila do financeiro encher sem precisar
+    // de credencial nem de dinheiro de verdade.
+    const fingir = trim(process.env.BB_PIX_SIMULAR_PAGOS).split(',').map(trim).filter(Boolean);
+    const pix = fingir.map(t => ({
+      endToEndId: ('E00000000' + t).replace(/[^A-Za-z0-9]/g, '').slice(0, 32).padEnd(32, '0'),
+      txid: t,
+      valor: trim(process.env.BB_PIX_SIMULAR_VALOR) || '0.01',
+      horario: new Date().toISOString(),
+      pagador: { cpf: '00000000000', nome: 'PAGADOR SIMULADO' }
+    }));
+    return { pix, parametros: { paginacao: { quantidadeDePaginas: pix.length ? 1 : 0 } }, simulado: true };
+  }
   const params = {
     inicio: new Date(inicio).toISOString(),
     fim: new Date(fim).toISOString(),
