@@ -321,6 +321,9 @@ const CRON_PORTAL_PEDIDOS = process.env.CRON_PORTAL_PEDIDOS || '*/10 10-23 * * *
 //    saber que entrou dinheiro — daí a conciliação de 2 em 2 minutos.
 const CRON_PORTAL_PIX = process.env.CRON_PORTAL_PIX || '*/30 * * * * *';
 const CRON_PIX_CONCILIAR = process.env.CRON_PIX_CONCILIAR || '*/2 * * * *';
+// Universidade · RH — espelho de cargos/colaboradores do Protheus + requisitos de treinamento.
+// A VPS roda em UTC: '30 9 * * *' = 06:30 de Brasília (antes do expediente). Desliga com UNI_SYNC_ATIVO=0.
+const CRON_UNI_SYNC = process.env.CRON_UNI_SYNC || '30 9 * * *';
 
 // (Transmite REMOVIDO em 28/07/2026: o SEFAZ DF-e passou a ser a fonte da Visão 3
 //  do Painel Fiscal, então o adapter, a tela e o token de sessão foram retirados.
@@ -649,6 +652,26 @@ function start(app) {
     console.log(`[scheduler] pix-conciliar agendado: cron "${CRON_PIX_CONCILIAR}"${BBPix.simulando() ? ' (SIMULADO)' : ''}`);
   } else {
     console.log('[scheduler] pix: BB não configurado — não agendado');
+  }
+
+  // Universidade · RH — sincronização diária com o Protheus (só leitura no ERP).
+  if (jobs.uniSync) jobs.uniSync.cancel();
+  if (String(process.env.UNI_SYNC_ATIVO || '1') !== '0') {
+    jobs.uniSync = schedule.scheduleJob(CRON_UNI_SYNC, async () => {
+      try {
+        const r = await require('./universidadeRh').sincronizar(app, { origem: 'agendado' });
+        console.log('[scheduler] universidade-sync:', JSON.stringify({
+          ativos: r.colaboradores.ativos, admissoes: r.colaboradores.admissoes,
+          mudancasCargo: r.colaboradores.mudancasCargo, desligamentos: r.colaboradores.desligamentos,
+          requisitosNovos: r.requisitos.novos
+        }));
+      } catch (err) {
+        console.error('[scheduler] erro no universidade-sync:', err.message);
+      }
+    });
+    console.log(`[scheduler] universidade-sync agendado: cron "${CRON_UNI_SYNC}"`);
+  } else {
+    console.log('[scheduler] universidade-sync: UNI_SYNC_ATIVO=0 — não agendado');
   }
 }
 
