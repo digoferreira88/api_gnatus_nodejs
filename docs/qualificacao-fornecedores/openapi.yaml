@@ -1,0 +1,3234 @@
+openapi: 3.0.3
+info:
+  title: Intranet GNATUS — Qualificação de Fornecedores
+  version: "2.0.0"
+  description: |
+    API do módulo de Qualificação e Avaliação de Fornecedores.
+
+    **Base documental:** PRO 7.3.7 — Qualificação de Fornecedor **REV OUT261 (29/10/2026)**,
+    FORM 7.3.21 REV OUT26 (Cadastro e Avaliação de Fornecedores), FORM 7.3.22/7.3.23
+    (avaliação dimensional/funcional), FORM 7.3.24 (Lista de Qualificação de Fornecedores —
+    Monitoramento), FORM 7.3.28 (Requalificação) e FORM 7.4.3.H (Relatório de Inspeção de
+    Recebimento). Referência normativa: ISO 13485:2016 req. 4.2.4 e 7.4; RDC 665/2022 art. 28–37.
+
+    **Decisões da Qualidade/Engenharia de 30/10/2026** (detalhes em `PONTOS-ABERTOS.md`):
+    - Índice P pelas três tabelas do OUT261 (nacional = atraso na entrega; importado = atraso
+      na coleta; antecipação para os dois). IQF máximo = 10.
+    - Nº do relatório de inspeção sequencial.
+    - FORM 7.3.21 com as 36 perguntas oficiais; pergunta em branco = NÃO.
+    - Índice N pelas 3 entregas anteriores do **mesmo fornecedor + item**.
+    - Classe C → bloqueia até o plano de ação da Engenharia (depois, amostragem). Classe D →
+      bloqueia até o plano e depois só inspeção 100%. Classe E (IQF < 5) → reprova e inativa.
+      Inativo não aparece nas listas.
+    - Não crítico fora do monitoramento (sem classe); o recebimento continua registrado.
+    - Sem integração com o ERP: cada bloqueio/liberação gera aviso à Engenharia para
+      inativar/reativar o fornecedor no Protheus.
+    - O fornecedor é qualificado pela criticidade do **item** que fornece (lista de itens
+      críticos A/B/C/D). O fornecedor tem o **conjunto** `criticidades` (vazio = não crítico).
+
+    **Autenticação:** JWT da intranet no cabeçalho `Authorization: Bearer <token>` (o mesmo do
+    login). Exceção: os três endpoints `/qualificacao/publico/ficha/{token}...`, usados pelo
+    fornecedor sem login (com limite por IP).
+
+    **Permissões (hierárquicas — cada nível inclui os anteriores; 0 = admin universal):**
+    | nível | permissão | papel |
+    |---|---|---|
+    | consulta | 23001 | leitura |
+    | inspetor | 23002 | lança recebimento (FORM 7.4.3.H) |
+    | engenharia | 23003 | conduz a qualificação, documentos, plano de ação, itens críticos (PRO 4.1) |
+    | qualidade | 23004 | avalia o questionário, audita, recebe de fornecedor bloqueado com justificativa |
+    | gerente | 23005 | Gerente de Engenharia — assina a aprovação |
+    | admin | 23006 | regras, catálogos, configuração, importação |
+
+    Em cada operação, `x-permissao` indica o nível MÍNIMO exigido; regras mais finas estão na
+    descrição. Sem a permissão a resposta é `403 {"message": "..."}`.
+
+    **Erros:** sempre `{ "message": "..." }`, às vezes com `erros: [...]`, `bloqueios: [...]` ou
+    sinalizadores (`bloqueio`, `exigeJustificativa`, `plano`, `requalificacao`, `documentos`,
+    `auditoria`). Erros internos não expõem detalhes do banco (`500 {"message":"Erro ao <ação>."}`).
+    `503` com `conexao: true` = Protheus temporariamente inacessível.
+servers:
+  - url: https://intranew.gnatus.com.br/api
+security:
+  - bearerAuth: []
+tags:
+  - name: Meta
+  - name: Fornecedores
+  - name: Itens críticos
+  - name: Processo de qualificação
+  - name: Documentos e anexos
+  - name: Formulários do fornecedor (FORM 7.3.21 / 7.3.28)
+  - name: Auditoria, amostra e avaliações
+  - name: Inspeções (FORM 7.4.3.H)
+  - name: Protheus (leitura)
+  - name: Gestão
+  - name: Público (fornecedor)
+
+paths:
+  # ------------------------------------------------------------------ meta
+  /qualificacao/meta:
+    get:
+      tags: [Meta]
+      summary: Dados para montar a tela (níveis do usuário, regra vigente, criticidades, catálogos)
+      x-permissao: consulta
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/NaoAutenticado" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+
+  # ------------------------------------------------------------------ fornecedores
+  /qualificacao/fornecedores:
+    get:
+      tags: [Fornecedores]
+      summary: Lista FORM 7.3.24 (monitoramento), paginada no servidor
+      description: Por padrão só ativos (inativo não aparece — decisão 30/10). Classe só existe para fornecedor crítico.
+      x-permissao: consulta
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: "código, razão social, fantasia ou CNPJ" }
+        - { name: criticidade, in: query, schema: { type: string }, description: "CSV: CRITICOS (qualquer crítico) | NAO (não crítico) | A,B,C,D (fornecedor com QUALQUER das letras)" }
+        - { name: status, in: query, schema: { type: string }, description: "CSV de status_qualificacao" }
+        - { name: classificacao, in: query, schema: { type: string }, description: "CSV de A..E; SEM = sem classe" }
+        - { name: tipo, in: query, schema: { $ref: "#/components/schemas/TipoFornecimento" } }
+        - { name: pendenciaDoc, in: query, schema: { type: string, enum: ["1"] }, description: "críticos com documento obrigatório pendente ou vencido" }
+        - { name: requalificacao, in: query, schema: { type: string, enum: [VENCIDA, VENCENDO, SEM_DATA] }, description: "requalificação anual (PRO 5.10): vencida, vencendo em 60 dias, ou crítico aprovado sem data" }
+        - { name: bloqueio, in: query, schema: { type: string, enum: [PLANO] }, description: "suspensos aguardando plano de ação (classes C/D)" }
+        - { name: auditoria, in: query, schema: { type: string, enum: ["1"] }, description: "com auditoria de acompanhamento sugerida (PRO 5.6.2)" }
+        - { name: ativo, in: query, schema: { type: string, enum: ["1", "0", todos] }, description: "padrão: só ativos" }
+        - { name: aptos, in: query, schema: { type: string, enum: ["1"] }, description: "ativo e APROVADO/APROVADO_COM_RESTRICAO (autocomplete do inspetor)" }
+        - { name: comInspecao, in: query, schema: { type: string, enum: ["1"] } }
+        - { name: ordem, in: query, schema: { type: string, enum: [codigo, razao, iqf, classe, qtd, ultima, status, validade] } }
+        - { name: dir, in: query, schema: { type: string, enum: [asc, desc] } }
+        - { $ref: "#/components/parameters/page" }
+        - { $ref: "#/components/parameters/pageSize" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  linhas: { type: array, items: { $ref: "#/components/schemas/FornecedorLinha" } }
+                  contagens:
+                    type: object
+                    description: "contagens dos ativos (para os chips de filtro)"
+                    properties:
+                      porClasse: { type: object, additionalProperties: { type: integer }, description: "só críticos; '-' = sem classe" }
+                      porStatus: { type: object, additionalProperties: { type: integer } }
+                      porCriticidade:
+                        type: object
+                        properties: { CRITICOS: { type: integer }, NAO: { type: integer }, A: { type: integer }, B: { type: integer }, C: { type: integer }, D: { type: integer } }
+                      bloqueioPlano: { type: integer }
+                      requalVencida: { type: integer }
+                      requalVencendo: { type: integer }
+                      requalSemData: { type: integer }
+                      auditoria: { type: integer }
+                      pendenciaDoc: { type: integer }
+        "401": { $ref: "#/components/responses/NaoAutenticado" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+    post:
+      tags: [Fornecedores]
+      summary: Cadastra fornecedor no módulo e, por padrão, abre a qualificação (INICIAL)
+      description: |
+        - Com `codigo` do Protheus: o cadastro vem da SA2 (o que vier no corpo sobrepõe).
+        - Sem código: qualificação ANTES de o ERP cadastrar → código provisório `P00001`, trocado
+          depois pelo A2_COD na edição.
+        - `naoCritico: true`: cadastro rápido de fornecedor NÃO crítico da SA2 (chegou material e
+          ele não estava no módulo) → entra APROVADO, sem processo. Exige **qualidade** (23004).
+      x-permissao: engenharia
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                codigo: { type: string, description: "A2_COD (6 dígitos; sem zeros à esquerda é aceito)" }
+                razao_social: { type: string }
+                nome_fantasia: { type: string }
+                cnpj: { type: string }
+                pais: { type: string }
+                nacional: { type: boolean, description: "false = importado (P pela data de COLETA)" }
+                endereco: { type: string }
+                cidade: { type: string }
+                estado: { type: string }
+                cep: { type: string }
+                contato_nome: { type: string }
+                contato_email: { type: string }
+                contato_telefone: { type: string }
+                tipo_fornecimento: { $ref: "#/components/schemas/TipoFornecimento" }
+                criticidades: { $ref: "#/components/schemas/Criticidades" }
+                observacoes: { type: string }
+                iniciarQualificacao: { type: boolean, default: true }
+                naoCritico: { type: boolean }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: Cadastrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  fornecedor: { $ref: "#/components/schemas/Fornecedor" }
+                  processo: { allOf: [{ $ref: "#/components/schemas/Processo" }], nullable: true }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { description: "Código não encontrado na SA2 e sem razão social" }
+        "409": { description: "Código já cadastrado no módulo (`id` do existente)" }
+
+  /qualificacao/fornecedores/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Fornecedores]
+      summary: Ficha completa do fornecedor
+      description: |
+        Cadastro, processo de qualificação ou requalificação (andamento das etapas), documentos
+        (com histórico e arquivos enviados pelo fornecedor), formulários, auditorias, amostras,
+        avaliações, IQF (geral e 12 meses), situação do recebimento, plano de ação (classes C/D),
+        requalificação anual e auditoria de acompanhamento sugerida.
+      x-permissao: consulta
+      parameters:
+        - { name: processoId, in: query, schema: { type: integer }, description: "mostra um processo específico (padrão: o aberto, senão o último)" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetalheFornecedor" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+    put:
+      tags: [Fornecedores]
+      summary: Altera cadastro, criticidades, tipo, nacional/importado e avaliação do SGQ
+      description: |
+        - Fornecedor que não está EM_QUALIFICACAO exige `motivo`.
+        - `criticidades` com processo aberto marca a etapa CRITICIDADE como confirmada; mudar o
+          conjunto recalcula a classe sem disparar ações (não crítico sai do monitoramento).
+        - Campos `sgq_*` e `nota_sgq` exigem **qualidade** (23004).
+        - `codigo`: só troca o PROVISÓRIO pelo A2_COD (6 dígitos); as inspeções acompanham.
+      x-permissao: engenharia
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                codigo: { type: string }
+                razao_social: { type: string }
+                nome_fantasia: { type: string }
+                cnpj: { type: string }
+                pais: { type: string }
+                endereco: { type: string }
+                cidade: { type: string }
+                estado: { type: string }
+                cep: { type: string }
+                contato_nome: { type: string }
+                contato_email: { type: string }
+                contato_telefone: { type: string }
+                observacoes: { type: string }
+                nacional: { type: boolean }
+                tipo_fornecimento: { $ref: "#/components/schemas/TipoFornecimento" }
+                criticidades: { $ref: "#/components/schemas/Criticidades" }
+                sgq_bpf: { $ref: "#/components/schemas/SimNao" }
+                sgq_iso13485: { $ref: "#/components/schemas/SimNao" }
+                sgq_iso9001: { $ref: "#/components/schemas/SimNao" }
+                sgq_acordo: { $ref: "#/components/schemas/SimNao" }
+                sgq_questionario: { $ref: "#/components/schemas/SimNao" }
+                nota_sgq: { type: number, nullable: true }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK (`alterado:false` quando nada mudou)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  fornecedor: { $ref: "#/components/schemas/Fornecedor" }
+                  alterado: { type: boolean }
+                  mudancas: { type: array, items: { type: string } }
+                  recalculo: { $ref: "#/components/schemas/Recalculo" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Código do Protheus já pertence a outro fornecedor" }
+
+  /qualificacao/fornecedores/{id}/status:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Fornecedores]
+      summary: Suspender, reativar, inativar ou ativar (sempre com motivo)
+      description: |
+        **REATIVAR** (só de SUSPENSO) segue o caminho de liberação de cada tipo de suspensão:
+        - `PLANO_ACAO_C`/`PLANO_ACAO_D` → 409 `{plano:true}`: libere registrando o plano (`PUT /plano-iqf`);
+        - `REQUALIFICACAO` → 409 `{requalificacao:true}`: libera ao aprovar o FORM 7.3.28;
+        - `DOCUMENTO` com documento ainda vencido → 409 `{documentos:true}`;
+        - fornecedor em classe C/D sem plano registrado → 409 `{plano:true}`;
+        - demais: PRO 5.6.2 exige auditoria de acompanhamento REALIZADA (conforme) depois da
+          suspensão, ou `dispensarAuditoria:true` + `justificativaAuditoria` — senão 400 `{auditoria:true}`.
+        Volta ao status da última aprovação (com ou sem restrição), ou ao `status` informado.
+        Gera aviso "[Liberar no Protheus]". REPROVADO não se reativa aqui (409): abre-se processo REATIVACAO.
+
+        **SUSPENDER** (tipo MANUAL) gera aviso "[Bloquear no Protheus]". **INATIVAR/ATIVAR** tira/volta
+        o fornecedor das listas e do recebimento.
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acao, motivo]
+              properties:
+                acao: { type: string, enum: [SUSPENDER, REATIVAR, INATIVAR, ATIVAR] }
+                motivo: { type: string }
+                status: { type: string, enum: [APROVADO, APROVADO_COM_RESTRICAO], description: "REATIVAR: força o status de destino" }
+                dispensarAuditoria: { type: boolean }
+                justificativaAuditoria: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  fornecedor: { $ref: "#/components/schemas/Fornecedor" }
+        "400":
+          description: "Motivo ausente, ação inválida, ou `{auditoria:true}` (reativação pede auditoria de acompanhamento ou dispensa justificada)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErroReativar" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409":
+          description: "Estado não permite a ação, ou o caminho de liberação é outro (`plano` | `requalificacao` | `documentos`)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErroReativar" }
+
+  /qualificacao/fornecedores/{id}/plano-iqf:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    put:
+      tags: [Fornecedores]
+      summary: Registra o plano de ação do fornecedor (classes C/D) — libera o recebimento
+      description: |
+        Decisão de 30/10: "campo para marcar como plano de ação e local para anexar; sem plano,
+        impedir recebimento". O arquivo vai antes em `POST /anexos` (entidade `fornecedor`,
+        categoria `PLANO_ACAO`). Registrado o plano, se o fornecedor estava SUSPENSO por
+        `PLANO_ACAO_C`/`PLANO_ACAO_D`, volta ao status da última aprovação:
+        - classe C → volta a receber por amostragem;
+        - classe D → só com inspeção de 100% do lote (`inspecao_100` continua ligado).
+        Gera aviso "[Liberar no Protheus]".
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plano_acao_iqf]
+              properties:
+                plano_acao_iqf: { type: string }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  fornecedor: { $ref: "#/components/schemas/Fornecedor" }
+                  liberado: { type: boolean, description: "estava bloqueado por plano e foi liberado" }
+                  inspecao100: { type: boolean }
+                  semAnexo: { type: boolean, description: "nenhum anexo PLANO_ACAO desde a suspensão (aviso, não bloqueia)" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/fornecedores/{id}/itens-fornecidos:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Fornecedores, Itens críticos]
+      summary: Itens entregues (NFs de entrada, SD1) × lista de itens críticos → criticidades sugeridas
+      description: |
+        "O fornecedor é qualificado pela criticidade do item que fornece." Código provisório
+        devolve `itens: []` e `aviso`. Leitura do Protheus.
+      x-permissao: consulta
+      parameters:
+        - { name: meses, in: query, schema: { type: integer, default: 24, minimum: 1, maximum: 60 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meses: { type: integer }
+                  aviso: { type: string }
+                  itens:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        produto: { type: string }
+                        descricao: { type: string }
+                        tipo: { type: string }
+                        notas: { type: integer }
+                        quantidade: { type: number }
+                        ultima: { type: string, format: date, nullable: true }
+                        criticidade: { allOf: [{ $ref: "#/components/schemas/Criticidade" }], nullable: true }
+                  sugeridas: { $ref: "#/components/schemas/Criticidades" }
+                  faltando: { allOf: [{ $ref: "#/components/schemas/Criticidades" }], description: "fornece item crítico sem estar qualificado nessa criticidade" }
+                  semItem: { allOf: [{ $ref: "#/components/schemas/Criticidades" }], description: "qualificado numa criticidade sem item no período" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "503": { $ref: "#/components/responses/ProtheusIndisponivel" }
+
+  /qualificacao/fornecedores/{id}/historico:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Fornecedores]
+      summary: Todas as inspeções do fornecedor, série mensal do IQF e linha do tempo de NCs
+      x-permissao: consulta
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fornecedor:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      codigo: { type: string }
+                      razao_social: { type: string }
+                      iqf_medio: { type: number, nullable: true }
+                      qtd_inspecoes: { type: integer }
+                      classificacao: { $ref: "#/components/schemas/Classe" }
+                  inspecoes: { type: array, items: { $ref: "#/components/schemas/InspecaoLinha" } }
+                  serie:
+                    type: array
+                    description: "datas digitadas no futuro ficam fora"
+                    items:
+                      type: object
+                      properties:
+                        mes: { type: string, example: "2026-10" }
+                        iqfMes: { type: number }
+                        qtd: { type: integer }
+                        ncs: { type: integer }
+                        iqfAcumulado: { type: number }
+                  ncs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        rel_insp: { type: integer }
+                        data: { type: string, format: date, nullable: true }
+                        cod_item: { type: string, nullable: true }
+                        rnc: { type: string, nullable: true }
+                        qtd_reprovada: { type: number, nullable: true }
+                        qtd_inspecionada: { type: number, nullable: true }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/fornecedores/{id}/sincronizar:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Fornecedores, Protheus (leitura)]
+      summary: Atualiza o retrato do cadastro a partir da SA2 (um fornecedor)
+      description: Contato preenchido no módulo não é apagado por um vazio do ERP. Não mexe em criticidades, status nem SGQ.
+      x-permissao: engenharia
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  alterado: { type: boolean }
+                  mudancas: { type: array, items: { type: string } }
+                  fornecedor: { $ref: "#/components/schemas/Fornecedor" }
+        "400": { description: "Código provisório — informe o A2_COD antes" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "503": { $ref: "#/components/responses/ProtheusIndisponivel" }
+
+  /qualificacao/fornecedores/sincronizar-sa2:
+    post:
+      tags: [Fornecedores, Protheus (leitura)]
+      summary: Sincroniza todos com a SA2 — inclui os que faltam como não críticos
+      description: |
+        Traz os fornecedores do Protheus que ainda não estão no módulo (não críticos, APROVADO,
+        com pendência "conferir os itens que fornece") e atualiza nome/CNPJ/UF/país/bloqueio dos
+        que já estão. Campos longos do ERP são cortados no tamanho das colunas. Não mexe em
+        criticidades, status nem SGQ.
+      x-permissao: engenharia
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  lidosProtheus: { type: integer }
+                  incluidos: { type: integer }
+                  atualizados: { type: integer }
+        "503": { $ref: "#/components/responses/ProtheusIndisponivel" }
+
+  # ------------------------------------------------------------------ itens críticos
+  /qualificacao/itens-criticos:
+    get:
+      tags: [Itens críticos]
+      summary: Lista de componentes e serviços críticos (PRO 5.2) — item → A/B/C/D
+      x-permissao: consulta
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: "código ou descrição (código comparado sem zeros à esquerda)" }
+        - { name: criticidade, in: query, schema: { $ref: "#/components/schemas/Criticidade" } }
+        - { name: ativos, in: query, schema: { type: string, enum: [todos] }, description: "padrão: só ativos" }
+      responses:
+        "200":
+          description: OK (até 2.000 linhas)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linhas: { type: array, items: { $ref: "#/components/schemas/ItemCritico" } }
+                  porCriticidade: { type: object, additionalProperties: { type: integer }, description: "só ativos" }
+    post:
+      tags: [Itens críticos]
+      summary: Inclui/altera um item, ou cadastra em lote
+      description: |
+        Um item (`produto`, `criticidade`, `descricao?`, `observacao?`, `ativo?` — desativar é
+        `ativo:false`) ou `lote` com uma linha por item: `código | A/B/C/D | descrição`
+        (separador `|`, `;` ou tab). Upsert pela chave sem zeros à esquerda. A Engenharia é quem
+        determina a criticidade (PRO 4.1).
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                produto: { type: string }
+                criticidade: { $ref: "#/components/schemas/Criticidade" }
+                descricao: { type: string }
+                observacao: { type: string }
+                ativo: { type: boolean, default: true }
+                lote: { type: string, example: "012614 | A | MALA P/ CARRINHO\n999001 | D | SERVIÇO DE CALIBRAÇÃO" }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  gravados: { type: integer }
+                  alterados: { type: integer }
+        "400": { description: "Linha do lote inválida (`Linha N: ...`) ou item sem código/criticidade" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+
+  # ------------------------------------------------------------------ Protheus
+  /qualificacao/protheus/fornecedores:
+    get:
+      tags: [Protheus (leitura)]
+      summary: Busca na SA2 para cadastrar no módulo (marca quem já está)
+      x-permissao: engenharia
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2 }, description: "código, nome ou CNPJ (menos de 2 caracteres devolve lista vazia)" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linhas: { type: array, items: { $ref: "#/components/schemas/SA2" } }
+        "503": { $ref: "#/components/responses/ProtheusIndisponivel" }
+
+  /qualificacao/protheus/pedido/{numero}:
+    get:
+      tags: [Protheus (leitura), Inspeções (FORM 7.4.3.H)]
+      summary: Pré-preenche a inspeção pelo pedido de compra (SC7) — itens, entrega prevista, NFs
+      description: |
+        Traz o fornecedor (com a situação do recebimento e se o prazo é medido pela entrega ou
+        pela coleta), os itens com a entrega prevista (C7_DATPRF — e o histórico quando a
+        intranet a alterou), a criticidade de cada item na lista de itens críticos (e se o
+        fornecedor não está qualificado nela), a última inspeção do item e as NFs/pré-notas.
+      x-permissao: inspetor
+      parameters:
+        - { name: numero, in: path, required: true, schema: { type: string }, description: "até 6 dígitos (completado com zeros)" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PedidoCompra" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { description: "Pedido não encontrado no Protheus" }
+        "503": { $ref: "#/components/responses/ProtheusIndisponivel" }
+
+  /qualificacao/status/{codigo}:
+    get:
+      tags: [Fornecedores]
+      summary: Consulta compacta para integrações — o fornecedor está apto?
+      description: "`apto` = ativo e APROVADO/APROVADO_COM_RESTRICAO (suspenso por plano, documento ou requalificação não é apto)."
+      x-permissao: consulta
+      parameters:
+        - { name: codigo, in: path, required: true, schema: { type: string }, description: "A2_COD (sem zeros à esquerda é aceito)" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusFornecedor" }
+        "404":
+          description: Não cadastrado no módulo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  codigo: { type: string }
+                  cadastrado: { type: boolean, example: false }
+                  apto: { type: boolean, example: false }
+                  message: { type: string }
+
+  /qualificacao/log:
+    get:
+      tags: [Gestão]
+      summary: Trilha de auditoria (tab_qf_log — somente inclusão)
+      x-permissao: consulta
+      parameters:
+        - { $ref: "#/components/parameters/filtroFornecedorId" }
+        - { name: entidade, in: query, schema: { type: string }, description: "fornecedor, qualificacao, documento, ficha, inspecao, auditoria, amostra, avaliacao, regra, item_critico, config, importacao…" }
+        - { name: entidadeId, in: query, schema: { type: integer } }
+        - { name: limite, in: query, schema: { type: integer, default: 300, maximum: 1000 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linhas: { type: array, items: { $ref: "#/components/schemas/LogLinha" } }
+
+  # ------------------------------------------------------------------ processo
+  /qualificacao/fornecedores/{id}/processos:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Processo de qualificação]
+      summary: Abre um processo — INICIAL, REQUALIFICACAO (anual, FORM 7.3.28) ou REATIVACAO (de reprovado)
+      description: |
+        Um processo aberto por fornecedor.
+        - REQUALIFICACAO: só fornecedor crítico APROVADO/APROVADO_COM_RESTRICAO/SUSPENSO; começa na
+          etapa FORM_7328 e guarda a validade em vigor (`vencimento_anterior`).
+        - REATIVACAO: só de REPROVADO, com motivo; o fornecedor volta a EM_QUALIFICACAO e ativo.
+          Ao ser reaprovado, a média do IQF recomeça (`iqf_desde`).
+      x-permissao: engenharia
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tipo: { type: string, enum: [INICIAL, REQUALIFICACAO, REATIVACAO], default: INICIAL }
+                motivo: { type: string, description: "obrigatório em REATIVACAO" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  processo: { $ref: "#/components/schemas/Processo" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Já existe processo aberto" }
+
+  /qualificacao/processos/{pid}:
+    parameters: [{ $ref: "#/components/parameters/pid" }]
+    put:
+      tags: [Processo de qualificação]
+      summary: Anda com o processo (decisões, análises da requalificação, pausar/cancelar)
+      description: |
+        Todos os campos são opcionais; só processo EM_ANDAMENTO/PAUSADO.
+        - `auditoria_necessaria` (true/false/null) é decisão da **Engenharia** e exige
+          `auditoria_justificativa` (PRO 4.1 e Nota do 5.6).
+        - `amostra_dispensada` exige `amostra_justificativa`.
+        - `analise` (requalificação — PRO 5.10.1): cada bloco é mesclado ao existente e exige
+          `parecer`; `desempenho` grava o retrato dos indicadores de 12 meses.
+        - `status` PAUSADO/CANCELADO exige `motivo`.
+      x-permissao: engenharia
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                etapa: { type: string }
+                criticidade_definida: { type: boolean }
+                auditoria_necessaria: { type: boolean, nullable: true }
+                auditoria_justificativa: { type: string }
+                amostra_dispensada: { type: boolean }
+                amostra_justificativa: { type: string }
+                plano_acao: { type: string }
+                prazo_regularizacao: { type: string, format: date }
+                analise:
+                  type: object
+                  properties:
+                    documental: { type: object, properties: { parecer: { type: string } } }
+                    desempenho: { type: object, properties: { parecer: { type: string }, reclamacoes: { type: string }, planos: { type: string } } }
+                    alteracoes:
+                      type: object
+                      properties:
+                        decidido: { type: boolean, default: true }
+                        aceitas: { type: boolean, default: true }
+                        questionario: { type: boolean, description: "exige novo FORM 7.3.21" }
+                        auditoria: { type: boolean }
+                        novaAmostra: { type: boolean }
+                        parecer: { type: string }
+                status: { type: string, enum: [EM_ANDAMENTO, PAUSADO, CANCELADO] }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  processo: { $ref: "#/components/schemas/Processo" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Processo já encerrado" }
+
+  /qualificacao/processos/{pid}/aprovar:
+    parameters: [{ $ref: "#/components/parameters/pid" }]
+    post:
+      tags: [Processo de qualificação]
+      summary: Aprovação do Gerente de Engenharia com assinatura eletrônica
+      description: |
+        - Qualificação (FORM 7.3.21): APROVADO | APROVADO_COM_RESTRICAO | REPROVADO.
+        - Requalificação (FORM 7.3.28): REQUALIFICADO | REQUALIFICADO_COM_RESTRICAO | NAO_REQUALIFICADO.
+        O resultado precisa estar em `progresso.resultadosPermitidos` (na requalificação, o
+        sugerido pelos critérios do PRO 5.10.2 ou pior). Senha da intranet reconfirmada no ato;
+        grava quem, quando, IP, declaração e SHA-256 do estado aprovado.
+
+        Efeitos:
+        - aprovado/requalificado de fornecedor crítico → `qualificacao_valida_ate` = hoje + 12 meses;
+        - suspensão por DOCUMENTO/REQUALIFICACAO é levantada ("[Liberar no Protheus]") — salvo
+          classe C/D sem plano, que vira bloqueio por plano;
+        - REQUALIFICADO_COM_RESTRICAO exige `plano_acao` + `prazo_regularizacao`;
+        - NAO_REQUALIFICADO → SUSPENSO (tipo REQUALIFICACAO);
+        - negativo exige `observacao`;
+        - processo REATIVACAO aprovado → a média do IQF recomeça hoje (`iqf_desde`).
+      x-permissao: gerente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resultado, senha]
+              properties:
+                resultado: { type: string, enum: [APROVADO, APROVADO_COM_RESTRICAO, REPROVADO, REQUALIFICADO, REQUALIFICADO_COM_RESTRICAO, NAO_REQUALIFICADO] }
+                senha: { type: string, format: password }
+                declaracao: { type: string }
+                observacao: { type: string }
+                plano_acao: { type: string }
+                prazo_regularizacao: { type: string, format: date }
+      responses:
+        "200":
+          description: Assinado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  resultado: { type: string }
+                  hash: { type: string, description: "SHA-256 do estado aprovado" }
+        "400": { description: "Resultado inválido ou do formulário errado, observação/plano/prazo ausentes" }
+        "401": { description: "Senha não confere — assinatura não registrada (fica na trilha)" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409":
+          description: Resultado não permitido agora
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  bloqueios: { type: array, items: { type: string } }
+                  falhas: { type: array, items: { type: string } }
+                  resultadosPermitidos: { type: array, items: { type: string } }
+                  sugestao: { $ref: "#/components/schemas/SugestaoRequal" }
+
+  # ------------------------------------------------------------------ documentos e anexos
+  /qualificacao/fornecedores/{id}/documentos:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Documentos e anexos]
+      summary: Registra um documento da qualificação (PRO 5.4)
+      description: |
+        Arquivo por multipart (`arquivo`) OU `anexo_id` de um arquivo que o FORNECEDOR enviou pelo
+        link do FORM (origem FORNECEDOR — a Engenharia confere e registra; o mesmo arquivo não vira
+        dois documentos). O documento anterior do mesmo tipo vira SUBSTITUIDO.
+        - VIGENTE: validade obrigatória se o tipo exige; documento já vencido é recusado.
+        - PROTOCOLADO: exige `prazo_regularizacao` futuro (prazo vencido = documento vencido).
+        - DISPENSADO: não aplicável, com `justificativa` (Nota 2 do FORM).
+        `podeReativar` = o fornecedor estava suspenso por documento e não tem mais documento vencido.
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [tipo_documento_id]
+              properties:
+                tipo_documento_id: { type: integer }
+                status: { type: string, enum: [VIGENTE, PROTOCOLADO, DISPENSADO], default: VIGENTE }
+                arquivo: { type: string, format: binary, description: "até 25 MB" }
+                anexo_id: { type: integer, description: "arquivo enviado pelo fornecedor (entidade ficha)" }
+                numero: { type: string }
+                data_emissao: { type: string, format: date }
+                data_validade: { type: string, format: date }
+                prazo_regularizacao: { type: string, format: date }
+                justificativa: { type: string }
+                observacoes: { type: string }
+          application/json:
+            schema:
+              type: object
+              description: "sem arquivo novo (anexo_id ou DISPENSADO)"
+              properties:
+                tipo_documento_id: { type: integer }
+                status: { type: string, enum: [VIGENTE, PROTOCOLADO, DISPENSADO] }
+                anexo_id: { type: integer }
+                numero: { type: string }
+                data_validade: { type: string, format: date }
+                prazo_regularizacao: { type: string, format: date }
+                justificativa: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  documento: { $ref: "#/components/schemas/Documento" }
+                  podeReativar: { type: boolean }
+                  exigido: { type: string, enum: [OBRIGATORIO, CONDICIONAL], nullable: true, description: "regra do tipo para as criticidades do fornecedor" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Arquivo do fornecedor já registrado como documento" }
+
+  /qualificacao/documentos/{docId}:
+    put:
+      tags: [Documentos e anexos]
+      summary: Corrige número/datas/prazo/observação, confere (APROVAR) ou exclui
+      description: |
+        Correção exige `motivo`; mudar validade ou prazo zera os avisos. PROTOCOLADO exige prazo;
+        VIGENTE com tipo que exige validade exige a data. `acao=APROVAR` registra a conferência
+        da Engenharia (PRO 4.1); `acao=EXCLUIR` é exclusão lógica com motivo.
+      x-permissao: engenharia
+      parameters:
+        - { name: docId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                acao: { type: string, enum: [APROVAR, EXCLUIR] }
+                numero: { type: string }
+                data_emissao: { type: string, format: date }
+                data_validade: { type: string, format: date }
+                prazo_regularizacao: { type: string, format: date }
+                observacoes: { type: string }
+                status: { type: string, enum: [VIGENTE, PROTOCOLADO] }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  documento: { $ref: "#/components/schemas/Documento" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Documento substituído/excluído, ou já conferido" }
+
+  /qualificacao/documentos/vencimentos:
+    get:
+      tags: [Documentos e anexos]
+      summary: Painel de controle de documentos dos fornecedores críticos ativos
+      description: Vencidos (inclui protocolo com prazo vencido), vencendo/prazo do protocolo em até `dias`, e obrigatórios pendentes.
+      x-permissao: consulta
+      parameters:
+        - { name: dias, in: query, schema: { type: integer, default: 90, minimum: 1, maximum: 365 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Vencimentos" }
+
+  /qualificacao/fornecedores/{id}/notificar-documento:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Documentos e anexos]
+      summary: Pede ao fornecedor um documento vencido/vencendo/pendente ("notificar em um clique")
+      description: |
+        E-mail externo só sai com `email_fornecedor` ligado na Configuração; desligado, fica
+        registrado como não enviado e a resposta traz o texto para envio manual. O texto cita a
+        validade ou o prazo do protocolo em vigor.
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipoId]
+              properties:
+                tipoId: { type: integer }
+                email: { type: string, description: "sobrepõe o contato do cadastro" }
+                mensagem: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  enviado: { type: boolean }
+                  motivo: { type: string, nullable: true }
+                  para: { type: string }
+                  assunto: { type: string }
+                  texto: { type: string }
+        "400": { description: "Tipo inválido ou fornecedor sem e-mail" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/anexos:
+    post:
+      tags: [Documentos e anexos]
+      summary: Anexa arquivo a inspeção, auditoria, amostra, avaliação, processo, ficha ou fornecedor
+      description: |
+        Inspeção: **inspetor** (23002); demais entidades: **engenharia** (23003). O plano de ação
+        das classes C/D vai com `entidade=fornecedor`, `categoria=PLANO_ACAO`. Até 25 MB; SHA-256 gravado.
+      x-permissao: inspetor
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [arquivo, entidade, entidade_id]
+              properties:
+                arquivo: { type: string, format: binary }
+                entidade: { type: string, enum: [inspecao, auditoria, amostra, avaliacao, qualificacao, fornecedor, ficha] }
+                entidade_id: { type: integer }
+                categoria: { type: string, enum: [FOTO, LAUDO, RNC, RELATORIO, PLANO_ACAO, OUTRO], default: OUTRO }
+                descricao: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  anexo: { $ref: "#/components/schemas/Anexo" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/anexos/{anexoId}:
+    get:
+      tags: [Documentos e anexos]
+      summary: Baixa/abre um anexo (inline, com o nome original)
+      x-permissao: consulta
+      parameters:
+        - { name: anexoId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: O arquivo
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/anexos/{anexoId}/excluir:
+    post:
+      tags: [Documentos e anexos]
+      summary: Exclusão LÓGICA de anexo, com motivo
+      description: Quem enviou exclui nas primeiras 24 h; depois só a **qualidade** (23004). Arquivo de documento regulatório não se exclui aqui (exclua o documento).
+      x-permissao: inspetor
+      parameters:
+        - { name: anexoId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Motivo" }
+      responses:
+        "200": { description: "OK" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  # ------------------------------------------------------------------ formulários do fornecedor
+  /qualificacao/perguntas:
+    get:
+      tags: [Formulários do fornecedor (FORM 7.3.21 / 7.3.28)]
+      summary: Perguntas do FORM 7.3.21 (inclusive inativas), com a contagem de uso
+      x-permissao: consulta
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linhas: { type: array, items: { $ref: "#/components/schemas/Pergunta" } }
+    post:
+      tags: [Formulários do fornecedor (FORM 7.3.21 / 7.3.28)]
+      summary: Cria/altera uma pergunta, ou cadastra em lote
+      description: |
+        Lote: uma por linha, `código | seção | texto | TODOS/CRITICO_A/CRITICO_B/CRITICO_C/CRITICO_D | orientação ao fornecedor (opcional)`.
+        Upsert pelo código. Pergunta já respondida não se apaga: desativa-se (a resposta guarda o texto da época).
+      x-permissao: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: { type: integer, description: "com id, altera" }
+                codigo: { type: string }
+                secao: { type: string }
+                texto: { type: string }
+                ajuda: { type: string, description: "orientação ao fornecedor (texto em azul do FORM)" }
+                ordem: { type: integer }
+                aplicavel_a: { $ref: "#/components/schemas/AplicavelA" }
+                ativo: { type: boolean }
+                lote: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  gravadas: { type: integer, description: "lote" }
+                  pergunta: { $ref: "#/components/schemas/Pergunta" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "409": { description: "Código já existe" }
+
+  /qualificacao/fornecedores/{id}/fichas:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Formulários do fornecedor (FORM 7.3.21 / 7.3.28)]
+      summary: Gera (ou renova) o link para o fornecedor preencher o FORM 7.3.21 ou o FORM 7.3.28
+      description: |
+        Sem login. Ficha em aberto do mesmo formulário no processo tem o link renovado (reenvio).
+        FORM 7.3.28 só dentro de uma requalificação aberta. O e-mail ao fornecedor só sai com
+        `email_fornecedor` ligado; o link sempre volta para ser copiado. Link válido por
+        `questionario_validade_dias` (padrão 30).
+      x-permissao: engenharia
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                formulario: { $ref: "#/components/schemas/Formulario" }
+                email: { type: string }
+                enviarEmail: { type: boolean }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  ficha: { $ref: "#/components/schemas/Ficha" }
+                  link: { type: string }
+                  expira: { type: string, format: date-time }
+                  email: { type: object, properties: { enviado: { type: boolean }, motivo: { type: string, nullable: true } } }
+                  perguntas: { type: integer, description: "perguntas aplicáveis às criticidades (0 no 7.3.28)" }
+        "400": { description: "Sem perguntas ativas (7.3.21) ou sem requalificação aberta (7.3.28)" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/fichas/{fid}:
+    parameters: [{ $ref: "#/components/parameters/fid" }]
+    get:
+      tags: [Formulários do fornecedor (FORM 7.3.21 / 7.3.28)]
+      summary: Ficha com respostas, prévia por seção, documentos declarados e arquivos do fornecedor
+      description: "`link` só para **engenharia** (23003) e só enquanto vigente (responde em nome do fornecedor)."
+      x-permissao: consulta
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetalheFicha" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/fichas/{fid}/respostas:
+    parameters: [{ $ref: "#/components/parameters/fid" }]
+    put:
+      tags: [Formulários do fornecedor (FORM 7.3.21 / 7.3.28)]
+      summary: Transcreve ficha recebida em papel/PDF (anexe o original em /anexos, entidade ficha)
+      description: Mesmo corpo e validações do link público, sem exigir o aceite.
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RespostasFicha" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RespostasGravadas" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Ficha já analisada" }
+
+  /qualificacao/fichas/{fid}/analisar:
+    parameters: [{ $ref: "#/components/parameters/fid" }]
+    post:
+      tags: [Formulários do fornecedor (FORM 7.3.21 / 7.3.28)]
+      summary: Avaliação crítica do questionário (ANALISAR) ou devolução ao fornecedor (DEVOLVER)
+      description: |
+        - ANALISAR: só FORM 7.3.21 e só **qualidade** (23004, PRO 4.2/5.5). Pontua com a regra
+          vigente (em branco = NÃO): ≥ 70% APROVADO; 50–69,99% APROVADO_COM_RESTRICAO (exige
+          `plano_acao`); < 50% REPROVADO — na qualificação inicial encerra o processo e reprova o fornecedor.
+        - DEVOLVER: com `motivo`; o link é renovado. No 7.3.21 só a qualidade; no 7.3.28 a engenharia.
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acao]
+              properties:
+                acao: { type: string, enum: [ANALISAR, DEVOLVER] }
+                parecer: { type: string }
+                plano_acao: { type: string }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: "ANALISAR: placar; DEVOLVER: `{ok, status:'DEVOLVIDA', link, email}`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/Placar" }
+                  - type: object
+                    properties:
+                      ok: { type: boolean }
+                      status: { type: string, example: DEVOLVIDA }
+                      link: { type: string }
+                      email: { type: object, properties: { enviado: { type: boolean }, motivo: { type: string, nullable: true } } }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Ficha não está respondida (ANALISAR) ou não pode ser devolvida" }
+
+  /qualificacao/publico/ficha/{token}:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string, pattern: "^[0-9a-f]{48}$" } }
+    get:
+      tags: [Público (fornecedor)]
+      summary: Página do fornecedor (sem login) — FORM 7.3.21 ou FORM 7.3.28
+      description: Limite de 150 leituras por IP a cada 15 min.
+      security: []
+      x-permissao: anônimo
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FichaPublica" }
+        "404": { description: "Link inválido ou já utilizado" }
+        "410": { description: "Link expirado" }
+        "429": { description: "Muitas requisições" }
+    post:
+      tags: [Público (fornecedor)]
+      summary: O fornecedor envia o formulário (assinatura eletrônica = aceite da declaração)
+      description: |
+        Exige `aceite: true`, nome e e-mail de quem responde. Avisa a Qualidade e a Engenharia
+        (7.3.21) ou a Engenharia (7.3.28). Limite de 20 envios por IP a cada 15 min.
+      security: []
+      x-permissao: anônimo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/RespostasFicha" }
+                - type: object
+                  required: [aceite, respondente_nome, respondente_email]
+      responses:
+        "200":
+          description: Enviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  emBranco: { type: integer, description: "perguntas em branco (contam como NÃO)" }
+                  mensagem: { type: string }
+        "400": { description: "Sem aceite, sem respondente, respostas inválidas (`erros`)" }
+        "404": { description: "Link inválido ou já utilizado" }
+        "409": { description: "Formulário já analisado" }
+        "410": { description: "Link expirado" }
+        "429": { description: "Muitas tentativas" }
+
+  /qualificacao/publico/ficha/{token}/anexo:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string, pattern: "^[0-9a-f]{48}$" } }
+    post:
+      tags: [Público (fornecedor)]
+      summary: O fornecedor anexa um documento da seção "Documentação do fornecedor"
+      description: |
+        PDF, JPG, PNG ou WEBP até 10 MB; só tipos de documento exigidos para as criticidades do
+        fornecedor; até 60 arquivos por ficha. O arquivo fica preso à ficha até a Engenharia
+        conferir e registrar como documento (`POST /fornecedores/{id}/documentos` com `anexo_id`).
+        Limite de 60 envios por IP a cada 15 min.
+      security: []
+      x-permissao: anônimo
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [arquivo, tipoId]
+              properties:
+                arquivo: { type: string, format: binary }
+                tipoId: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  tipoId: { type: integer }
+                  anexo:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      nome_arquivo: { type: string }
+                      tamanho_bytes: { type: integer }
+                      descricao: { type: string }
+        "400": { description: "Sem arquivo, tipo de arquivo/documento não aceito, maior que 10 MB, limite de arquivos" }
+        "404": { description: "Link inválido ou já utilizado" }
+        "409": { description: "Formulário já analisado" }
+        "410": { description: "Link expirado" }
+        "429": { description: "Muitos envios" }
+
+  # ------------------------------------------------------------------ auditoria, amostra, avaliação
+  /qualificacao/fornecedores/{id}/auditorias:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Auditoria, amostra e avaliações]
+      summary: Agenda/registra auditoria no fornecedor (segue o PRO 8.2.2); com `id`, altera
+      description: |
+        `motivo_tipo` (PRO 7.3.7 item 5.6): INICIAL (5.6.1) | ACOMPANHAMENTO (5.6.2 — IQF < 7 em 2
+        avaliações, 3+ NCs em 6 meses, ou antes de reativar suspenso) | REQUALIFICACAO. Sem
+        informar, é deduzido do processo aberto (nenhum = ACOMPANHAMENTO). REALIZADA exige data
+        (não futura) e resultado; NAO_CONFORME exige observações ou plano de ação. Auditoria
+        REALIZADA recalcula a sugestão de acompanhamento. Relatório em `/anexos` (entidade auditoria).
+      x-permissao: qualidade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipo]
+              properties:
+                id: { type: integer }
+                qualificacao_id: { type: integer }
+                motivo_tipo: { type: string, enum: [INICIAL, ACOMPANHAMENTO, REQUALIFICACAO] }
+                tipo: { type: string, enum: [IN_LOCO, REMOTA, DOCUMENTAL] }
+                status: { type: string, enum: [AGENDADA, REALIZADA, CANCELADA], default: AGENDADA }
+                data_agendada: { type: string, format: date }
+                data_realizada: { type: string, format: date }
+                auditor_id: { type: integer }
+                auditor_nome: { type: string }
+                escopo: { type: string }
+                resultado: { type: string, enum: [CONFORME, NAO_CONFORME, CONFORME_COM_OBSERVACOES] }
+                plano_acao: { type: string }
+                referencia_pro_822: { type: boolean, default: true }
+                observacoes: { type: string }
+                motivo: { type: string, description: "obrigatório para CANCELADA" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  auditoria: { $ref: "#/components/schemas/Auditoria" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/fornecedores/{id}/amostras:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Auditoria, amostra e avaliações]
+      summary: Solicitação/recebimento de amostra; com `id`, altera
+      description: Laudo do fornecedor em `/anexos` (entidade amostra, categoria LAUDO).
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: { type: integer }
+                qualificacao_id: { type: integer }
+                componente_codigo: { type: string }
+                componente_descricao: { type: string }
+                quantidade: { type: number }
+                status: { type: string, enum: [SOLICITADA, RECEBIDA, AVALIADA, CANCELADA] }
+                data_solicitacao: { type: string, format: date }
+                data_recebimento: { type: string, format: date, description: "obrigatória em RECEBIDA/AVALIADA" }
+                observacoes: { type: string }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  amostra: { $ref: "#/components/schemas/Amostra" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/fornecedores/{id}/avaliacoes:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Auditoria, amostra e avaliações]
+      summary: Avaliação DIMENSIONAL (FORM 7.3.22) ou FUNCIONAL (FORM 7.3.23) da amostra; com `id`, altera
+      description: |
+        Resultado (PRO 7.3.7 itens 5.7.1/5.7.2):
+        - APROVADO — todos os itens conformes;
+        - APROVADO_COM_RESTRICAO — NC em item NÃO crítico aceita mediante `acordo_formal` (obrigatório);
+        - REPROVADO — obrigatório quando um item `critico` está NAO_CONFORME;
+        - NAO_APLICAVEL — exige justificativa em `observacoes` (sem itens).
+        Com resultado (exceto NAO_APLICAVEL) exige data e ao menos um item. Ao alterar, os itens são substituídos.
+      x-permissao: engenharia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipo]
+              properties:
+                id: { type: integer }
+                qualificacao_id: { type: integer }
+                amostra_id: { type: integer }
+                tipo: { type: string, enum: [DIMENSIONAL, FUNCIONAL] }
+                componente_codigo: { type: string }
+                componente_descricao: { type: string }
+                data_recebimento_amostra: { type: string, format: date }
+                data_avaliacao: { type: string, format: date }
+                resultado: { $ref: "#/components/schemas/ResultadoAvaliacao" }
+                acordo_formal: { type: string }
+                observacoes: { type: string }
+                itens: { type: array, items: { $ref: "#/components/schemas/AvaliacaoItem" } }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  avaliacao: { $ref: "#/components/schemas/Avaliacao" }
+                  itens: { type: integer }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  # ------------------------------------------------------------------ inspeções
+  /qualificacao/inspecoes:
+    get:
+      tags: [Inspeções (FORM 7.4.3.H)]
+      summary: Relatórios de inspeção de recebimento, paginados, com totais do filtro
+      x-permissao: consulta
+      parameters:
+        - { $ref: "#/components/parameters/filtroFornecedorId" }
+        - { $ref: "#/components/parameters/filtroQ" }
+        - { $ref: "#/components/parameters/filtroDe" }
+        - { $ref: "#/components/parameters/filtroAte" }
+        - { $ref: "#/components/parameters/filtroNivel" }
+        - { $ref: "#/components/parameters/filtroResultado" }
+        - { $ref: "#/components/parameters/filtroRnc" }
+        - { $ref: "#/components/parameters/filtroInspetor" }
+        - { $ref: "#/components/parameters/filtroAvisos" }
+        - { $ref: "#/components/parameters/filtroOrigem" }
+        - { $ref: "#/components/parameters/filtroAjuste" }
+        - { $ref: "#/components/parameters/filtroItemCritico" }
+        - { $ref: "#/components/parameters/filtroPrazo" }
+        - { $ref: "#/components/parameters/filtroLiberadoQualidade" }
+        - { $ref: "#/components/parameters/filtroExcluidas" }
+        - { name: ordem, in: query, schema: { type: string, enum: [rel, data, iqf, fornecedor], default: rel } }
+        - { name: dir, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { $ref: "#/components/parameters/page" }
+        - { $ref: "#/components/parameters/pageSize" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  linhas: { type: array, items: { $ref: "#/components/schemas/InspecaoLinha" } }
+                  resumo:
+                    type: object
+                    properties:
+                      inspecoes: { type: integer }
+                      comNc: { type: integer }
+                      pctConforme: { type: number, nullable: true }
+                      iqfMedio: { type: number, nullable: true }
+                      pecasInspecionadas: { type: number }
+                      pecasReprovadas: { type: number }
+    post:
+      tags: [Inspeções (FORM 7.4.3.H)]
+      summary: Lança um relatório de inspeção de recebimento
+      description: |
+        Calcula C, P (entrega se nacional, coleta se importado), N (3 entregas anteriores do
+        mesmo item), IQF; recalcula a média do fornecedor e aplica as ações de classe (só crítico).
+        - Fornecedor C/D aguardando plano: **403 `{bloqueio:true}` para todos** (bloqueio absoluto).
+        - Inativo, suspenso (documento/requalificação/manual) ou não aprovado: só a **qualidade**
+          lança, com `bloqueioJustificativa` (senão 400 `{exigeJustificativa:true}`); inspetor 403 `{bloqueio:true}`.
+        - Classe D: lote inteiro (inspecionada = recebida).
+        - Item da lista de itens críticos de fornecedor não qualificado nessa criticidade avisa a Engenharia.
+        - Nº do relatório sequencial automático (`relInsp` manual só **admin**).
+        - Ajuste manual de C/P/N só **qualidade**, com justificativa e valor da tabela vigente.
+      x-permissao: inspetor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InspecaoForm" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InspecaoSalva" }
+        "400": { $ref: "#/components/responses/ErroInspecao" }
+        "403": { $ref: "#/components/responses/ErroInspecao" }
+        "409": { description: "Número de relatório já existe" }
+
+  /qualificacao/inspecoes/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Inspeções (FORM 7.4.3.H)]
+      summary: Um relatório com anexos, regra usada, entregas que formaram o N e trilha
+      x-permissao: consulta
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inspecao: { $ref: "#/components/schemas/Inspecao" }
+                  anexos: { type: array, items: { $ref: "#/components/schemas/Anexo" } }
+                  log: { type: array, items: { $ref: "#/components/schemas/LogLinha" } }
+                  janelaN:
+                    type: array
+                    items:
+                      type: object
+                      properties: { id: { type: integer }, relInsp: { type: integer }, data: { type: string, format: date }, nc: { type: boolean }, codItem: { type: string, nullable: true } }
+                  niveis: { $ref: "#/components/schemas/Niveis" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+    put:
+      tags: [Inspeções (FORM 7.4.3.H)]
+      summary: Altera uma inspeção (com motivo)
+      description: |
+        Inspetor só altera as que lançou; a **qualidade** altera qualquer uma. Só recalcula se
+        mudou campo do cálculo; erro que o registro já tinha não bloqueia, só erro novo. Registro
+        da planilha mantém P e N originais (ajuste com justificativa automática). Corrigir um
+        registro do mesmo fornecedor não passa pelo bloqueio de recebimento.
+      x-permissao: inspetor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/InspecaoForm" }
+                - type: object
+                  required: [motivo]
+                  properties:
+                    motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InspecaoSalva" }
+        "400": { $ref: "#/components/responses/ErroInspecao" }
+        "403": { $ref: "#/components/responses/ErroInspecao" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Inspeção excluída" }
+
+  /qualificacao/inspecoes/{id}/excluir:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Inspeções (FORM 7.4.3.H)]
+      summary: Exclusão LÓGICA (sai do IQF, continua guardada), com motivo
+      x-permissao: qualidade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Motivo" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  fornecedor: { $ref: "#/components/schemas/Recalculo" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Já excluída" }
+
+  /qualificacao/inspecoes/calcular:
+    post:
+      tags: [Inspeções (FORM 7.4.3.H)]
+      summary: Prévia do cálculo (não grava) — C, P, N, IQF, amostra, situação do recebimento, projeção da média
+      description: Com `id`, é a prévia de uma alteração (registro legado mantém P/N da planilha — `herdadosDaPlanilha`).
+      x-permissao: inspetor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/InspecaoForm" }
+                - type: object
+                  properties:
+                    id: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Calculo" }
+
+  /qualificacao/inspecoes/ultima-do-item:
+    get:
+      tags: [Inspeções (FORM 7.4.3.H)]
+      summary: Última inspeção do item (repetir ESP., critério, instrumento e nível)
+      description: Código comparado sem zeros à esquerda (a planilha gravava "12614", o Protheus "012614").
+      x-permissao: inspetor
+      parameters:
+        - { name: cod, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: "`inspecao: null` quando não há"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inspecao:
+                    type: object
+                    nullable: true
+                    properties:
+                      id: { type: integer }
+                      rel_insp: { type: integer }
+                      data_inspecao: { type: string, format: date, nullable: true }
+                      fornecedor_codigo: { type: string }
+                      fornecedor_nome: { type: string, nullable: true }
+                      nivel_inspecao: { type: string, nullable: true }
+                      especificacao: { type: string, nullable: true }
+                      criterio_aceitacao: { type: string, nullable: true }
+                      instrumento_utilizado: { type: string, nullable: true }
+                      resultado_descricao: { type: string, nullable: true }
+                      descricao_item: { type: string, nullable: true }
+                      iqf: { type: number, nullable: true }
+                      nc: { type: boolean }
+
+  /qualificacao/inspecoes/exportar:
+    get:
+      tags: [Inspeções (FORM 7.4.3.H)]
+      summary: Exporta as inspeções do filtro (até 50 mil linhas) no layout da FORM 7.4.3.H
+      description: Inclui item crítico, prazo medido por (entrega/coleta), justificativa da Qualidade e avisos de importação.
+      x-permissao: consulta
+      parameters:
+        - { name: formato, in: query, schema: { type: string, enum: [xlsx, csv], default: xlsx } }
+        - { $ref: "#/components/parameters/filtroFornecedorId" }
+        - { $ref: "#/components/parameters/filtroQ" }
+        - { $ref: "#/components/parameters/filtroDe" }
+        - { $ref: "#/components/parameters/filtroAte" }
+        - { $ref: "#/components/parameters/filtroNivel" }
+        - { $ref: "#/components/parameters/filtroResultado" }
+        - { $ref: "#/components/parameters/filtroRnc" }
+        - { $ref: "#/components/parameters/filtroInspetor" }
+        - { $ref: "#/components/parameters/filtroAvisos" }
+        - { $ref: "#/components/parameters/filtroOrigem" }
+        - { $ref: "#/components/parameters/filtroAjuste" }
+        - { $ref: "#/components/parameters/filtroItemCritico" }
+        - { $ref: "#/components/parameters/filtroPrazo" }
+        - { $ref: "#/components/parameters/filtroLiberadoQualidade" }
+        - { $ref: "#/components/parameters/filtroExcluidas" }
+      responses:
+        "200":
+          description: Arquivo
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, description: "separador ';', UTF-8 com BOM, decimal com vírgula" }
+
+  # ------------------------------------------------------------------ gestão
+  /qualificacao/dashboard:
+    get:
+      tags: [Gestão]
+      summary: Visão de gestão
+      description: |
+        Monitoramento (classes, alertas, top 10) = só fornecedor CRÍTICO e ATIVO. Inspeções do mês e
+        série de 12 meses = todos os recebimentos. Blocos: classes, contagens por criticidade,
+        alertas C/D/E e suspensos, aguardando plano, C/D sem plano, requalificação (vencida,
+        vencendo, sem data), auditorias sugeridas (5.6.2), documentos, fluxo, dados do legado.
+      x-permissao: consulta
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+
+  /qualificacao/regras:
+    get:
+      tags: [Gestão]
+      summary: Todas as versões de regra (a ativa primeiro), com quantas inspeções usaram cada uma
+      x-permissao: consulta
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linhas: { type: array, items: { $ref: "#/components/schemas/RegraVersao" } }
+    post:
+      tags: [Gestão]
+      summary: Cria uma NOVA versão de regra (versões não se editam) — pode ativar na hora
+      x-permissao: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, conteudo]
+              properties:
+                nome: { type: string, example: "PRO 7.3.7 REV MAR27" }
+                referencia: { type: string }
+                descricao: { type: string }
+                conteudo: { $ref: "#/components/schemas/RegraConteudo" }
+                ativar: { type: boolean }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  regra: { type: object, properties: { id: { type: integer }, nome: { type: string } } }
+                  ativacao: { allOf: [{ $ref: "#/components/schemas/Ativacao" }], nullable: true }
+        "400": { description: "Nome ausente, JSON inválido ou regra incompleta (`erros`)" }
+
+  /qualificacao/regras/{id}/ativar:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Gestão]
+      summary: Troca a versão vigente (com motivo) e recalcula a classe dos fornecedores
+      description: Inspeções já lançadas mantêm os índices da versão delas. O recálculo não dispara ações de classe.
+      x-permissao: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Motivo" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    properties: { ok: { type: boolean } }
+                  - { $ref: "#/components/schemas/Ativacao" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /qualificacao/tipos-documento:
+    post:
+      tags: [Gestão]
+      summary: Cria/altera um tipo de documento e a matriz de exigência por criticidade (A/B/C/D)
+      x-permissao: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [codigo, nome]
+              properties:
+                id: { type: integer, description: "com id, altera" }
+                codigo: { type: string }
+                nome: { type: string }
+                regra_a: { $ref: "#/components/schemas/RegraDoc" }
+                regra_b: { $ref: "#/components/schemas/RegraDoc" }
+                regra_c: { $ref: "#/components/schemas/RegraDoc" }
+                regra_d: { $ref: "#/components/schemas/RegraDoc" }
+                somente_nacional: { type: boolean }
+                condicao: { type: string }
+                exige_validade: { type: boolean }
+                gerado_sistema: { type: boolean, description: "atendido pela ficha analisada no módulo (FORM 7.3.21)" }
+                ordem: { type: integer }
+                ativo: { type: boolean }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  tipo: { $ref: "#/components/schemas/TipoDocumento" }
+        "400": { $ref: "#/components/responses/Invalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { description: "Código já existe" }
+
+  /qualificacao/config:
+    get:
+      tags: [Gestão]
+      summary: Configuração do módulo e se o job diário está ligado (`QF_ALERTAS_ATIVO=1`)
+      x-permissao: qualidade
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linhas:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        chave: { type: string }
+                        valor: {}
+                        descricao: { type: string, nullable: true }
+                        atualizado_em: { type: string, format: date-time }
+                        atualizado_por_nome: { type: string, nullable: true }
+                  jobDocumentosAtivo: { type: boolean }
+                  ambiente: { type: string }
+    put:
+      tags: [Gestão]
+      summary: Altera chaves da configuração (só as conhecidas, com o tipo certo)
+      x-permissao: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                emails_qualidade: { type: array, items: { type: string, format: email } }
+                emails_engenharia: { type: array, items: { type: string, format: email }, description: "recebem os avisos [Bloquear/Liberar no Protheus]" }
+                acoes_automaticas: { type: boolean, description: "ações por classe C/D/E" }
+                suspender_doc_vencido: { type: boolean }
+                suspender_requalificacao_vencida: { type: boolean }
+                email_fornecedor: { type: boolean, description: "envio externo (padrão desligado)" }
+                dias_alerta_documento: { type: array, items: { type: integer, minimum: 0, maximum: 365 } }
+                dias_alerta_requalificacao: { type: array, items: { type: integer, minimum: 30, maximum: 180 }, description: "PRO 5.10.1: no mínimo 30 dias antes" }
+                questionario_validade_dias: { type: integer, minimum: 1, maximum: 180 }
+                motivo: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  alteradas: { type: array, items: { type: string } }
+        "400": { description: "Chave desconhecida ou valor inválido" }
+
+  /qualificacao/notificacoes:
+    get:
+      tags: [Gestão]
+      summary: O que o módulo tentou avisar — enviados e retidos (sem destinatário, envio externo desligado, erro)
+      x-permissao: qualidade
+      parameters:
+        - { name: limite, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linhas:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        tipo: { type: string, description: "BLOQUEIO, LIBERACAO, CLASSE, ITEM_CRITICO, DOCUMENTO_VENCENDO, DOCUMENTO_VENCIDO, REQUALIFICACAO, APROVACAO, QUESTIONARIO_RECEBIDO…" }
+                        entidade: { type: string }
+                        entidade_id: { type: integer, nullable: true }
+                        fornecedor_id: { type: integer, nullable: true }
+                        codigo: { type: string, nullable: true }
+                        razao_social: { type: string, nullable: true }
+                        destinatarios: { type: string, nullable: true }
+                        assunto: { type: string }
+                        enviado: { type: boolean }
+                        erro: { type: string, nullable: true }
+                        criado_em: { type: string, format: date-time }
+
+  /qualificacao/importar:
+    post:
+      tags: [Gestão]
+      summary: Importa as planilhas atuais (FORM 7.3.24 e FORM 7.4.3.H) — simulação por padrão
+      description: |
+        Sem `gravar=1` é SIMULAÇÃO (relatório sem tocar no banco). Ordem: primeiro a lista
+        (FORM 7.3.24), depois as inspeções (FORM 7.4.3.H). Reimportar é idempotente. C/P/N/IQF
+        gravados como os inspetores registraram; anomalias viram avisos por linha (inclui
+        "N < 1 sem NC nas entregas anteriores — provável erro de preenchimento"); "CQ/01" é ignorado;
+        fornecedor só das inspeções entra como não crítico. Não dispara ações de classe.
+      x-permissao: admin
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [arquivo]
+              properties:
+                arquivo: { type: string, format: binary, description: ".xlsx até 40 MB" }
+                tipo: { type: string, enum: [lista, inspecoes], default: lista }
+                gravar: { type: string, enum: ["1"] }
+      responses:
+        "200": { description: "Relatório: contagens, avisos por tipo, ignoradas, validação INFITEK, conferência banco × planilha" }
+        "400": { description: "Sem arquivo, não é .xlsx, ou não é a planilha esperada" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: integer } }
+    pid: { name: pid, in: path, required: true, schema: { type: integer }, description: "id do processo de qualificação" }
+    fid: { name: fid, in: path, required: true, schema: { type: integer }, description: "id da ficha (FORM 7.3.21 ou 7.3.28)" }
+    page: { name: page, in: query, schema: { type: integer, default: 1 } }
+    pageSize: { name: pageSize, in: query, schema: { type: integer, default: 50, minimum: 5, maximum: 200 } }
+    filtroFornecedorId: { name: fornecedorId, in: query, schema: { type: integer } }
+    filtroQ: { name: q, in: query, schema: { type: string }, description: "nº do relatório, PC, NF, item, lote, código ou nome do fornecedor" }
+    filtroDe: { name: de, in: query, schema: { type: string, format: date } }
+    filtroAte: { name: ate, in: query, schema: { type: string, format: date } }
+    filtroNivel: { name: nivel, in: query, schema: { type: string, enum: [I, II, III, "100"] } }
+    filtroResultado: { name: resultado, in: query, schema: { type: string, enum: [CONFORME, NC] } }
+    filtroRnc: { name: rnc, in: query, schema: { type: string, enum: [com, sem] } }
+    filtroInspetor: { name: inspetor, in: query, schema: { type: string } }
+    filtroAvisos: { name: avisos, in: query, schema: { type: string, enum: ["1"] }, description: "só registros importados com aviso" }
+    filtroOrigem: { name: origem, in: query, schema: { type: string, enum: [INTRANET, PLANILHA] } }
+    filtroAjuste: { name: ajuste, in: query, schema: { type: string, enum: ["1"] }, description: "só com índice ajustado à mão" }
+    filtroItemCritico: { name: itemCritico, in: query, schema: { type: string, enum: [A, B, C, D, SIM] }, description: "criticidade do item na lista de itens críticos; SIM = qualquer" }
+    filtroPrazo: { name: prazo, in: query, schema: { type: string, enum: [ENTREGA, COLETA] }, description: "como o P foi medido (legado = vazio)" }
+    filtroLiberadoQualidade: { name: liberadoQualidade, in: query, schema: { type: string, enum: ["1"] }, description: "recebidas de fornecedor bloqueado com justificativa da Qualidade" }
+    filtroExcluidas: { name: excluidas, in: query, schema: { type: string, enum: ["1"] }, description: "inclui as excluídas" }
+
+  responses:
+    NaoAutenticado:
+      description: Token ausente/inválido
+    SemPermissao:
+      description: Sem a permissão exigida
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    Invalido:
+      description: Dados inválidos
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    NaoEncontrado:
+      description: Registro não encontrado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    ProtheusIndisponivel:
+      description: Protheus temporariamente inacessível
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              conexao: { type: boolean, example: true }
+    ErroInspecao:
+      description: |
+        403 `{bloqueio:true}` — fornecedor bloqueado (plano de ação C/D: absoluto; demais: só a Qualidade);
+        400 `{exigeJustificativa:true}` — a Qualidade precisa informar `bloqueioJustificativa`;
+        400 `{erros:[...]}` — validação (inclui classe D sem lote inteiro); 403 — ajuste manual ou nº manual sem nível.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              bloqueio: { type: boolean }
+              exigeJustificativa: { type: boolean }
+              erros: { type: array, items: { type: string } }
+
+  schemas:
+    Erro:
+      type: object
+      properties:
+        message: { type: string }
+        erros: { type: array, items: { type: string } }
+    Motivo:
+      type: object
+      required: [motivo]
+      properties:
+        motivo: { type: string }
+    ErroReativar:
+      type: object
+      properties:
+        message: { type: string }
+        plano: { type: boolean, description: "libere registrando o plano de ação (PUT /plano-iqf)" }
+        requalificacao: { type: boolean, description: "libera ao aprovar o FORM 7.3.28" }
+        documentos: { type: boolean, description: "regularize os documentos vencidos" }
+        auditoria: { type: boolean, description: "PRO 5.6.2: registre auditoria de acompanhamento ou dispense com justificativa" }
+    Criticidade:
+      type: string
+      enum: [A, B, C, D]
+      description: |
+        PRO 7.3.7 OUT261 item 5.2 — A: componente/serviço da lista de críticos (matérias-primas);
+        B: dispositivo médico com notificação/registro na ANVISA; C: dispositivo médico sem
+        notificação/registro; D: serviço crítico de terceiro (calibração, laudos, processos especiais).
+    Criticidades:
+      type: array
+      items: { $ref: "#/components/schemas/Criticidade" }
+      description: "conjunto das criticidades dos itens que o fornecedor fornece; vazio = não crítico (sem qualificação prévia e fora do monitoramento)"
+      example: [A, B]
+    AplicavelA:
+      type: string
+      enum: [TODOS, CRITICO_A, CRITICO_B, CRITICO_C, CRITICO_D]
+    RegraDoc:
+      type: string
+      enum: [OBRIGATORIO, CONDICIONAL]
+      nullable: true
+      description: "null = não se aplica; CONDICIONAL não bloqueia (a Engenharia avalia — Nota 2 do FORM)"
+    TipoFornecimento:
+      type: string
+      enum: [MP, SERVICO, MP_SERVICO, PRODUTO]
+      nullable: true
+    StatusQualificacao:
+      type: string
+      enum: [EM_QUALIFICACAO, APROVADO, APROVADO_COM_RESTRICAO, REPROVADO, SUSPENSO]
+    SuspensaoTipo:
+      type: string
+      enum: [PLANO_ACAO_C, PLANO_ACAO_D, DOCUMENTO, REQUALIFICACAO, MANUAL]
+      nullable: true
+      description: "define o caminho de liberação (ver POST /fornecedores/{id}/status)"
+    Classe:
+      type: string
+      enum: [A, B, C, D, E]
+      nullable: true
+      description: "A ≥ 9 · B ≥ 8 · C ≥ 7 · D ≥ 5 · E < 5 (regra vigente); só fornecedor crítico; null = não crítico ou sem inspeção"
+    ClasseInfo:
+      type: object
+      nullable: true
+      properties:
+        classe: { type: string }
+        rotulo: { type: string }
+        cor: { type: string }
+        acao: { $ref: "#/components/schemas/AcaoClasse" }
+    AcaoClasse:
+      type: string
+      enum: [NENHUMA, BLOQUEAR_PLANO, BLOQUEAR_PLANO_100, REPROVAR]
+      description: "BLOQUEAR_PLANO (C): bloqueia até o plano de ação; BLOQUEAR_PLANO_100 (D): idem e depois só 100%; REPROVAR (E): reprova e inativa"
+    SimNao:
+      type: string
+      enum: [SIM, NAO, NA]
+      nullable: true
+    Formulario:
+      type: string
+      enum: ["7.3.21", "7.3.28"]
+      default: "7.3.21"
+    SituacaoDoc:
+      type: string
+      enum: [OK, VENCENDO, PROTOCOLADO, PROTOCOLO_VENCIDO, DISPENSADO, VENCIDO, PENDENTE]
+
+    Niveis:
+      type: object
+      properties:
+        consulta: { type: boolean }
+        inspetor: { type: boolean }
+        engenharia: { type: boolean }
+        qualidade: { type: boolean }
+        gerente: { type: boolean }
+        admin: { type: boolean }
+
+    Meta:
+      type: object
+      properties:
+        usuario: { type: object, properties: { id: { type: integer }, nome: { type: string }, email: { type: string } } }
+        niveis: { $ref: "#/components/schemas/Niveis" }
+        regra: { $ref: "#/components/schemas/RegraVersao" }
+        criticidades:
+          type: array
+          items:
+            type: object
+            properties:
+              codigo: { $ref: "#/components/schemas/Criticidade" }
+              nome: { type: string }
+              descricao: { type: string }
+              aplicavel: { type: string }
+        tiposDocumento: { type: array, items: { $ref: "#/components/schemas/TipoDocumento" }, description: "só ativos" }
+        tiposDocumentoTodos: { type: array, items: { $ref: "#/components/schemas/TipoDocumento" } }
+        itensCriticos: { type: integer, description: "itens ativos na lista (0 = Engenharia ainda não cadastrou)" }
+        formularios:
+          type: object
+          properties:
+            tiposEmpresa: { type: array, items: { type: string } }
+            tiposFrete: { type: array, items: { type: string } }
+            alteracoes7328: { type: array, items: { type: object, properties: { codigo: { type: string }, rotulo: { type: string } } } }
+        proximoRelInsp: { type: integer }
+        inspetores: { type: array, items: { type: string } }
+        config:
+          type: object
+          properties:
+            acoesAutomaticas: { type: boolean }
+            emailFornecedor: { type: boolean }
+            temEmailsQualidade: { type: boolean }
+            temEmailsEngenharia: { type: boolean }
+
+    FornecedorLinha:
+      type: object
+      properties:
+        id: { type: integer }
+        codigo: { type: string, description: "A2_COD ou provisório P00001" }
+        razao_social: { type: string }
+        nome_fantasia: { type: string, nullable: true }
+        cnpj: { type: string, nullable: true }
+        estado: { type: string, nullable: true }
+        nacional: { type: boolean, description: "false = importado (P pela data de coleta)" }
+        criticidades: { $ref: "#/components/schemas/Criticidades" }
+        tipo_fornecimento: { $ref: "#/components/schemas/TipoFornecimento" }
+        status_qualificacao: { $ref: "#/components/schemas/StatusQualificacao" }
+        suspensao_tipo: { $ref: "#/components/schemas/SuspensaoTipo" }
+        motivo_suspensao: { type: string, nullable: true }
+        sgq_bpf: { $ref: "#/components/schemas/SimNao" }
+        sgq_iso13485: { $ref: "#/components/schemas/SimNao" }
+        sgq_iso9001: { $ref: "#/components/schemas/SimNao" }
+        sgq_acordo: { $ref: "#/components/schemas/SimNao" }
+        sgq_questionario: { $ref: "#/components/schemas/SimNao" }
+        nota_sgq: { type: number, nullable: true }
+        iqf_medio: { type: number, nullable: true }
+        qtd_inspecoes: { type: integer }
+        classificacao: { $ref: "#/components/schemas/Classe" }
+        ultima_inspecao: { type: string, format: date, nullable: true }
+        ativo: { type: boolean }
+        legado: { type: boolean }
+        inspecao_100: { type: boolean, description: "classe D: só recebimento com o lote inteiro" }
+        qualificacao_valida_ate: { type: string, format: date, nullable: true, description: "aprovação + 12 meses (PRO 5.10)" }
+        dias_validade: { type: integer, nullable: true }
+        auditoria_sugerida_motivo: { type: string, nullable: true, description: "gatilho do PRO 5.6.2" }
+        tem_plano: { type: boolean, description: "plano de ação (classes C/D) registrado" }
+        qtd_pendencias: { type: integer }
+        processo_id: { type: integer, nullable: true }
+        processo_tipo: { type: string, enum: [INICIAL, REQUALIFICACAO, REATIVACAO], nullable: true }
+        processo_etapa: { type: string, nullable: true }
+        processo_status: { type: string, nullable: true }
+        docs:
+          type: object
+          nullable: true
+          description: "só crítico"
+          properties:
+            completo: { type: boolean }
+            pendentes: { type: integer }
+            vencidos: { type: integer }
+            vencendo: { type: integer }
+            protocolados: { type: integer }
+
+    Fornecedor:
+      allOf:
+        - { $ref: "#/components/schemas/FornecedorLinha" }
+        - type: object
+          properties:
+            loja: { type: string, nullable: true }
+            pais: { type: string, nullable: true }
+            endereco: { type: string, nullable: true }
+            cidade: { type: string, nullable: true }
+            cep: { type: string, nullable: true }
+            contato_nome: { type: string, nullable: true }
+            contato_email: { type: string, nullable: true }
+            contato_telefone: { type: string, nullable: true }
+            observacoes: { type: string, nullable: true }
+            plano_acao_iqf: { type: string, nullable: true }
+            plano_acao_iqf_em: { type: string, format: date-time, nullable: true }
+            plano_acao_iqf_por: { type: integer, nullable: true }
+            suspenso_em: { type: string, format: date-time, nullable: true }
+            iqf_desde: { type: string, format: date, nullable: true, description: "reaprovado após reprovação: a média do IQF recomeça nesta data" }
+            data_aprovacao: { type: string, format: date-time, nullable: true }
+            data_cadastro: { type: string, format: date-time }
+            bloqueado_protheus: { type: boolean, nullable: true, description: "A2_MSBLQL (informativo)" }
+            origem: { type: string, enum: [INTRANET, PLANILHA_7324, PLANILHA_743H, SA2] }
+            pendencias: { type: array, items: { type: string }, nullable: true }
+            atualizado_em: { type: string, format: date-time }
+
+    Recalculo:
+      type: object
+      nullable: true
+      description: "resultado do recálculo do IQF do fornecedor"
+      properties:
+        antes: { $ref: "#/components/schemas/Classe" }
+        depois: { $ref: "#/components/schemas/Classe" }
+        media: { type: number, nullable: true }
+        qtd: { type: integer }
+        monitorado: { type: boolean }
+        acoes:
+          type: object
+          nullable: true
+          properties:
+            acao: { type: string }
+            bloqueado: { type: boolean }
+            reprovado: { type: boolean }
+        auditoriaSugerida: { type: array, items: { type: string } }
+
+    SituacaoRecebimento:
+      type: object
+      properties:
+        permitido: { type: boolean }
+        absoluto: { type: boolean, description: "bloqueio por plano de ação (C/D): ninguém recebe" }
+        exigeJustificativa: { type: boolean, description: "inativo/suspenso/não aprovado: só a Qualidade, com justificativa" }
+        motivo: { type: string }
+        inspecao100: { type: boolean }
+        correcao: { type: boolean, description: "prévia de alteração do mesmo fornecedor (não é recebimento novo)" }
+
+    Processo:
+      type: object
+      properties:
+        id: { type: integer }
+        fornecedor_id: { type: integer }
+        tipo: { type: string, enum: [INICIAL, REQUALIFICACAO, REATIVACAO] }
+        etapa: { type: string }
+        status: { type: string, enum: [EM_ANDAMENTO, PAUSADO, APROVADO, REPROVADO, CANCELADO] }
+        criticidade_definida: { type: boolean }
+        auditoria_necessaria: { type: boolean, nullable: true }
+        auditoria_justificativa: { type: string, nullable: true }
+        amostra_dispensada: { type: boolean }
+        amostra_justificativa: { type: string, nullable: true }
+        analise:
+          type: object
+          description: "requalificação: blocos documental, desempenho (com `indicadores` de 12 meses) e alteracoes, cada um com parecer, por e em"
+        plano_acao: { type: string, nullable: true }
+        prazo_regularizacao: { type: string, format: date, nullable: true }
+        vencimento_anterior: { type: string, format: date, nullable: true }
+        motivo: { type: string, nullable: true }
+        iniciado_em: { type: string, format: date-time }
+        concluido_em: { type: string, format: date-time, nullable: true }
+        aprovacao_resultado: { type: string, nullable: true }
+        aprovacao_nome: { type: string, nullable: true }
+        aprovacao_em: { type: string, format: date-time, nullable: true }
+        aprovacao_hash: { type: string, nullable: true }
+        aprovacao_declaracao: { type: string, nullable: true }
+
+    Desempenho12m:
+      type: object
+      properties:
+        inspecoes: { type: integer }
+        ncs: { type: integer }
+        rncs: { type: integer }
+        iqf: { type: number, nullable: true }
+        classe: { $ref: "#/components/schemas/Classe" }
+        pecasReprovadas: { type: number }
+        pecasInspecionadas: { type: number }
+        semFornecimento: { type: boolean, description: "PRO 5.10.1 Nota 2" }
+
+    SugestaoRequal:
+      type: object
+      description: "critérios do PRO 5.10.2"
+      properties:
+        resultado: { type: string, enum: [REQUALIFICADO, REQUALIFICADO_COM_RESTRICAO, NAO_REQUALIFICADO] }
+        motivos:
+          type: object
+          properties:
+            nao: { type: array, items: { type: string } }
+            restricao: { type: array, items: { type: string } }
+
+    Progresso:
+      type: object
+      properties:
+        tipo: { type: string, enum: [INICIAL, REATIVACAO, REQUALIFICACAO] }
+        etapas:
+          type: array
+          description: |
+            Qualificação: CADASTRO, CRITICIDADE, DOCUMENTOS, QUESTIONARIO, ANALISE, AUDITORIA, AMOSTRA, AVALIACAO, APROVACAO.
+            Requalificação: FORM_7328, DOCUMENTAL, DESEMPENHO, ALTERACOES, QUESTIONARIO, AUDITORIA, AMOSTRA, AVALIACAO, APROVACAO.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              titulo: { type: string }
+              status: { type: string, enum: [ok, pendente, aguardando, na, falhou, opcional] }
+              detalhe: { type: string }
+        percentual: { type: integer }
+        etapaAtual: { type: string }
+        bloqueios: { type: array, items: { type: string } }
+        falhas: { type: array, items: { type: string } }
+        resultadosPermitidos: { type: array, items: { type: string } }
+        ficha: { type: object, nullable: true }
+        auditoriaSugerida: { type: array, items: { type: string }, description: "qualificação: sugestão do PRO 5.6.1 (crítico B, ou A sem ISO)" }
+        sugestao: { $ref: "#/components/schemas/SugestaoRequal" }
+        desempenho: { allOf: [{ $ref: "#/components/schemas/Desempenho12m" }], nullable: true }
+        vencimento: { type: string, format: date, nullable: true }
+
+    DetalheFornecedor:
+      type: object
+      properties:
+        fornecedor: { $ref: "#/components/schemas/Fornecedor" }
+        monitorado: { type: boolean, description: "crítico (entra no monitoramento do IQF)" }
+        classe: { $ref: "#/components/schemas/ClasseInfo" }
+        iqf12m:
+          type: object
+          properties:
+            media: { type: number, nullable: true }
+            qtd: { type: integer }
+            ncs: { type: integer }
+            classe: { $ref: "#/components/schemas/ClasseInfo" }
+        recebimento: { $ref: "#/components/schemas/SituacaoRecebimento" }
+        planoAcaoIqf:
+          type: object
+          properties:
+            aguardando: { type: boolean }
+            texto: { type: string, nullable: true }
+            em: { type: string, format: date-time, nullable: true }
+            por: { type: string, nullable: true }
+            anexos: { type: array, items: { $ref: "#/components/schemas/Anexo" } }
+        requalificacao:
+          type: object
+          nullable: true
+          description: "só crítico"
+          properties:
+            validaAte: { type: string, format: date, nullable: true }
+            dias: { type: integer, nullable: true }
+            vencida: { type: boolean }
+            semData: { type: boolean }
+            processoAberto: { allOf: [{ $ref: "#/components/schemas/Processo" }], nullable: true }
+        auditoriaSugerida: { type: string, nullable: true, description: "gatilho do PRO 5.6.2" }
+        processo: { allOf: [{ $ref: "#/components/schemas/Processo" }], nullable: true }
+        processos: { type: array, items: { $ref: "#/components/schemas/Processo" } }
+        progresso: { $ref: "#/components/schemas/Progresso" }
+        checklist: { $ref: "#/components/schemas/Checklist" }
+        documentos: { type: array, items: { $ref: "#/components/schemas/Documento" } }
+        fichas: { type: array, items: { $ref: "#/components/schemas/Ficha" } }
+        auditorias: { type: array, items: { $ref: "#/components/schemas/Auditoria" } }
+        amostras: { type: array, items: { $ref: "#/components/schemas/Amostra" } }
+        avaliacoes: { type: array, items: { $ref: "#/components/schemas/Avaliacao" } }
+        anexos: { type: array, items: { $ref: "#/components/schemas/Anexo" }, description: "exceto os de documento; inclui os enviados pelo fornecedor (entidade ficha) com `documento_id`" }
+        ultimasInspecoes: { type: array, items: { $ref: "#/components/schemas/InspecaoLinha" } }
+        perguntasCadastradas: { type: integer }
+        niveis: { $ref: "#/components/schemas/Niveis" }
+
+    Checklist:
+      type: object
+      properties:
+        itens:
+          type: array
+          items:
+            type: object
+            properties:
+              tipoId: { type: integer }
+              codigo: { type: string }
+              nome: { type: string }
+              regra: { type: string, enum: [OBRIGATORIO, CONDICIONAL], description: "a mais forte entre as criticidades do fornecedor" }
+              condicao: { type: string, nullable: true }
+              exigeValidade: { type: boolean }
+              geradoSistema: { type: boolean }
+              situacao: { $ref: "#/components/schemas/SituacaoDoc" }
+              venceEm: { type: integer, nullable: true, description: "dias até a validade (ou até o prazo do protocolo)" }
+              documento: { type: object, nullable: true }
+        completo: { type: boolean }
+        pendentes: { type: integer }
+        vencidos: { type: integer, description: "inclui protocolo com prazo vencido" }
+        vencendo: { type: integer }
+        protocolados: { type: integer }
+
+    TipoDocumento:
+      type: object
+      properties:
+        id: { type: integer }
+        codigo: { type: string }
+        nome: { type: string }
+        regra_a: { $ref: "#/components/schemas/RegraDoc" }
+        regra_b: { $ref: "#/components/schemas/RegraDoc" }
+        regra_c: { $ref: "#/components/schemas/RegraDoc" }
+        regra_d: { $ref: "#/components/schemas/RegraDoc" }
+        somente_nacional: { type: boolean }
+        condicao: { type: string, nullable: true }
+        exige_validade: { type: boolean }
+        gerado_sistema: { type: boolean }
+        ordem: { type: integer }
+        ativo: { type: boolean }
+
+    Documento:
+      type: object
+      properties:
+        id: { type: integer }
+        fornecedor_id: { type: integer }
+        tipo_documento_id: { type: integer }
+        tipo_codigo: { type: string }
+        tipo_nome: { type: string }
+        numero: { type: string, nullable: true }
+        data_emissao: { type: string, format: date, nullable: true }
+        data_validade: { type: string, format: date, nullable: true }
+        status: { type: string, enum: [VIGENTE, PROTOCOLADO, DISPENSADO, SUBSTITUIDO, EXCLUIDO] }
+        situacao: { type: string, description: "status com VENCIDO / PROTOCOLO_VENCIDO derivados da data" }
+        prazo_regularizacao: { type: string, format: date, nullable: true, description: "PROTOCOLADO: prazo do documento definitivo (PRO 5.4)" }
+        origem: { type: string, enum: [INTERNO, FORNECEDOR, LEGADO] }
+        anexo_id: { type: integer, nullable: true }
+        nome_arquivo: { type: string, nullable: true }
+        tamanho_bytes: { type: integer, nullable: true }
+        enviado_por_externo: { type: string, nullable: true }
+        justificativa: { type: string, nullable: true }
+        observacoes: { type: string, nullable: true }
+        aprovado_por_nome: { type: string, nullable: true, description: "quem conferiu" }
+        aprovado_em: { type: string, format: date-time, nullable: true }
+        enviado_por_nome: { type: string, nullable: true }
+        enviado_em: { type: string, format: date-time }
+
+    Anexo:
+      type: object
+      properties:
+        id: { type: integer }
+        entidade: { type: string }
+        entidade_id: { type: integer }
+        categoria: { type: string, enum: [FOTO, LAUDO, RNC, RELATORIO, DOCUMENTO, PLANO_ACAO, OUTRO] }
+        nome_arquivo: { type: string }
+        mime_type: { type: string, nullable: true }
+        tamanho_bytes: { type: integer, nullable: true }
+        descricao: { type: string, nullable: true }
+        enviado_em: { type: string, format: date-time }
+        enviado_por_nome: { type: string, nullable: true }
+        enviado_por_externo: { type: string, nullable: true, description: "fornecedor pelo link público" }
+        documento_id: { type: integer, nullable: true, description: "arquivo do fornecedor já registrado como documento" }
+
+    ItemCritico:
+      type: object
+      properties:
+        id: { type: integer }
+        produto: { type: string }
+        produto_chave: { type: string, description: "código sem zeros à esquerda" }
+        descricao: { type: string, nullable: true }
+        criticidade: { $ref: "#/components/schemas/Criticidade" }
+        observacao: { type: string, nullable: true }
+        ativo: { type: boolean }
+        atualizado_em: { type: string, format: date-time }
+        atualizado_por_nome: { type: string, nullable: true }
+
+    Pergunta:
+      type: object
+      properties:
+        id: { type: integer }
+        codigo: { type: string, example: "1.1" }
+        secao: { type: string, nullable: true }
+        texto: { type: string }
+        ajuda: { type: string, nullable: true, description: "orientação ao fornecedor" }
+        ordem: { type: integer }
+        aplicavel_a: { $ref: "#/components/schemas/AplicavelA" }
+        ativo: { type: boolean }
+        usos: { type: integer }
+
+    DadosFicha:
+      type: object
+      properties:
+        cadastro:
+          type: object
+          description: "nome_fantasia, razao_social, cnpj, inscricao_estadual, inscricao_municipal, endereco, complemento, cidade, estado, cep, telefone, website, ramo_atividade, tipo_empresa (S/A, LTDA, E.I., EIRELI, OUTRO), produto_servico, lead_time, condicoes_pagamento, tipo_frete (lista: CIF, VEICULO_PROPRIO, TRANSPORTADORA, FOB, EXW)"
+          additionalProperties: true
+        contatos:
+          type: array
+          maxItems: 3
+          items: { type: object, properties: { nome: { type: string }, cargo: { type: string }, telefone: { type: string }, email: { type: string } } }
+        documentos:
+          type: array
+          items:
+            type: object
+            properties:
+              tipoId: { type: integer }
+              apresentado: { type: string, enum: [SIM, NAO, NA], nullable: true }
+              comentario: { type: string, nullable: true }
+              anexoId: { type: integer, nullable: true, description: "arquivo enviado em /publico/ficha/{token}/anexo" }
+        alteracoes:
+          type: array
+          description: "só FORM 7.3.28"
+          items: { type: object, properties: { codigo: { type: string }, rotulo: { type: string }, houve: { type: boolean }, descricao: { type: string, nullable: true } } }
+        semAlteracoes: { type: boolean }
+
+    Ficha:
+      type: object
+      properties:
+        id: { type: integer }
+        fornecedor_id: { type: integer }
+        qualificacao_id: { type: integer, nullable: true }
+        formulario: { $ref: "#/components/schemas/Formulario" }
+        status: { type: string, enum: [RASCUNHO, ENVIADA, RESPONDIDA, DEVOLVIDA, ANALISADA] }
+        token_expira_em: { type: string, format: date-time, nullable: true }
+        enviada_em: { type: string, format: date-time, nullable: true }
+        enviada_para: { type: string, nullable: true }
+        respondida_em: { type: string, format: date-time, nullable: true }
+        respondente_nome: { type: string, nullable: true }
+        respondente_cargo: { type: string, nullable: true }
+        respondente_email: { type: string, nullable: true }
+        aceite: { type: boolean, description: "declaração aceita pelo fornecedor (assinatura eletrônica)" }
+        dados: { $ref: "#/components/schemas/DadosFicha" }
+        por_secao: { type: array, nullable: true, items: { $ref: "#/components/schemas/PlacarSecao" } }
+        pontuacao_total: { type: number, nullable: true }
+        pontuacao_maxima: { type: number, nullable: true }
+        pontuacao_percentual: { type: number, nullable: true }
+        resultado: { type: string, nullable: true, description: "7.3.21: APROVADO | APROVADO_COM_RESTRICAO | REPROVADO · 7.3.28: REQUALIFICADO | REQUALIFICADO_COM_RESTRICAO | NAO_REQUALIFICADO" }
+        analisada_em: { type: string, format: date-time, nullable: true }
+        parecer: { type: string, nullable: true }
+        plano_acao: { type: string, nullable: true }
+        devolvida_motivo: { type: string, nullable: true }
+        gerente_nome: { type: string, nullable: true }
+        gerente_em: { type: string, format: date-time, nullable: true }
+
+    PlacarSecao:
+      type: object
+      properties:
+        secao: { type: string }
+        total: { type: number }
+        maximo: { type: number }
+        percentual: { type: number }
+
+    Placar:
+      type: object
+      properties:
+        ok: { type: boolean }
+        total: { type: number }
+        maximo: { type: number }
+        percentual: { type: number }
+        resultado: { type: string, enum: [APROVADO, APROVADO_COM_RESTRICAO, REPROVADO] }
+        porSecao: { type: array, items: { $ref: "#/components/schemas/PlacarSecao" } }
+
+    RespostasFicha:
+      type: object
+      description: "corpo do envio do formulário (público) e da transcrição interna"
+      properties:
+        respondente_nome: { type: string }
+        respondente_cargo: { type: string }
+        respondente_email: { type: string }
+        aceite: { type: boolean, description: "obrigatório (true) no link público" }
+        cadastro: { $ref: "#/components/schemas/DadosFicha/properties/cadastro" }
+        contatos: { $ref: "#/components/schemas/DadosFicha/properties/contatos" }
+        documentos: { $ref: "#/components/schemas/DadosFicha/properties/documentos" }
+        alteracoes:
+          type: array
+          description: "FORM 7.3.28"
+          items: { type: object, properties: { codigo: { type: string }, houve: { type: boolean }, descricao: { type: string } } }
+        respostas:
+          type: array
+          description: "FORM 7.3.21: uma alternativa por pergunta; comprovação obrigatória em SIM/PARCIAL; pergunta omitida = em branco = NÃO"
+          items:
+            type: object
+            properties:
+              perguntaId: { type: integer }
+              alternativa: { type: string, enum: [SIM, PARCIAL, NAO] }
+              comprovacao: { type: string }
+
+    RespostasGravadas:
+      type: object
+      properties:
+        ok: { type: boolean }
+        placar: { allOf: [{ $ref: "#/components/schemas/Placar" }], nullable: true }
+        respostas: { type: integer }
+        emBranco: { type: integer }
+        documentos: { type: integer }
+
+    DetalheFicha:
+      type: object
+      properties:
+        ficha: { $ref: "#/components/schemas/Ficha" }
+        link: { type: string, nullable: true }
+        fornecedor:
+          type: object
+          properties:
+            id: { type: integer }
+            codigo: { type: string }
+            razao_social: { type: string }
+            criticidades: { $ref: "#/components/schemas/Criticidades" }
+            nacional: { type: boolean }
+        perguntas:
+          type: array
+          items: { type: object, properties: { id: { type: integer }, codigo: { type: string }, secao: { type: string, nullable: true }, texto: { type: string }, ajuda: { type: string, nullable: true } } }
+        respostas:
+          type: array
+          items: { type: object, properties: { pergunta_id: { type: integer }, alternativa: { type: string }, em_branco: { type: boolean }, pontos: { type: number }, comprovacao: { type: string, nullable: true } } }
+        previa: { allOf: [{ $ref: "#/components/schemas/Placar" }], nullable: true }
+        documentosDeclarados:
+          type: array
+          items:
+            type: object
+            properties:
+              tipoId: { type: integer }
+              tipoNome: { type: string }
+              tipoCodigo: { type: string, nullable: true }
+              exigeValidade: { type: boolean }
+              apresentado: { type: string, nullable: true }
+              comentario: { type: string, nullable: true }
+              anexoId: { type: integer, nullable: true }
+              anexo: { type: object, nullable: true, properties: { id: { type: integer }, nome_arquivo: { type: string }, tamanho_bytes: { type: integer } } }
+              registrado: { type: boolean, description: "arquivo já registrado como documento" }
+        anexos: { type: array, items: { $ref: "#/components/schemas/Anexo" } }
+        alteracoesRotulos: { type: array, items: { type: object, properties: { codigo: { type: string }, rotulo: { type: string } } } }
+        faixas: { type: object, properties: { aprovado_min: { type: number }, restricao_min: { type: number } } }
+        pontos: { type: object, additionalProperties: { type: number } }
+
+    FichaPublica:
+      type: object
+      properties:
+        formulario: { $ref: "#/components/schemas/Formulario" }
+        fornecedor: { type: string, description: "só a razão social" }
+        criticidades: { $ref: "#/components/schemas/Criticidades" }
+        nacional: { type: boolean }
+        status: { type: string }
+        podeResponder: { type: boolean }
+        devolvidaMotivo: { type: string, nullable: true }
+        expira: { type: string, format: date-time, nullable: true }
+        dados: { $ref: "#/components/schemas/DadosFicha" }
+        respondente: { type: object, properties: { nome: { type: string, nullable: true }, cargo: { type: string, nullable: true }, email: { type: string, nullable: true } } }
+        documentos:
+          type: array
+          description: "documentos exigidos para as criticidades; no 7.3.28 com a situação atual (válidos e sem alteração não precisam ser reenviados)"
+          items:
+            type: object
+            properties:
+              tipoId: { type: integer }
+              nome: { type: string }
+              regra: { type: string, enum: [OBRIGATORIO, CONDICIONAL] }
+              condicao: { type: string, nullable: true }
+              exigeValidade: { type: boolean }
+              situacaoAtual: { $ref: "#/components/schemas/SituacaoDoc" }
+              validadeAtual: { type: string, format: date, nullable: true }
+        anexos:
+          type: array
+          items: { type: object, properties: { id: { type: integer }, nome_arquivo: { type: string }, tamanho_bytes: { type: integer }, descricao: { type: string, nullable: true } } }
+        perguntas:
+          type: array
+          description: "vazio no 7.3.28"
+          items: { type: object, properties: { id: { type: integer }, codigo: { type: string }, secao: { type: string, nullable: true }, texto: { type: string }, ajuda: { type: string, nullable: true } } }
+        respostas:
+          type: array
+          items: { type: object, properties: { perguntaId: { type: integer }, alternativa: { type: string }, comprovacao: { type: string, nullable: true } } }
+        listas:
+          type: object
+          properties:
+            tiposEmpresa: { type: array, items: { type: string } }
+            tiposFrete: { type: array, items: { type: string } }
+            alteracoes: { type: array, items: { type: object, properties: { codigo: { type: string }, rotulo: { type: string } } } }
+
+    Auditoria:
+      type: object
+      properties:
+        id: { type: integer }
+        fornecedor_id: { type: integer }
+        qualificacao_id: { type: integer, nullable: true }
+        motivo_tipo: { type: string, enum: [INICIAL, ACOMPANHAMENTO, REQUALIFICACAO] }
+        tipo: { type: string, enum: [IN_LOCO, REMOTA, DOCUMENTAL] }
+        status: { type: string, enum: [AGENDADA, REALIZADA, CANCELADA] }
+        data_agendada: { type: string, format: date, nullable: true }
+        data_realizada: { type: string, format: date, nullable: true }
+        auditor_id: { type: integer, nullable: true }
+        auditor_nome: { type: string, nullable: true }
+        escopo: { type: string, nullable: true }
+        resultado: { type: string, enum: [CONFORME, NAO_CONFORME, CONFORME_COM_OBSERVACOES], nullable: true }
+        plano_acao: { type: string, nullable: true }
+        referencia_pro_822: { type: boolean }
+        observacoes: { type: string, nullable: true }
+
+    Amostra:
+      type: object
+      properties:
+        id: { type: integer }
+        fornecedor_id: { type: integer }
+        qualificacao_id: { type: integer, nullable: true }
+        componente_codigo: { type: string, nullable: true }
+        componente_descricao: { type: string, nullable: true }
+        quantidade: { type: number, nullable: true }
+        status: { type: string, enum: [SOLICITADA, RECEBIDA, AVALIADA, CANCELADA] }
+        data_solicitacao: { type: string, format: date, nullable: true }
+        data_recebimento: { type: string, format: date, nullable: true }
+        observacoes: { type: string, nullable: true }
+
+    ResultadoAvaliacao:
+      type: string
+      enum: [APROVADO, APROVADO_COM_RESTRICAO, REPROVADO, NAO_APLICAVEL]
+      nullable: true
+
+    AvaliacaoItem:
+      type: object
+      required: [caracteristica]
+      properties:
+        caracteristica: { type: string }
+        critico: { type: boolean, default: false, description: "requisito crítico: não atendido = REPROVADO (PRO 5.7)" }
+        nominal: { type: string, nullable: true }
+        tolerancia: { type: string, nullable: true }
+        medido: { type: string, nullable: true }
+        unidade: { type: string, nullable: true }
+        instrumento: { type: string, nullable: true }
+        status: { type: string, enum: [CONFORME, NAO_CONFORME], default: CONFORME }
+
+    Avaliacao:
+      type: object
+      properties:
+        id: { type: integer }
+        fornecedor_id: { type: integer }
+        qualificacao_id: { type: integer, nullable: true }
+        amostra_id: { type: integer, nullable: true }
+        tipo: { type: string, enum: [DIMENSIONAL, FUNCIONAL] }
+        componente_codigo: { type: string, nullable: true }
+        componente_descricao: { type: string, nullable: true }
+        data_recebimento_amostra: { type: string, format: date, nullable: true }
+        data_avaliacao: { type: string, format: date, nullable: true }
+        avaliado_nome: { type: string, nullable: true }
+        resultado: { $ref: "#/components/schemas/ResultadoAvaliacao" }
+        acordo_formal: { type: string, nullable: true, description: "APROVADO_COM_RESTRICAO: acordo formal com o fornecedor (PRO 5.7)" }
+        observacoes: { type: string, nullable: true }
+        itens: { type: array, items: { $ref: "#/components/schemas/AvaliacaoItem" } }
+        itens_nc: { type: integer }
+
+    InspecaoForm:
+      type: object
+      description: "corpo de calcular / incluir / alterar inspeção (camelCase)"
+      properties:
+        fornecedorId: { type: integer }
+        relInsp: { type: integer, description: "só administração; padrão = próximo número da sequência" }
+        pedidoCompras: { type: string }
+        pedidoItem: { type: string }
+        codItem: { type: string }
+        descricaoItem: { type: string }
+        notaFiscal: { type: string }
+        lote: { type: string }
+        nivelInspecao: { type: string, enum: [I, II, III, "100"], description: "a quantidade inspecionada depende do nível; 100 = lote inteiro" }
+        qtdRecebida: { type: number }
+        qtdInspecionada: { type: number, description: "classe D: igual à recebida" }
+        qtdAprovada: { type: number }
+        qtdReprovada: { type: number }
+        especificacao: { type: string, description: "coluna ESP. da planilha" }
+        criterioAceitacao: { type: string }
+        resultadoDescricao: { type: string }
+        instrumentoUtilizado: { type: string }
+        rncNumero: { type: string }
+        dataEntregaPrevista: { type: string, format: date, description: "importado: data de COLETA prevista" }
+        dataEntregaReal: { type: string, format: date, description: "importado: data de COLETA real" }
+        dataInspecao: { type: string, format: date }
+        ajustes:
+          type: object
+          description: "ajuste manual (só Qualidade; valor tem de existir na tabela vigente)"
+          properties:
+            c: { type: number, nullable: true }
+            p: { type: number, nullable: true }
+            n: { type: number, nullable: true }
+        ajusteJustificativa: { type: string }
+        observacoes: { type: string }
+        responsavelNome: { type: string }
+        bloqueioJustificativa: { type: string, description: "Qualidade recebendo de fornecedor inativo/suspenso/não aprovado" }
+
+    InspecaoLinha:
+      type: object
+      properties:
+        id: { type: integer }
+        rel_insp: { type: integer }
+        fornecedor_id: { type: integer }
+        fornecedor_codigo: { type: string }
+        fornecedor_nome: { type: string, nullable: true }
+        pedido_compras: { type: string, nullable: true }
+        cod_item: { type: string, nullable: true }
+        descricao_item: { type: string, nullable: true }
+        nota_fiscal: { type: string, nullable: true }
+        lote: { type: string, nullable: true }
+        nivel_inspecao: { type: string, nullable: true }
+        qtd_recebida: { type: number, nullable: true }
+        qtd_inspecionada: { type: number, nullable: true }
+        qtd_aprovada: { type: number, nullable: true }
+        qtd_reprovada: { type: number, nullable: true }
+        rnc_numero: { type: string, nullable: true }
+        data_entrega_prevista: { type: string, format: date, nullable: true }
+        data_entrega_real: { type: string, format: date, nullable: true }
+        data_inspecao: { type: string, format: date, nullable: true }
+        dias_atraso: { type: integer, nullable: true, description: "negativo = antecipação" }
+        indice_c: { type: number, nullable: true }
+        indice_p: { type: number, nullable: true }
+        indice_n: { type: number, nullable: true }
+        iqf: { type: number, nullable: true, description: "C × P × N (máx. 10 no OUT261)" }
+        nc: { type: boolean }
+        c_manual: { type: boolean }
+        p_manual: { type: boolean }
+        n_manual: { type: boolean }
+        responsavel_nome: { type: string, nullable: true }
+        criado_por: { type: integer, nullable: true }
+        origem: { type: string, enum: [INTRANET, PLANILHA] }
+        legado_avisos: { type: array, items: { type: string }, nullable: true }
+        excluido: { type: boolean }
+        anexos: { type: integer }
+        item_criticidade: { allOf: [{ $ref: "#/components/schemas/Criticidade" }], nullable: true, description: "criticidade do item na lista de itens críticos no momento do recebimento" }
+        tipo_prazo: { type: string, enum: [ENTREGA, COLETA], nullable: true, description: "nacional = entrega; importado = coleta; null = legado" }
+        liberado_pela_qualidade: { type: boolean }
+
+    Inspecao:
+      allOf:
+        - { $ref: "#/components/schemas/InspecaoLinha" }
+        - type: object
+          properties:
+            pedido_item: { type: string, nullable: true }
+            especificacao: { type: string, nullable: true }
+            criterio_aceitacao: { type: string, nullable: true }
+            resultado_descricao: { type: string, nullable: true }
+            instrumento_utilizado: { type: string, nullable: true }
+            pct_conforme: { type: number, nullable: true }
+            ncs_janela: { type: integer, nullable: true }
+            ajuste_justificativa: { type: string, nullable: true }
+            bloqueio_justificativa: { type: string, nullable: true }
+            regra_versao_id: { type: integer, nullable: true }
+            regra_nome: { type: string, nullable: true }
+            observacoes: { type: string, nullable: true }
+            criado_por_nome: { type: string, nullable: true }
+            criado_em: { type: string, format: date-time }
+            atualizado_por_nome: { type: string, nullable: true }
+            atualizado_em: { type: string, format: date-time }
+            excluido_motivo: { type: string, nullable: true }
+            excluido_por_nome: { type: string, nullable: true }
+            excluido_em: { type: string, format: date-time, nullable: true }
+            fornecedor_status: { $ref: "#/components/schemas/StatusQualificacao" }
+            fornecedor_classe: { $ref: "#/components/schemas/Classe" }
+            fornecedor_iqf: { type: number, nullable: true }
+
+    InspecaoSalva:
+      type: object
+      properties:
+        ok: { type: boolean }
+        inspecao: { $ref: "#/components/schemas/Inspecao" }
+        fornecedor: { $ref: "#/components/schemas/Recalculo" }
+
+    Calculo:
+      type: object
+      properties:
+        regra: { type: object, properties: { id: { type: integer }, nome: { type: string } } }
+        calc:
+          type: object
+          properties:
+            pctConforme: { type: number, nullable: true }
+            diasAtraso: { type: integer, nullable: true }
+            tabelaP: { type: string, enum: [NACIONAL, IMPORTADO, ANTECIPACAO, LEGADO], description: "tabela de P usada (LEGADO = faixasP da regra da planilha)" }
+            tipoPrazo: { type: string, enum: [ENTREGA, COLETA] }
+            nc: { type: boolean }
+            ncsJanela: { type: integer }
+            indiceC: { type: number, nullable: true }
+            indiceP: { type: number, nullable: true }
+            indiceN: { type: number, nullable: true }
+            iqf: { type: number, nullable: true }
+            manual: { type: object, properties: { c: { type: boolean }, p: { type: boolean }, n: { type: boolean } } }
+            calculado: { type: object, properties: { c: { type: number, nullable: true }, p: { type: number, nullable: true }, n: { type: number, nullable: true } } }
+            rotulos: { type: object, properties: { c: { type: string, nullable: true }, p: { type: string, nullable: true }, n: { type: string, nullable: true } } }
+            classeInspecao: { $ref: "#/components/schemas/ClasseInfo" }
+        amostra:
+          type: object
+          nullable: true
+          description: "NBR 5426 — amostra sugerida pelo nível"
+          properties: { amostra: { type: number }, ac: { type: number }, re: { type: number }, faixa: { type: string }, norma: { type: string } }
+        itemCriticidade: { allOf: [{ $ref: "#/components/schemas/Criticidade" }], nullable: true }
+        alertas: { type: array, items: { type: string }, description: "ex.: item crítico de fornecedor não qualificado nessa criticidade" }
+        janela: { type: array, items: { type: object, properties: { relInsp: { type: integer }, data: { type: string, format: date }, nc: { type: boolean } } } }
+        erros: { type: array, items: { type: string } }
+        herdadosDaPlanilha: { type: array, items: { type: string, enum: [P, N] } }
+        fornecedor:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            codigo: { type: string }
+            razao_social: { type: string }
+            status_qualificacao: { $ref: "#/components/schemas/StatusQualificacao" }
+            suspensao_tipo: { $ref: "#/components/schemas/SuspensaoTipo" }
+            motivo_suspensao: { type: string, nullable: true }
+            criticidades: { $ref: "#/components/schemas/Criticidades" }
+            nacional: { type: boolean }
+            ativo: { type: boolean }
+            iqf_medio: { type: number, nullable: true }
+            qtd_inspecoes: { type: integer }
+            classificacao: { $ref: "#/components/schemas/Classe" }
+            inspecao_100: { type: boolean }
+            iqf_desde: { type: string, format: date, nullable: true }
+        recebimento: { allOf: [{ $ref: "#/components/schemas/SituacaoRecebimento" }], nullable: true }
+        inspecao100: { type: boolean }
+        monitorado: { type: boolean, nullable: true, description: "false = não crítico: registra, sem classe" }
+        projecao:
+          type: object
+          nullable: true
+          description: "como fica a média do fornecedor crítico com esta inspeção (respeita iqf_desde)"
+          properties: { media: { type: number }, qtd: { type: integer }, classe: { $ref: "#/components/schemas/ClasseInfo" } }
+        classeAtual: { $ref: "#/components/schemas/ClasseInfo" }
+        valoresPermitidos: { type: object, properties: { C: { type: array, items: { type: number } }, P: { type: array, items: { type: number } }, N: { type: array, items: { type: number } } } }
+
+    PedidoCompra:
+      type: object
+      properties:
+        pedido: { type: string }
+        fornecedor:
+          type: object
+          properties:
+            codigo: { type: string }
+            loja: { type: string }
+            nome: { type: string }
+            modulo:
+              type: object
+              nullable: true
+              properties:
+                id: { type: integer }
+                codigo: { type: string }
+                razao_social: { type: string }
+                status_qualificacao: { $ref: "#/components/schemas/StatusQualificacao" }
+                criticidades: { $ref: "#/components/schemas/Criticidades" }
+                nacional: { type: boolean }
+                ativo: { type: boolean }
+                classificacao: { $ref: "#/components/schemas/Classe" }
+                iqf_medio: { type: number, nullable: true }
+                inspecao_100: { type: boolean }
+                suspensao_tipo: { $ref: "#/components/schemas/SuspensaoTipo" }
+                motivo_suspensao: { type: string, nullable: true }
+                tem_plano: { type: boolean }
+            recebimento: { $ref: "#/components/schemas/SituacaoRecebimento" }
+            tipoPrazo: { type: string, enum: [ENTREGA, COLETA] }
+        itens:
+          type: array
+          items:
+            type: object
+            properties:
+              item: { type: string }
+              produto: { type: string }
+              descricao: { type: string }
+              tipo: { type: string }
+              um: { type: string }
+              quant: { type: number }
+              quje: { type: number }
+              saldo: { type: number }
+              eliminado: { type: boolean }
+              datprf: { type: string, format: date, nullable: true, description: "C7_DATPRF — base do P" }
+              emissao: { type: string, format: date, nullable: true }
+              datprfAlteracoes:
+                type: array
+                description: "quando o módulo de Compras alterou a previsão (de → para)"
+                items: { type: object, properties: { de: { type: string, format: date, nullable: true }, para: { type: string, format: date, nullable: true }, por: { type: string, nullable: true }, em: { type: string, format: date-time } } }
+              ultimaInspecao: { type: object, nullable: true }
+              criticidade: { allOf: [{ $ref: "#/components/schemas/Criticidade" }], nullable: true, description: "na lista de itens críticos" }
+              foraDaQualificacao: { type: boolean, description: "item crítico de fornecedor não qualificado nessa criticidade" }
+        notas:
+          type: array
+          items:
+            type: object
+            properties:
+              doc: { type: string }
+              serie: { type: string }
+              item: { type: string }
+              itempc: { type: string }
+              produto: { type: string }
+              quant: { type: number }
+              dtdigit: { type: string, format: date, nullable: true }
+              lote: { type: string }
+              recbmto: { type: string, format: date, nullable: true }
+              preNota: { type: boolean }
+
+    SA2:
+      type: object
+      properties:
+        codigo: { type: string }
+        loja: { type: string }
+        razao_social: { type: string }
+        nome_fantasia: { type: string, nullable: true }
+        cnpj: { type: string, nullable: true }
+        estado: { type: string, nullable: true }
+        nacional: { type: boolean }
+        cidade: { type: string, nullable: true }
+        contato_email: { type: string, nullable: true }
+        bloqueado_protheus: { type: boolean }
+        modulo:
+          type: object
+          nullable: true
+          description: "já cadastrado no módulo"
+          properties:
+            id: { type: integer }
+            codigo: { type: string }
+            status_qualificacao: { $ref: "#/components/schemas/StatusQualificacao" }
+            criticidades: { $ref: "#/components/schemas/Criticidades" }
+            ativo: { type: boolean }
+
+    StatusFornecedor:
+      type: object
+      properties:
+        codigo: { type: string }
+        razaoSocial: { type: string }
+        cadastrado: { type: boolean }
+        apto: { type: boolean, description: "ativo e APROVADO/APROVADO_COM_RESTRICAO" }
+        recebimentoLiberado: { type: boolean }
+        inspecao100: { type: boolean }
+        status: { $ref: "#/components/schemas/StatusQualificacao" }
+        ativo: { type: boolean }
+        criticidades: { $ref: "#/components/schemas/Criticidades" }
+        monitorado: { type: boolean }
+        suspensaoTipo: { $ref: "#/components/schemas/SuspensaoTipo" }
+        motivoSuspensao: { type: string, nullable: true }
+        qualificacaoValidaAte: { type: string, format: date, nullable: true }
+        iqf: { type: number, nullable: true }
+        qtdInspecoes: { type: integer }
+        ultimaInspecao: { type: string, format: date, nullable: true }
+        classe: { $ref: "#/components/schemas/Classe" }
+        classeRotulo: { type: string, nullable: true }
+        documentos:
+          type: object
+          nullable: true
+          description: "só crítico"
+          properties: { completo: { type: boolean }, pendentes: { type: integer }, vencidos: { type: integer }, vencendo: { type: integer } }
+
+    Vencimentos:
+      type: object
+      properties:
+        dias: { type: integer }
+        linhas:
+          type: array
+          items:
+            type: object
+            properties:
+              fornecedorId: { type: integer }
+              codigo: { type: string }
+              razaoSocial: { type: string }
+              criticidades: { $ref: "#/components/schemas/Criticidades" }
+              statusFornecedor: { $ref: "#/components/schemas/StatusQualificacao" }
+              suspensaoTipo: { $ref: "#/components/schemas/SuspensaoTipo" }
+              contatoEmail: { type: string, nullable: true }
+              tipoId: { type: integer }
+              tipoCodigo: { type: string }
+              tipoNome: { type: string }
+              regra: { type: string }
+              situacao: { type: string, enum: [VENCIDO, VENCENDO, PENDENTE] }
+              situacaoDocumento: { $ref: "#/components/schemas/SituacaoDoc" }
+              protocolo: { type: boolean }
+              prazoRegularizacao: { type: string, format: date, nullable: true }
+              venceEm: { type: integer, nullable: true }
+              dataValidade: { type: string, format: date, nullable: true }
+              documentoId: { type: integer, nullable: true }
+              numero: { type: string, nullable: true }
+        resumo:
+          type: object
+          properties:
+            vencidos: { type: integer }
+            pendentes: { type: integer }
+            em30: { type: integer }
+            em60: { type: integer }
+            em90: { type: integer }
+            fornecedoresCriticos: { type: integer }
+
+    FornCurto:
+      type: object
+      properties:
+        id: { type: integer }
+        codigo: { type: string }
+        razao_social: { type: string }
+        criticidades: { $ref: "#/components/schemas/Criticidades" }
+
+    RequalLinha:
+      allOf:
+        - { $ref: "#/components/schemas/FornCurto" }
+        - type: object
+          properties:
+            status_qualificacao: { $ref: "#/components/schemas/StatusQualificacao" }
+            suspensao_tipo: { $ref: "#/components/schemas/SuspensaoTipo" }
+            qualificacao_valida_ate: { type: string, format: date, nullable: true }
+            dias: { type: integer, nullable: true }
+            processo_aberto: { type: integer, nullable: true }
+
+    AlertaDashboard:
+      allOf:
+        - { $ref: "#/components/schemas/FornCurto" }
+        - type: object
+          properties:
+            classificacao: { $ref: "#/components/schemas/Classe" }
+            iqf_medio: { type: number, nullable: true }
+            qtd_inspecoes: { type: integer }
+            status_qualificacao: { $ref: "#/components/schemas/StatusQualificacao" }
+            suspensao_tipo: { $ref: "#/components/schemas/SuspensaoTipo" }
+            motivo_suspensao: { type: string, nullable: true }
+            suspenso_em: { type: string, format: date-time, nullable: true }
+            tem_plano: { type: boolean }
+            plano_acao_iqf_em: { type: string, format: date-time, nullable: true }
+            inspecao_100: { type: boolean }
+            ultima_inspecao: { type: string, format: date, nullable: true }
+
+    Dashboard:
+      type: object
+      properties:
+        regra: { type: object, properties: { id: { type: integer }, nome: { type: string }, classes: { type: array, items: { type: object } } } }
+        porClasse: { type: array, items: { type: object, properties: { classe: { type: string }, n: { type: integer } } }, description: "só críticos ativos" }
+        contagem:
+          type: object
+          properties:
+            criticos: { type: integer }
+            naoCriticos: { type: integer }
+            inativos: { type: integer }
+            inspecao100: { type: integer }
+            porCriticidade: { type: object, properties: { A: { type: integer }, B: { type: integer }, C: { type: integer }, D: { type: integer } } }
+            itensCriticos: { type: integer }
+        alertas: { type: array, items: { $ref: "#/components/schemas/AlertaDashboard" }, description: "críticos ativos em C/D/E ou suspensos" }
+        aguardandoPlano: { type: array, items: { $ref: "#/components/schemas/AlertaDashboard" } }
+        cdSemPlano: { type: array, items: { $ref: "#/components/schemas/AlertaDashboard" }, description: "C/D sem plano registrado e não suspensos (histórico importado)" }
+        requalificacao:
+          type: object
+          properties:
+            janelaDias: { type: integer }
+            vencidas: { type: array, items: { $ref: "#/components/schemas/RequalLinha" } }
+            vencendo: { type: array, items: { $ref: "#/components/schemas/RequalLinha" } }
+            semData: { type: array, items: { $ref: "#/components/schemas/RequalLinha" } }
+        auditoriasSugeridas:
+          type: array
+          items:
+            allOf:
+              - { $ref: "#/components/schemas/FornCurto" }
+              - type: object
+                properties:
+                  classificacao: { $ref: "#/components/schemas/Classe" }
+                  iqf_medio: { type: number, nullable: true }
+                  auditoria_sugerida_motivo: { type: string }
+        documentos:
+          type: object
+          properties:
+            vencidos: { type: integer }
+            em30: { type: integer }
+            em60: { type: integer }
+            em90: { type: integer }
+            pendentes: { type: integer }
+            protocolados: { type: integer }
+            fornecedoresComPendencia: { type: integer }
+            criticos: { type: integer }
+            listaVencidos:
+              type: array
+              items:
+                type: object
+                properties:
+                  fornecedorId: { type: integer }
+                  codigo: { type: string }
+                  razaoSocial: { type: string }
+                  documento: { type: string }
+                  situacao: { $ref: "#/components/schemas/SituacaoDoc" }
+                  validade: { type: string, format: date, nullable: true, description: "validade, ou prazo do protocolo" }
+        mes:
+          type: object
+          properties:
+            referencia: { type: string, format: date }
+            inspecoes: { type: integer }
+            comNc: { type: integer }
+            pctConforme: { type: number, nullable: true }
+            iqfMedio: { type: number, nullable: true }
+            itensCriticos: { type: integer }
+            anterior: { type: object, properties: { inspecoes: { type: integer }, comNc: { type: integer }, pctConforme: { type: number, nullable: true }, iqfMedio: { type: number, nullable: true } } }
+        serie:
+          type: array
+          items: { type: object, properties: { mes: { type: string }, qtd: { type: integer }, ncs: { type: integer }, iqf: { type: number, nullable: true }, fornecedores: { type: integer }, pctConforme: { type: number, nullable: true } } }
+        piores: { type: array, items: { $ref: "#/components/schemas/AlertaDashboard" }, description: "críticos com ≥ 3 inspeções" }
+        melhores: { type: array, items: { $ref: "#/components/schemas/AlertaDashboard" } }
+        fluxo:
+          type: object
+          properties:
+            processos: { type: array, items: { type: object, properties: { id: { type: integer }, fornecedor_id: { type: integer }, codigo: { type: string }, razao_social: { type: string }, tipo: { type: string }, etapa: { type: string }, status: { type: string }, iniciado_em: { type: string, format: date-time } } } }
+            fichas: { type: array, items: { type: object, properties: { id: { type: integer }, fornecedor_id: { type: integer }, codigo: { type: string }, razao_social: { type: string }, formulario: { $ref: "#/components/schemas/Formulario" }, status: { type: string }, respondida_em: { type: string, nullable: true }, enviada_em: { type: string, nullable: true }, token_expira_em: { type: string, nullable: true } } } }
+            auditorias: { type: array, items: { type: object, properties: { id: { type: integer }, fornecedor_id: { type: integer }, codigo: { type: string }, razao_social: { type: string }, tipo: { type: string }, motivo_tipo: { type: string }, data_agendada: { type: string, format: date, nullable: true } } } }
+        dadosLegado: { type: object, properties: { datas_futuras: { type: integer }, sem_data: { type: integer }, com_aviso: { type: integer } } }
+
+    FaixaP:
+      type: object
+      properties:
+        ate: { type: integer, nullable: true, description: "dias (inclusive); null = sem limite (obrigatória)" }
+        valor: { type: number }
+        rotulo: { type: string }
+
+    RegraConteudo:
+      type: object
+      description: "JSON de uma versão de regra (imutável depois de gravada)"
+      required: [faixasC, faixasN, classes, janelaN, escopoN, questionario]
+      properties:
+        pontos: { type: object, properties: { SIM: { type: number }, PARCIAL: { type: number }, NAO: { type: number } } }
+        questionario: { type: object, properties: { aprovado_min: { type: number, example: 70 }, restricao_min: { type: number, example: 50 } } }
+        faixasC: { type: array, items: { type: object, properties: { min: { type: number }, valor: { type: number }, rotulo: { type: string } } } }
+        prazo:
+          type: object
+          description: "OUT261 — três tabelas de P (use `prazo` OU `faixasP`)"
+          properties:
+            nacional: { type: array, items: { $ref: "#/components/schemas/FaixaP" }, description: "dias de atraso na ENTREGA" }
+            importado: { type: array, items: { $ref: "#/components/schemas/FaixaP" }, description: "dias de atraso na COLETA" }
+            antecipacao: { type: array, items: { $ref: "#/components/schemas/FaixaP" }, description: "dias de antecipação (nacional e importado)" }
+        faixasP:
+          type: array
+          description: "regra antiga (planilha): dias = real − prevista numa tabela só"
+          items: { $ref: "#/components/schemas/FaixaP" }
+        faixasN: { type: array, items: { type: object, properties: { ncs: { type: integer }, valor: { type: number }, rotulo: { type: string } } } }
+        janelaN: { type: integer, example: 3 }
+        escopoN: { type: string, enum: [FORNECEDOR, FORNECEDOR_ITEM], example: FORNECEDOR_ITEM }
+        classes:
+          type: array
+          items:
+            type: object
+            properties:
+              classe: { type: string }
+              min: { type: number, nullable: true, description: "null = classe final (abaixo)" }
+              rotulo: { type: string }
+              cor: { type: string }
+              acao: { $ref: "#/components/schemas/AcaoClasse" }
+        requalificacao: { type: object, properties: { meses: { type: integer, example: 12 }, antecedenciaDias: { type: integer, example: 30 } } }
+        auditoriaAcompanhamento:
+          type: object
+          description: "gatilhos do PRO 5.6.2"
+          properties:
+            iqfLimite: { type: number, example: 7 }
+            avaliacoesConsecutivas: { type: integer, example: 2 }
+            ncsMinimo: { type: integer, example: 3 }
+            ncsJanelaMeses: { type: integer, example: 6 }
+        amostragem:
+          type: object
+          description: "NBR 5426: { norma, I: [{de, ate, amostra, ac, re}], II: [...] }"
+
+    RegraVersao:
+      type: object
+      properties:
+        id: { type: integer }
+        nome: { type: string }
+        referencia: { type: string, nullable: true }
+        descricao: { type: string, nullable: true }
+        conteudo: { $ref: "#/components/schemas/RegraConteudo" }
+        ativa: { type: boolean }
+        criado_em: { type: string, format: date-time }
+        ativada_em: { type: string, format: date-time, nullable: true }
+        criado_por_nome: { type: string, nullable: true }
+        ativada_por_nome: { type: string, nullable: true }
+        inspecoes: { type: integer }
+
+    Ativacao:
+      type: object
+      properties:
+        de: { type: string, nullable: true, description: "versão que estava ativa" }
+        recalculo: { type: object, properties: { fornecedores: { type: integer }, classeAlterada: { type: integer } } }
+
+    LogLinha:
+      type: object
+      properties:
+        id: { type: integer }
+        entidade: { type: string }
+        entidade_id: { type: integer, nullable: true }
+        fornecedor_id: { type: integer, nullable: true }
+        fornecedor_codigo: { type: string, nullable: true }
+        acao: { type: string }
+        campo: { type: string, nullable: true }
+        valor_anterior: { type: string, nullable: true }
+        valor_novo: { type: string, nullable: true }
+        motivo: { type: string, nullable: true }
+        usuario_nome: { type: string, nullable: true }
+        ip: { type: string, nullable: true }
+        criado_em: { type: string, format: date-time }

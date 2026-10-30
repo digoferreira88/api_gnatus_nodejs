@@ -238,6 +238,10 @@ async function registrarEnvio(Pg, titulo, tipo, info) {
 // nao competir conexao Protheus/PG, e antes do horario comercial.
 const CRON_CONTRATOS = '30 8 * * *';  // 08:30 todo dia
 
+// Qualificação de Fornecedores: documentos regulatórios e requalificação anual, antes do
+// expediente. ⚠️ cron em UTC (a VPS roda em UTC): 10:10 UTC = 07:10 de Brasília.
+const CRON_QF_DOCUMENTOS = process.env.CRON_QF_DOCUMENTOS || '10 10 * * *';
+
 // Snapshot de estoque -> tab_estoque_snapshot_mensal (refaz mes corrente).
 // Madrugada pra nao concorrer com cobranca/contratos.
 const CRON_ESTOQUE_SNAPSHOT = '0 3 * * *';  // 03:00 todo dia
@@ -339,6 +343,23 @@ function start(app) {
     }
   });
   console.log(`[scheduler] contratos agendado: cron "${CRON_CONTRATOS}"`);
+
+  // Qualificação de Fornecedores — documentos regulatórios vencendo/vencidos (PRO 7.3.7 5.10).
+  // Dormente sem QF_ALERTAS_ATIVO=1: suspende fornecedor crítico com documento vencido.
+  if (String(process.env.QF_ALERTAS_ATIVO || '') === '1') {
+    if (jobs.qfDocumentos) jobs.qfDocumentos.cancel();
+    jobs.qfDocumentos = schedule.scheduleJob(CRON_QF_DOCUMENTOS, async () => {
+      try {
+        const stats = await require('./qfAlertas').rodar(app);
+        console.log('[scheduler] qf-documentos concluido:', stats);
+      } catch (err) {
+        console.error('[scheduler] erro em qf-documentos:', err.message);
+      }
+    });
+    console.log(`[scheduler] qf-documentos agendado: cron "${CRON_QF_DOCUMENTOS}"`);
+  } else {
+    console.log('[scheduler] qf-documentos: QF_ALERTAS_ATIVO!=1 — não agendado');
+  }
 
   // Estoque - snapshot mensal (refaz mes corrente)
   if (jobs.estoqueSnapshot) jobs.estoqueSnapshot.cancel();

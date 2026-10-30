@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon --inspect index.js",
-    "dev:full": "pm2-runtime start pm2.config.js"
+    "dev:full": "pm2-runtime start pm2.config.js",
+    "test": "node --test \"test/**/*.test.js\""
   },
   "dependencies": {
     "@aws-sdk/lib-storage": "^3.828.0",
