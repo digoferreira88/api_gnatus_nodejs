@@ -82,6 +82,14 @@ async function criar(app, { ref, origem, origemId }) {
   const doc = soDig(t.cliente_doc);
   if (doc.length !== 11 && doc.length !== 14) return { erro: 'Cliente sem CPF/CNPJ válido no cadastro.' };
 
+  const vencimento = diaIso(t.vencimento);
+  if (!vencimento) return { erro: 'Título sem data de vencimento utilizável.' };
+  // Título em dia não leva encargo nenhum. Guardamos o que vai ao banco, não a
+  // configuração: senão a tela do cliente avisa sobre multa que não existe.
+  const venceu = vencimento < hoje();
+  const multa = venceu ? MULTA_PERC : 0;
+  const juros = venceu ? JUROS_PERC : 0;
+
   const txid = BB.novoTxid({ numero: t.numero, parcela: t.parcela });
   // Grava ANTES de chamar o banco: se a chamada falhar no meio, a linha fica
   // com o erro e dá para investigar. Cobrança criada no BB sem registro aqui
@@ -97,13 +105,10 @@ async function criar(app, { ref, origem, origemId }) {
       txid, ref: trim(ref), origem: trim(origem) || 'portal', origemId: trim(origemId) || null,
       doc, cod: trim(t.cliente_cod), loja: trim(t.cliente_loja), nome: trim(t.cliente_nome),
       prefixo: trim(t.prefixo), numero: trim(t.numero), parcela: trim(t.parcela),
-      valor: N(t.saldo), vencimento: t.vencimento,
-      multa: MULTA_PERC, juros: JUROS_PERC
+      valor: N(t.saldo), vencimento,
+      multa, juros
     });
 
-  const vencimento = diaIso(t.vencimento);
-  if (!vencimento) return { erro: 'Título sem data de vencimento utilizável.' };
-  const venceu = vencimento < hoje();
   try {
     const r = await BB.criarCobv({
       txid,
@@ -114,10 +119,10 @@ async function criar(app, { ref, origem, origemId }) {
         ? { cnpj: doc, nome: trim(t.cliente_nome) }
         : { cpf: doc, nome: trim(t.cliente_nome) },
       descricao: `Gnatus - NF ${trim(t.numero)}${trim(t.parcela) ? '/' + trim(t.parcela) : ''}`,
-      // Título em dia não leva encargo nenhum; vencido leva multa e juros, que
-      // o banco aplica sozinho a partir da data de vencimento.
-      multaPerc: venceu ? MULTA_PERC : 0,
-      jurosPerc: venceu ? JUROS_PERC : 0
+      // Vencido leva multa e juros, que o banco aplica sozinho a partir da data
+      // de vencimento; em dia vai zero.
+      multaPerc: multa,
+      jurosPerc: juros
     });
 
     const copiaECola = trim(r.pixCopiaECola);
