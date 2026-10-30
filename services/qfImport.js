@@ -310,7 +310,8 @@ async function importarLista(app, buffer, { dryRun = false, req = null } = {}) {
          status_qualificacao = EXCLUDED.status_qualificacao, sgq_bpf = EXCLUDED.sgq_bpf, sgq_iso13485 = EXCLUDED.sgq_iso13485,
          sgq_iso9001 = EXCLUDED.sgq_iso9001, sgq_acordo = EXCLUDED.sgq_acordo, sgq_questionario = EXCLUDED.sgq_questionario,
          nota_sgq = EXCLUDED.nota_sgq, pendencias = EXCLUDED.pendencias, origem = EXCLUDED.origem, legado = TRUE, atualizado_em = NOW()
-       WHERE tab_qf_fornecedor.legado AND tab_qf_fornecedor.atualizado_por IS NULL`);
+       -- sobrescreve o que veio da planilha ou só do espelho do Protheus (SA2), desde que ninguém tenha editado no módulo
+       WHERE (tab_qf_fornecedor.legado OR tab_qf_fornecedor.origem = 'SA2') AND tab_qf_fornecedor.atualizado_por IS NULL`);
     await Core.log(Pg, req, { entidade: 'importacao', acao: 'IMPORTAR_LISTA', mudancas: [{ campo: 'fornecedores', de: null, para: fornecedores.length }], motivo: 'FORM 7.3.24' }, q);
   });
   const depois = await Pg.connectAndQuery(`SELECT COUNT(*)::int n FROM tab_qf_fornecedor`);
