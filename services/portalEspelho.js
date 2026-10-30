@@ -340,15 +340,8 @@ async function publicar(app) {
 
   // Publica mesmo sem nada novo: é nesta resposta que os pedidos do cliente
   // chegam, e num dia sem movimento eles ficariam parados no portal.
-  const resp = await fetch(`${destino.replace(/\/+$/, '')}/espelho`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ geradoEm: new Date().toISOString(), itens, confirmados })
-  });
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => '');
-    throw new Error(`portal respondeu ${resp.status}: ${txt.slice(0, 200)}`);
-  }
+  const pix = await pixPendentes(Pg);
+  const corpo = await postar(destino, token, { itens, confirmados, pix });
 
   const ids = pendentes.map(p => p.id);
   if (ids.length) {
@@ -364,17 +357,13 @@ async function publicar(app) {
       `UPDATE tab_boleto_2via_solicitacao SET confirmado_em = NOW()
         WHERE origem_id = ANY(@ids::text[])`, { ids: confirmados });
   }
+  await marcarPixPublicado(Pg, pix);
 
-  // A conexão é sempre iniciada daqui, então os pedidos de 2ª via que o cliente
-  // fez no portal voltam NA RESPOSTA desta publicação — assim não precisamos
-  // abrir uma porta da internet para a intranet.
-  let recebidas = 0;
-  try {
-    const corpo = await resp.json().catch(() => ({}));
-    recebidas = await ingerirSolicitacoes(Pg, corpo && corpo.solicitacoes);
-  } catch (e) {
-    console.warn('portalEspelho: resposta sem pedidos legíveis —', e.message);
-  }
+  // A conexão é sempre iniciada daqui, então o que o cliente fez no portal volta
+  // NA RESPOSTA desta publicação — assim não precisamos abrir uma porta da
+  // internet para a intranet.
+  const recebidas = await ingerirSolicitacoes(Pg, corpo.solicitacoes);
+  const pixCriados = await ingerirPixPedidos(app, corpo.pix_pedidos);
 
   return {
     status: 'enviado',
@@ -382,9 +371,94 @@ async function publicar(app) {
     pdfs_enviados: pdfs.size,
     pdfs_sem_boleto: pdfFalhas,
     confirmados: confirmados.length,
+    pix_enviados: pix.length,
+    pix_pedidos: pixCriados,
     destino,
     solicitacoes_recebidas: recebidas
   };
+}
+
+// ------------------------------------------------------------------ Pix
+// O POST ao portal, num lugar só: a publicação completa e a passada curta do
+// Pix mandam coisas diferentes pela mesma porta.
+async function postar(destino, token, dados) {
+  const resp = await fetch(`${destino.replace(/\/+$/, '')}/espelho`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ geradoEm: new Date().toISOString(), ...dados })
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`portal respondeu ${resp.status}: ${txt.slice(0, 200)}`);
+  }
+  return (await resp.json().catch(() => ({}))) || {};
+}
+
+// Cobranças cujo estado o portal ainda não conhece: QR recém-criado, Pix que
+// caiu, cobrança que expirou ou deu erro.
+async function pixPendentes(Pg) {
+  const r = await Pg.connectAndQuery(
+    `SELECT txid, ref, origem_id, status, copia_e_cola, qr_png, location,
+            valor_original, vencimento, expira_em, valor_pago, pago_em, e2eid, erro,
+            multa_perc, juros_perc
+       FROM tab_pix_cobranca WHERE publicado_em IS NULL ORDER BY id LIMIT 200`, {});
+  return r;
+}
+
+async function marcarPixPublicado(Pg, pix) {
+  if (!pix || !pix.length) return;
+  await Pg.connectAndQuery(
+    `UPDATE tab_pix_cobranca SET publicado_em = NOW() WHERE txid = ANY(@ids::text[])`,
+    { ids: pix.map(p => p.txid) });
+}
+
+// "Quero pagar por Pix" vindo do portal. A cobrança nasce aqui, com a
+// credencial do banco, e o QR volta na passada seguinte.
+async function ingerirPixPedidos(app, lista) {
+  if (!Array.isArray(lista) || !lista.length) return 0;
+  const Pix = require('./pixCobranca');
+  let criadas = 0;
+  for (const p of lista) {
+    try {
+      const r = await Pix.criar(app, { ref: trim(p.ref), origem: 'portal', origemId: trim(p.id) });
+      if (r.cobranca && !r.jaExistia) criadas++;
+      if (r.erro) console.warn(`portalEspelho: Pix de ${trim(p.ref)} recusado — ${r.erro}`);
+    } catch (e) {
+      console.warn(`portalEspelho: Pix de ${trim(p && p.ref)} falhou —`, e.message);
+    }
+  }
+  return criadas;
+}
+
+// Passada CURTA, só para o Pix: leva o que mudou, traz os pedidos, cria as
+// cobranças e leva o QR recém-criado na mesma chamada seguinte. É o que faz o
+// cliente esperar segundos em vez do ciclo completo do espelho.
+async function publicarPix(app) {
+  const { Pg } = app.services;
+  const destino = trim(process.env.PORTAL_URL);
+  const token = trim(process.env.PORTAL_TOKEN);
+  if (!destino || !token) return { status: 'inerte' };
+
+  const pix = await pixPendentes(Pg);
+  const corpo = await postar(destino, token, { itens: [], pix });
+  await marcarPixPublicado(Pg, pix);
+
+  const criadas = await ingerirPixPedidos(app, corpo.pix_pedidos);
+  let entregues = 0;
+  if (criadas) {
+    // Segunda passada imediata: o QR que acabou de nascer vai agora, e não
+    // daqui a meio minuto com o cliente olhando para a tela.
+    const novos = await pixPendentes(Pg);
+    if (novos.length) {
+      await postar(destino, token, { itens: [], pix: novos });
+      await marcarPixPublicado(Pg, novos);
+      entregues = novos.length;
+    }
+  }
+  // Pedidos de 2ª via também voltam nesta resposta — ignorar seria deixá-los
+  // esperando o ciclo longo sem motivo.
+  const recebidas = await ingerirSolicitacoes(Pg, corpo.solicitacoes);
+  return { status: 'ok', pix_enviados: pix.length, pix_criados: criadas, pix_entregues: entregues, solicitacoes_recebidas: recebidas };
 }
 
 // Pedidos de 2ª via vindos do portal. Idempotente pelo id de lá: a mesma
@@ -442,4 +516,4 @@ async function rodar(app, { por } = {}) {
   return { ...resumo, ...pub, erro, duracao_ms: Date.now() - t0 };
 }
 
-module.exports = { montar, gravar, publicar, rodar, telefoneDe, emailDe, ingerirSolicitacoes };
+module.exports = { montar, gravar, publicar, publicarPix, rodar, telefoneDe, emailDe, ingerirSolicitacoes };

@@ -314,6 +314,14 @@ const CRON_NFSE_ADN = process.env.CRON_NFSE_ADN || '35 8-19/2 * * 1-5';  // :35,
 const CRON_PORTAL_ESPELHO = process.env.CRON_PORTAL_ESPELHO || '40 10-22/2 * * 1-5';
 const CRON_PORTAL_PEDIDOS = process.env.CRON_PORTAL_PEDIDOS || '*/10 10-23 * * *';
 
+// Pix do portal. Dois ritmos diferentes e ambos CURTOS, por motivos diferentes:
+//  · o cliente está com a tela aberta esperando o QR nascer — daí os 30s
+//    (6 campos: o primeiro é segundo);
+//  · depois de pagar, ele quer ver "pagamento confirmado", e o financeiro quer
+//    saber que entrou dinheiro — daí a conciliação de 2 em 2 minutos.
+const CRON_PORTAL_PIX = process.env.CRON_PORTAL_PIX || '*/30 * * * * *';
+const CRON_PIX_CONCILIAR = process.env.CRON_PIX_CONCILIAR || '*/2 * * * *';
+
 // (Transmite REMOVIDO em 28/07/2026: o SEFAZ DF-e passou a ser a fonte da Visão 3
 //  do Painel Fiscal, então o adapter, a tela e o token de sessão foram retirados.
 //  O alerta por e-mail já havia saído em 07/2026.)
@@ -598,9 +606,49 @@ function start(app) {
         console.error('[scheduler] erro no portal-pedidos:', err.message);
       }
     });
-    console.log(`[scheduler] portal-espelho agendado: cron "${CRON_PORTAL_ESPELHO}" · pedidos "${CRON_PORTAL_PEDIDOS}"`);
+    // Passada curta do Pix: leva o QR recém-criado e traz os pedidos novos. É
+    // ela que faz o cliente esperar segundos, e não o ciclo de 10 minutos.
+    jobs.portalPix = schedule.scheduleJob(CRON_PORTAL_PIX, async () => {
+      if (jobs._pixRodando) return;        // uma passada por vez: 30s é curto
+      jobs._pixRodando = true;
+      try {
+        const Portal = require('./portalEspelho');
+        const r = await Portal.publicarPix(app);
+        if (r.pix_criados || r.pix_enviados) console.log('[scheduler] portal-pix:', JSON.stringify(r));
+      } catch (err) {
+        console.error('[scheduler] erro no portal-pix:', err.message);
+      } finally {
+        jobs._pixRodando = false;
+      }
+    });
+    console.log(`[scheduler] portal-espelho agendado: cron "${CRON_PORTAL_ESPELHO}" · pedidos "${CRON_PORTAL_PEDIDOS}" · pix "${CRON_PORTAL_PIX}"`);
   } else {
     console.log('[scheduler] portal do cliente: PORTAL_URL/PORTAL_TOKEN ausentes — não agendado');
+  }
+
+  // Conciliação dos Pix recebidos: pergunta ao BB quais caíram e casa pelo
+  // txid. É o caminho que dispensa webhook — nenhuma porta da internet precisa
+  // alcançar a intranet.
+  if (jobs.pixConciliar) jobs.pixConciliar.cancel();
+  const BBPix = require('./bbPix');
+  if (BBPix.configurado()) {
+    jobs.pixConciliar = schedule.scheduleJob(CRON_PIX_CONCILIAR, async () => {
+      if (jobs._conciliando) return;
+      jobs._conciliando = true;
+      try {
+        const Pix = require('./pixCobranca');
+        const r = await Pix.conciliar(app);
+        if (r.novos) console.log('[scheduler] pix-conciliar:', JSON.stringify(r));
+        await Pix.expirarVencidas(app);
+      } catch (err) {
+        console.error('[scheduler] erro no pix-conciliar:', err.message);
+      } finally {
+        jobs._conciliando = false;
+      }
+    });
+    console.log(`[scheduler] pix-conciliar agendado: cron "${CRON_PIX_CONCILIAR}"${BBPix.simulando() ? ' (SIMULADO)' : ''}`);
+  } else {
+    console.log('[scheduler] pix: BB não configurado — não agendado');
   }
 }
 
