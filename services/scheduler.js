@@ -289,9 +289,9 @@ const CRON_PIPEFY_USO = '*/10 * * * *';
 // Gestão à Vista (TV + Visão Executiva): lê o Pipefy e grava o espelho no banco
 // (tab_painel_pipefy_*, migration 142); as telas leem só do banco. Este cron é em
 // horário de BRASÍLIA — o job passa tz explícito, então a VPS em UTC não o adianta.
-// Padrão: de 3 em 3h — 06h, 09h, 12h, 15h e 18h, seg-sex (5 leituras/dia). Custo de cada uma
+// Padrão: 06h, 12h e 18h, seg-sex (3 leituras/dia; ~43 chamadas cada = ~2,8 mil/mês). Custo de cada uma
 // em tab_painel_pipefy_sync.requisicoes. PAINEL_PIPEFY_ATIVO=0 desliga.
-const CRON_PAINEL_PIPEFY = process.env.CRON_PAINEL_PIPEFY || '0 6-18/3 * * 1-5';
+const CRON_PAINEL_PIPEFY = process.env.CRON_PAINEL_PIPEFY || '0 6,12,18 * * 1-5';
 
 // NPS pós-venda: pedidos faturados (estatus 99) -> convite + WhatsApp. Comercial,
 // de hora em hora (só roda com o módulo ATIVO + template Suri configurado).

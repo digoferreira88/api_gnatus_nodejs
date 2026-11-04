@@ -7,7 +7,7 @@
 -- (10.000 chamadas/mês) sofria, e a tela esperava o Pipefy responder.
 --
 -- Agora o scheduler lê o Pipefy em horários fixos (job "painel-pipefy", padrão
--- de 3 em 3h das 06h às 18h, seg-sex) e grava aqui. As telas leem SÓ do banco:
+-- 06h, 12h e 18h, seg-sex) e grava aqui. As telas leem SÓ do banco:
 -- abrir o painel, deixar a TV ligada ou clicar em "Atualizar" não gasta chamada.
 --
 -- tab_painel_pipefy_pipe  pipes da organização (todos, inclusive os que a config

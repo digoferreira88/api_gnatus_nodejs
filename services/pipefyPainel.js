@@ -4,8 +4,8 @@
 //
 // ESPELHO NO BANCO (migration 142) — o Pipefy é lido em horários fixos, não a
 // cada vez que alguém abre a tela:
-//   sincronizar()   chamado pelo scheduler (job "painel-pipefy", padrão de 3 em 3h
-//                   das 06h às 18h, seg-sex). Lê a lista de pipes da org + os cards
+//   sincronizar()   chamado pelo scheduler (job "painel-pipefy", padrão 06h, 12h e 18h
+//                   seg-sex). Lê a lista de pipes da org + os cards
 //                   abertos de cada pipe considerado e grava em
 //                   tab_painel_pipefy_pipe / tab_painel_pipefy_card. Cada leitura
 //                   fica em tab_painel_pipefy_sync com o custo em chamadas.
