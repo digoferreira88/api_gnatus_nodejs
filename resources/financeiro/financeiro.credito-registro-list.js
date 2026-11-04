@@ -1,9 +1,11 @@
-// GET /financeiro/credito-registro?bu=&inicio=&fim=&cliente=&cnpj=&pedido=&analista=&resultado=&motivo=&formato=csv
+// GET /financeiro/credito-registro?bu=&inicio=&fim=&cliente=&cnpj=&pedido=&analista=&resultado=&motivo=&canal=&repetidos=1&formato=csv
 //
 // Consulta/relatório dos registros de análise de crédito (só as versões
 // VIGENTES por padrão). Filtros: BU, período (criado_em), cliente (cod ou nome),
-// CPF/CNPJ, nº pedido, analista, resultado, motivo. formato=csv exporta.
-// Perm 8006 (edição) ou 8007 (somente visualização).
+// CPF/CNPJ, nº pedido, analista, resultado, motivo, canal e "repetidos" (só
+// CPF/CNPJ analisados mais de uma vez). formato=csv exporta.
+// Cada registro traz a posição dele entre as análises do mesmo CPF/CNPJ
+// (ordemDoc de qtdDoc). Perm 8006 (edição) ou 8007 (somente visualização).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
 const CR = require('../../services/creditoRegistro');
@@ -15,6 +17,8 @@ const csvCell = (v) => {
   const s = String(v == null ? '' : v).replace(/"/g, '""');
   return /[",;\n]/.test(s) ? `"${s}"` : s;
 };
+const dataBR = (ymd) => (ymd ? `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(0, 4)}` : '');
+const numBR = (n) => (n == null ? '' : Number(n).toFixed(2).replace('.', ','));
 
 module.exports = (app) => ({
   verb: 'get',
@@ -31,22 +35,27 @@ module.exports = (app) => ({
     if (trim(q.inicio))    { conds.push('r.criado_em >= @inicio'); p.inicio = trim(q.inicio); }
     if (trim(q.fim))       { conds.push('r.criado_em < (@fim::date + 1)'); p.fim = trim(q.fim); }
     if (trim(q.cliente))   { conds.push('(r.cliente_cod = @cli OR r.cliente_nome ILIKE @cliLike)'); p.cli = trim(q.cliente); p.cliLike = `%${trim(q.cliente)}%`; }
-    if (trim(q.cnpj))      { conds.push("regexp_replace(COALESCE(r.cnpj,''),'[^0-9]','','g') LIKE @cnpj"); p.cnpj = `%${trim(q.cnpj).replace(/\D/g, '')}%`; }
+    if (CR.soDig(q.cnpj))  { conds.push('r.documento LIKE @cnpj'); p.cnpj = `%${CR.soDig(q.cnpj)}%`; }
     if (trim(q.pedido))    { conds.push('r.pedido = @pedido'); p.pedido = trim(q.pedido); }
     if (trim(q.analista))  { conds.push('(r.analista_id = @analistaId OR r.analista_nome ILIKE @analistaLike)'); p.analistaId = Number(q.analista) || -1; p.analistaLike = `%${trim(q.analista)}%`; }
     if (trim(q.resultado)) { conds.push('r.resultado = @resultado'); p.resultado = trim(q.resultado); }
     if (trim(q.motivo))    { conds.push('@motivo = ANY(r.motivos)'); p.motivo = trim(q.motivo); }
     if (trim(q.canal))     { conds.push('r.canal = @canal'); p.canal = trim(q.canal); }
+    if (trim(q.repetidos) === '1') {
+      conds.push(`r.documento IS NOT NULL AND EXISTS (SELECT 1 FROM tab_credito_registro x
+                   WHERE x.vigente AND x.documento = r.documento AND x.grupo_id <> r.grupo_id)`);
+    }
 
     const where = conds.join(' AND ');
+    // ordem_doc: posição da análise entre as do mesmo CPF/CNPJ (grupo_id = id da
+    // 1ª versão, cresce com a data de registro).
     const sql = `
-      SELECT r.id, r.grupo_id, r.versao,
-             r.bu_cod, r.bu_nome, r.pedido, r.cliente_cod, r.cliente_loja, r.cliente_nome, r.cnpj,
-             r.valor_total, r.valor_entrada, r.parcelas_qtd, r.parcelas_valor,
-             r.tipo_analise, r.canal, r.canal_origem, r.resultado, r.motivos, r.parecer,
-             r.analista_nome, r.criado_em,
-             (r.versao > 1) AS editado,
-             (SELECT COUNT(*) FROM tab_credito_anexo a WHERE a.registro_id = r.grupo_id) AS qtd_anexos
+      SELECT ${CR.COLS},
+             (SELECT COUNT(*) FROM tab_credito_anexo a WHERE a.registro_id = r.grupo_id) AS qtd_anexos,
+             CASE WHEN r.documento IS NULL THEN 0 ELSE
+               (SELECT COUNT(*) FROM tab_credito_registro x WHERE x.vigente AND x.documento = r.documento) END AS qtd_doc,
+             CASE WHEN r.documento IS NULL THEN 0 ELSE
+               (SELECT COUNT(*) FROM tab_credito_registro x WHERE x.vigente AND x.documento = r.documento AND x.grupo_id <= r.grupo_id) END AS ordem_doc
         FROM tab_credito_registro r
        WHERE ${where}
        ORDER BY r.criado_em DESC
@@ -54,19 +63,28 @@ module.exports = (app) => ({
 
     try {
       const rows = await Pg.connectAndQuery(sql, p);
+      const registros = rows.map(r => ({
+        ...CR.mapRegistro(r),
+        qtdAnexos: N(r.qtd_anexos), qtdDoc: N(r.qtd_doc), ordemDoc: N(r.ordem_doc)
+      }));
 
       if (trim(q.formato).toLowerCase() === 'csv') {
-        const head = ['Data/Hora', 'BU', 'Pedido', 'Cliente', 'CPF/CNPJ', 'Valor Total', 'Entrada',
-          'Parcelas', 'Vlr Parcela', 'Tipo', 'Canal', 'Origem', 'Resultado', 'Motivos', 'Parecer', 'Analista', 'Versão'];
-        const linhas = rows.map(r => [
-          r.criado_em ? new Date(r.criado_em).toLocaleString('pt-BR') : '',
-          r.bu_nome || r.bu_cod || '', r.pedido || '',
-          `${trim(r.cliente_cod)}${r.cliente_loja ? '/' + trim(r.cliente_loja) : ''} ${trim(r.cliente_nome)}`.trim(),
-          r.cnpj || '', N(r.valor_total).toFixed(2), N(r.valor_entrada).toFixed(2),
-          N(r.parcelas_qtd), N(r.parcelas_valor).toFixed(2),
-          r.tipo_analise || '', r.canal || '', r.canal_origem || '',
-          r.resultado || '', (Array.isArray(r.motivos) ? r.motivos.join('; ') : ''),
-          (r.parecer || '').replace(/\r?\n/g, ' '), r.analista_nome || '', r.versao
+        const head = ['Data/Hora', 'Recebida em', 'BU', 'Pedido', 'Cliente', 'CPF/CNPJ', 'Análise do CPF/CNPJ', 'Valor Total', 'Entrada',
+          'Parcelas', 'Vlr Parcela', 'Tipo', 'Canal', 'Origem', 'Resultado', 'Motivos',
+          'Cond. forma de pagamento', 'Cond. valor máximo', 'Cond. entrada mínima %', 'Cond. parcelas máx.', 'Cond. validade', 'Cond. observação',
+          'Parecer', 'Analista', 'Versão'];
+        const linhas = registros.map(r => [
+          r.criadoEm ? new Date(r.criadoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '',
+          r.solicitadoEm ? new Date(r.solicitadoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '',
+          r.buNome || r.buCod || '', r.pedido || '',
+          `${r.clienteCod}${r.clienteLoja ? '/' + r.clienteLoja : ''} ${r.clienteNome}`.trim(),
+          r.documento || r.cnpj || '', r.qtdDoc > 1 ? `${r.ordemDoc} de ${r.qtdDoc}` : '',
+          numBR(r.valorTotal), numBR(r.valorEntrada), r.parcelasQtd, numBR(r.parcelasValor),
+          r.tipoAnalise || '', r.canal || '', r.canalOrigem || '',
+          r.resultado || '', r.motivos.join('; '),
+          r.condicoes?.formaPagamento || '', numBR(r.condicoes?.valorMax), numBR(r.condicoes?.entradaMinPct),
+          r.condicoes?.parcelasMax ?? '', dataBR(r.condicoes?.validade), r.condicoes?.observacao || '',
+          (r.parecer || '').replace(/\r?\n/g, ' '), r.analistaNome || '', r.versao
         ].map(csvCell).join(';'));
         const csv = '﻿' + [head.join(';'), ...linhas].join('\r\n');
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -74,30 +92,21 @@ module.exports = (app) => ({
         return res.send(csv);
       }
 
-      const registros = rows.map(r => ({
-        id: r.id, grupoId: r.grupo_id, versao: r.versao, editado: r.editado,
-        buCod: trim(r.bu_cod), buNome: trim(r.bu_nome),
-        pedido: trim(r.pedido), clienteCod: trim(r.cliente_cod), clienteLoja: trim(r.cliente_loja),
-        clienteNome: trim(r.cliente_nome), cnpj: trim(r.cnpj),
-        valorTotal: N(r.valor_total), valorEntrada: N(r.valor_entrada),
-        parcelasQtd: N(r.parcelas_qtd), parcelasValor: N(r.parcelas_valor),
-        tipoAnalise: trim(r.tipo_analise), canal: trim(r.canal), canalOrigem: trim(r.canal_origem),
-        resultado: trim(r.resultado), motivos: Array.isArray(r.motivos) ? r.motivos : [],
-        parecer: trim(r.parecer), analistaNome: trim(r.analista_nome), criadoEm: r.criado_em,
-        qtdAnexos: N(r.qtd_anexos)
-      }));
-
       // KPIs do recorte
       const kpis = {
         total: registros.length,
         aprovados: registros.filter(r => CR.ehAprovacao(r.resultado)).length,
         reprovados: registros.filter(r => r.resultado === 'Reprovado').length,
         pendentes: registros.filter(r => r.resultado === 'Solicitar Documentação').length,
+        reanalises: registros.filter(r => r.ordemDoc > 1).length,
         valorTotal: +registros.reduce((s, r) => s + r.valorTotal, 0).toFixed(2)
       };
 
       return res.json({
-        opcoes: { resultados: CR.RESULTADOS, motivos: CR.MOTIVOS, tiposAnalise: CR.TIPOS_ANALISE, canais: CR.CANAIS, canalOrigens: CR.CANAL_ORIGENS },
+        opcoes: {
+          resultados: CR.RESULTADOS, motivos: CR.MOTIVOS, tiposAnalise: CR.TIPOS_ANALISE, canais: CR.CANAIS,
+          canalOrigens: CR.CANAL_ORIGENS, formasPagamento: CR.FORMAS_PAGAMENTO, janelaDias: CR.JANELA_DUPLICIDADE_DIAS
+        },
         kpis, registros, geradoEm: new Date().toISOString()
       });
     } catch (err) {

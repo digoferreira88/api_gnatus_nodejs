@@ -3,6 +3,7 @@
 // vinculados ao grupo. Perm 8006 (edição) ou 8007 (somente visualização).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007]);
+const CR = require('../../services/creditoRegistro');
 
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
@@ -19,14 +20,10 @@ module.exports = (app) => ({
 
     try {
       const rows = await Pg.connectAndQuery(`
-        SELECT id, grupo_id, versao, vigente, substituido_por,
-               bu_cod, bu_nome, pedido, cliente_cod, cliente_loja, cliente_nome, cnpj,
-               valor_total, valor_entrada, parcelas_qtd, parcelas_valor,
-               tipo_analise, canal, canal_origem, resultado, motivos, parecer,
-               analista_nome, criado_em
-          FROM tab_credito_registro
-         WHERE grupo_id = @g
-         ORDER BY versao DESC`, { g: grupo });
+        SELECT ${CR.COLS}
+          FROM tab_credito_registro r
+         WHERE r.grupo_id = @g
+         ORDER BY r.versao DESC`, { g: grupo });
       if (!rows.length) return res.status(404).json({ message: 'Análise não encontrada.' });
 
       const anexos = await Pg.connectAndQuery(`
@@ -37,20 +34,9 @@ module.exports = (app) => ({
          WHERE a.registro_id = @g
          ORDER BY a.enviado_em DESC`, { g: grupo });
 
-      const versoes = rows.map(r => ({
-        id: r.id, versao: r.versao, vigente: r.vigente, substituidoPor: r.substituido_por,
-        buCod: trim(r.bu_cod), buNome: trim(r.bu_nome), pedido: trim(r.pedido),
-        clienteCod: trim(r.cliente_cod), clienteLoja: trim(r.cliente_loja), clienteNome: trim(r.cliente_nome), cnpj: trim(r.cnpj),
-        valorTotal: N(r.valor_total), valorEntrada: N(r.valor_entrada),
-        parcelasQtd: N(r.parcelas_qtd), parcelasValor: N(r.parcelas_valor),
-        tipoAnalise: trim(r.tipo_analise), canal: trim(r.canal), canalOrigem: trim(r.canal_origem),
-        resultado: trim(r.resultado), motivos: Array.isArray(r.motivos) ? r.motivos : [],
-        parecer: trim(r.parecer), analistaNome: trim(r.analista_nome), criadoEm: r.criado_em
-      }));
-
       return res.json({
         grupoId: grupo,
-        versoes,
+        versoes: rows.map(CR.mapRegistro),
         anexos: anexos.map(a => ({
           id: a.id, titulo: trim(a.titulo), nomeOriginal: trim(a.nome_original),
           mimeType: trim(a.mime_type), tamanhoBytes: N(a.tamanho_bytes),

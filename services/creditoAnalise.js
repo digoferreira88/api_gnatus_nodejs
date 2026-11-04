@@ -64,8 +64,10 @@ function notaLimite(fat) {
     : 'Cliente sem faturamento registrado.';
 }
 
-// bureau = resultado normalizado do Quod (ou null). Quando null, score_final = interno.
-async function montar({ Pg, Protheus }, cod, loja, opts = {}) {
+// Núcleo da análise: score interno + bureau em cache + blend + regras + limite
+// calculado. Sem parecer (IA) e sem gravar histórico — serve ao montar() e ao
+// resumo() usado no cruzamento do Registro de Análise.
+async function nucleo({ Pg, Protheus }, cod, loja, opts = {}) {
   const base = await Score.calcular({ Pg, Protheus }, cod, loja);
   if (!base) return null;
 
@@ -101,6 +103,41 @@ async function montar({ Pg, Protheus }, cod, loja, opts = {}) {
       comBureau: !!(bureau && bureau.score != null), bloqueado: base.cliente.bloqueado
     })
   };
+
+  return { base, cfgBureau, bureau, scoreFinal, pesoExterno, ajustes, classificacao, regra, status, limite };
+}
+
+// Resumo leve do 360 (sem parecer, sem histórico) para o cruzamento por CPF/CNPJ.
+async function resumo(deps, cod, loja) {
+  const n = await nucleo(deps, cod, loja);
+  if (!n) return null;
+  const ind = n.base.indicadores;
+  return {
+    cod, loja, nome: n.base.cliente.nome, bloqueado: n.base.cliente.bloqueado,
+    score: {
+      interno: n.base.scoreInterno, externo: n.bureau ? (n.bureau.score ?? null) : null,
+      final: n.scoreFinal, classificacao: n.classificacao
+    },
+    decisao: { status: n.status, mensagem: n.regra.mensagem },
+    limite: {
+      atual: n.limite.atual, calculado: n.limite.calculado, percentual: n.limite.percentual,
+      faturamento12m: n.limite.faturamento12m, nota: n.limite.nota, verificacao: n.limite.verificacao
+    },
+    indicadores: {
+      semHistorico: ind.semHistorico, qtdTitulos: ind.qtdTitulos,
+      pontualidadePct: ind.pontualidadePct, mediaAtrasoDias: ind.mediaAtrasoDias,
+      maiorAtraso: ind.maiorAtraso, inadimplenciaPct: ind.inadimplenciaPct,
+      emAberto: ind.emAberto, vencidoAberto: ind.vencidoAberto
+    },
+    bureauConsultadoEm: n.bureau ? (n.bureau.consultadoEm || null) : null
+  };
+}
+
+// bureau = resultado normalizado do Quod (ou null). Quando null, score_final = interno.
+async function montar({ Pg, Protheus }, cod, loja, opts = {}) {
+  const n = await nucleo({ Pg, Protheus }, cod, loja, opts);
+  if (!n) return null;
+  const { base, cfgBureau, bureau, scoreFinal, pesoExterno, ajustes, classificacao, regra, status, limite } = n;
 
   const parecer = await Parecer.gerar({
     cliente: base.cliente, indicadores: base.indicadores,
@@ -172,4 +209,4 @@ async function montar({ Pg, Protheus }, cod, loja, opts = {}) {
   };
 }
 
-module.exports = { montar, faturamento12m, verificarScore };
+module.exports = { montar, resumo, faturamento12m, verificarScore };
