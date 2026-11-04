@@ -23,7 +23,15 @@
 // (mes nao fechado). Cada mes devolve sua `fonte` pro frontend deixar isso explicito.
 //
 // Perms: 10001 (visao completa, mesma do DRE Gerencial) OU 10003 (gestor restrito,
-// enxerga so os CCs vinculados a ele e sem as contas de tab_dre_conta_oculta).
+// enxerga so os CCs vinculados a ele; as contas de tab_dre_conta_oculta aparecem
+// so como TOTAL numa linha consolidada, sem detalhe — ver CONTAS AGRUPADAS abaixo).
+//
+// CONTAS AGRUPADAS (04/11/2026, pedido da diretoria): ate aqui a conta de honorarios
+// de servicos tomados (41100010020) SUMIA da visao do gestor e dos totais dele. Agora
+// o valor ENTRA no gasto do CC, mas numa unica linha (rotulo da tabela, ex.
+// "SALARIOS – PRESTADORES DE SERVICO") sem itens/lancamentos/fornecedor — o gestor ve
+// quanto custa, nao quem nem quanto cada um. Contas com o mesmo rotulo somam juntas.
+// A visao completa (10001/0) nao muda.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10001, 10003]);
 
@@ -31,10 +39,12 @@ const trim = (v) => String(v || '').trim();
 const toN = (v) => Number(v || 0);
 
 // Abaixo disso o mes e considerado NAO contabilizado (razao ainda nao lancado) e a
-// fonte segue sendo pedidos/titulos. Mes fechado tem milhares de linhas com CC; mes
-// aberto tem dezenas (202607 tinha 16). O limiar so precisa separar essas ordens de
-// grandeza — nao e um numero fino.
-const MIN_LINHAS_RAZAO = 50;
+// fonte segue sendo pedidos/titulos. O limiar so precisa separar ordens de grandeza
+// — nao e um numero fino. Era 50 (202607 aberto tinha 16), mas em 04/11/2026 o
+// 202610 ainda aberto ja tinha 117 linhas (R$ 38 mil) e era tratado como fechado,
+// zerando o mes; fechados (so classe 4, desde 21/08) tem 1.481–1.878 (ago–set/26).
+// 500 e o mesmo corte do DRE Contabil.
+const MIN_LINHAS_RAZAO = 500;
 
 // Descobre, por mes do range, quantas linhas de despesa COM centro de custo ja
 // existem no razao. Vazio/baixo = mes ainda nao contabilizado.
@@ -58,13 +68,18 @@ async function linhasRazaoPorMes(Protheus, inicio, fim) {
   return m;
 }
 
+// Nome da linha consolidada quando a conta nao tem rotulo (migration 141 nao
+// aplicada ou rotulo vazio).
+const ROTULO_AGRUPADO_PADRAO = 'SALÁRIOS – PRESTADORES DE SERVIÇO';
+
 // Escopo do usuario logado. Visao completa (perm 0 ou 10001) => sem restricao.
-// So 10003 => restrito aos CCs vinculados, sem as contas ocultas.
+// So 10003 => restrito aos CCs vinculados; contas de tab_dre_conta_oculta viram
+// linha consolidada (contasAgrupadas: conta -> rotulo).
 // FALHA FECHADO: se as tabelas da migration 88 nao existirem, o restrito fica com
 // escopo vazio (nao ve nada) em vez de vazar o DRE inteiro.
 async function resolverEscopo(Pg, user) {
   const idUser = user && user.ID;
-  const aberto = { restrito: false, ccs: null, contasOcultas: new Set() };
+  const aberto = { restrito: false, ccs: null, contasAgrupadas: new Map() };
   if (!idUser) return aberto;
 
   const perms = await Pg.connectAndQuery(
@@ -73,7 +88,7 @@ async function resolverEscopo(Pg, user) {
   const tem = new Set(perms.map(p => Number(p.id_permissao)));
   if (tem.has(0) || tem.has(10001)) return aberto;
 
-  const escopo = { restrito: true, ccs: new Set(), contasOcultas: new Set() };
+  const escopo = { restrito: true, ccs: new Set(), contasAgrupadas: new Map() };
   try {
     const ccRows = await Pg.connectAndQuery(
       `SELECT cc_codigo FROM tab_dre_cc_usuario WHERE id_user = @id`, { id: idUser });
@@ -81,13 +96,20 @@ async function resolverEscopo(Pg, user) {
   } catch (e) {
     console.warn('dre-centro-custo: tab_dre_cc_usuario indisponivel (migration 88?):', e.message);
   }
+  // Sem a coluna `rotulo` (migration 141) cai no SELECT antigo com o rotulo padrao —
+  // a conta continua sem detalhe para o gestor de qualquer jeito.
+  let ctRows = null;
   try {
-    const ctRows = await Pg.connectAndQuery(
-      `SELECT conta FROM tab_dre_conta_oculta WHERE ativo`, {});
-    ctRows.forEach(r => escopo.contasOcultas.add(trim(r.conta)));
+    ctRows = await Pg.connectAndQuery(
+      `SELECT conta, rotulo FROM tab_dre_conta_oculta WHERE ativo`, {});
   } catch (e) {
-    console.warn('dre-centro-custo: tab_dre_conta_oculta indisponivel (migration 88?):', e.message);
+    try {
+      ctRows = await Pg.connectAndQuery(`SELECT conta FROM tab_dre_conta_oculta WHERE ativo`, {});
+    } catch (e2) {
+      console.warn('dre-centro-custo: tab_dre_conta_oculta indisponivel (migration 88?):', e2.message);
+    }
   }
+  (ctRows || []).forEach(r => escopo.contasAgrupadas.set(trim(r.conta), trim(r.rotulo) || ROTULO_AGRUPADO_PADRAO));
   return escopo;
 }
 
@@ -130,7 +152,9 @@ module.exports = (app) => ({
       // 0) Escopo do usuario + fonte de cada mes do range.
       const escopo = await resolverEscopo(Pg, req.user && req.user[0]);
       const ccPermitido = (cc) => !escopo.restrito || escopo.ccs.has(trim(cc));
-      const contaOculta = (conta) => escopo.restrito && escopo.contasOcultas.has(trim(conta));
+      // Rotulo da linha consolidada se a conta e agrupada pra este usuario; senao null.
+      const rotuloAgrupado = (conta) =>
+        (escopo.restrito && escopo.contasAgrupadas.get(trim(conta))) || null;
 
       // Gestor restrito sem nenhum CC vinculado: devolve vazio com aviso, em vez de
       // cair no caminho normal (que mostraria tudo).
@@ -139,7 +163,7 @@ module.exports = (app) => ({
           periodo: { inicio, fim },
           geradoEm: new Date().toISOString(),
           aviso: 'Seu usuario ainda nao tem centro de custo vinculado. Peca a TI para vincular na Gestao de Usuarios.',
-          escopo: { restrito: true, centrosCusto: [], qtdContasOcultas: 0 },
+          escopo: { restrito: true, centrosCusto: [], qtdContasAgrupadas: 0 },
           totais: { valorTotal: 0, qtdPedidos: 0, qtdItens: 0, qtdCentros: 0 },
           porCentroCusto: [], evolucaoMensal: [], fontePorMes: [],
           excluidos: { rejeitadosPC: 0, rejeitadosSC: 0 }
@@ -270,9 +294,30 @@ module.exports = (app) => ({
       // 3) Filtra + agrega por CC e por ymes. Drill aninhado: dentro de cada CC,
       // quebra por conta contabil (C7_CONTA), e dentro de cada conta quebra por
       // item (C7_PRODUTO). Igual ao DRE Gerencial (expand de natureza → titulos).
-      const porCC = new Map();   // cc -> { valor, qtdItens, pedidos:Set, porMes:Map, porConta:Map<conta, {valor, qtdItens, porItem:Map}> }
+      const porCC = new Map();   // cc -> { valor, qtdItens, pedidos:Set, porMes:Map, porConta:Map<conta, {valor, qtdItens, porItem:Map}>, agrupados:Map<rotulo, valor> }
       const porMes = new Map();  // ymes -> { valor, qtdItens }
       let qtdMoedaEstrangeira = 0;   // linhas convertidas de moeda estrangeira p/ R$
+      const noCC = (cc) => {
+        if (!porCC.has(cc)) porCC.set(cc, {
+          valor: 0, qtdItens: 0, pedidos: new Set(),
+          porMes: new Map(), porConta: new Map(), agrupados: new Map()
+        });
+        return porCC.get(cc);
+      };
+
+      // Conta agrupada (gestor restrito): o valor entra no CC, no mes e nos totais,
+      // mas so como total da linha consolidada — sem item, documento nem fornecedor,
+      // e fora das contagens de documentos (que descrevem o que o gestor consegue abrir).
+      let valorAgrupado = 0;
+      const addAgrupado = (cc, rotulo, ymes, valor) => {
+        const ag = noCC(cc);
+        ag.valor += valor;
+        ag.porMes.set(ymes, toN(ag.porMes.get(ymes)) + valor);
+        ag.agrupados.set(rotulo, toN(ag.agrupados.get(rotulo)) + valor);
+        if (!porMes.has(ymes)) porMes.set(ymes, { valor: 0, qtdItens: 0 });
+        porMes.get(ymes).valor += valor;
+        valorAgrupado += valor;
+      };
 
       for (const r of sc7) {
         const num = trim(r.numero);
@@ -289,7 +334,6 @@ module.exports = (app) => ({
         // Mes ja contabilizado: quem manda e o razao (bloco 3c).
         if (mesFechado(ymes)) continue;
         if (!ccPermitido(cc)) continue;
-        if (contaOculta(conta)) continue;
         // Moeda do pedido: 1=Real, 2=Dolar (C7_MOEDA). C7_TOTAL vem na moeda do
         // documento -> converte p/ R$ pela taxa (C7_TXMOEDA) quando estrangeira,
         // pra o realizado do CC ficar todo em reais.
@@ -297,13 +341,12 @@ module.exports = (app) => ({
         const taxa = toN(r.taxa);
         const valorMoeda = toN(r.valor);   // valor na moeda do documento
         const valor = (moeda !== 1 && taxa > 0) ? valorMoeda * taxa : valorMoeda;  // R$
+
+        const rotAg = rotuloAgrupado(conta);
+        if (rotAg) { addAgrupado(cc, rotAg, ymes, valor); continue; }
         if (moeda !== 1 && taxa > 0) qtdMoedaEstrangeira++;
 
-        if (!porCC.has(cc)) porCC.set(cc, {
-          valor: 0, qtdItens: 0, pedidos: new Set(),
-          porMes: new Map(), porConta: new Map()
-        });
-        const agCc = porCC.get(cc);
+        const agCc = noCC(cc);
         agCc.valor += valor;
         agCc.qtdItens += 1;
         agCc.pedidos.add(num);
@@ -412,16 +455,17 @@ module.exports = (app) => ({
           // a parcela do CC dele. Os cortes por mes/conta sao do titulo inteiro e
           // ficam no laco abaixo, pra nao inflar os contadores.
           if (!ccPermitido(kCC)) return;
+          const ymes = String(r.emissao || '').slice(0, 6);
+          const rotAg = rotuloAgrupado(r.contaDebito);
+          if (rotAg) { addAgrupado(kCC, rotAg, ymes, valor); return; }
           if (!cc) qtdTitulosSemCC++;
           const natureza = trim(r.natureza) || '(sem natureza)';
           const kConta = `NAT ${natureza}`;
           natUsadas.add(natureza);
           const kItem = trim(r.fornecedorNome) || trim(r.fornece) || '(sem fornecedor)';
-          const ymes = String(r.emissao || '').slice(0, 6);
           const docId = `TIT ${trim(r.prefixo)}-${trim(r.numero)}`;
 
-          if (!porCC.has(kCC)) porCC.set(kCC, { valor: 0, qtdItens: 0, pedidos: new Set(), porMes: new Map(), porConta: new Map() });
-          const agCc = porCC.get(kCC);
+          const agCc = noCC(kCC);
           agCc.valor += valor; agCc.qtdItens += 1; agCc.pedidos.add(docId);
           agCc.porMes.set(ymes, toN(agCc.porMes.get(ymes)) + valor);
 
@@ -447,12 +491,14 @@ module.exports = (app) => ({
         };
 
         for (const r of se2) {
-          // Mes contabilizado sai pelo razao (bloco 3c); conta oculta some pro
-          // gestor restrito. Ambos valem pro titulo inteiro.
+          // Mes contabilizado sai pelo razao (bloco 3c) — vale pro titulo inteiro.
+          // Conta agrupada (gestor restrito) e tratada no addTitulo, por CC, e nao
+          // entra no aviso de titulos diretos (que descreve documentos abriveis).
           if (mesFechado(String(r.emissao || '').slice(0, 6))) continue;
-          if (contaOculta(r.contaDebito)) continue;
-          qtdTitulosDiretos++;
-          valorTitulosDiretos += toN(r.valor);
+          if (!rotuloAgrupado(r.contaDebito)) {
+            qtdTitulosDiretos++;
+            valorTitulosDiretos += toN(r.valor);
+          }
           const kTit = [trim(r.prefixo), trim(r.numero), trim(r.parcela), trim(r.fornece), trim(r.loja)].join('|');
           const ccd = trim(r.ccd);
           const rat = rateio.get(kTit);
@@ -485,20 +531,22 @@ module.exports = (app) => ({
         const cc = trim(r.cc);
         const conta = trim(r.conta);
         if (!ccPermitido(cc)) continue;
-        if (contaOculta(conta)) continue;
 
         const valor = toN(r.valor);
-        const hist = trim(r.hist);
-        const forn = trim(r.fornece);
         const manual = trim(r.manual) === '1';
-        const kItem = nomeForRazao.get(forn) || hist || '(sem historico)';
-        const docId = `RAZ ${trim(r.lote)}-${trim(r.doc)}`;
-
-        qtdLancRazao++; valorRazao += valor;
+        valorRazao += valor;
         if (manual) valorAjusteManual += valor;
 
-        if (!porCC.has(cc)) porCC.set(cc, { valor: 0, qtdItens: 0, pedidos: new Set(), porMes: new Map(), porConta: new Map() });
-        const agCc = porCC.get(cc);
+        const rotAg = rotuloAgrupado(conta);
+        if (rotAg) { addAgrupado(cc, rotAg, ymes, valor); continue; }
+
+        const hist = trim(r.hist);
+        const forn = trim(r.fornece);
+        const kItem = nomeForRazao.get(forn) || hist || '(sem historico)';
+        const docId = `RAZ ${trim(r.lote)}-${trim(r.doc)}`;
+        qtdLancRazao++;
+
+        const agCc = noCC(cc);
         agCc.valor += valor; agCc.qtdItens += 1; agCc.pedidos.add(docId);
         agCc.porMes.set(ymes, toN(agCc.porMes.get(ymes)) + valor);
 
@@ -777,6 +825,17 @@ module.exports = (app) => ({
               }))
               .sort((a, b) => b.valor - a.valor)
           }))
+          // Linhas consolidadas (gestor restrito): so rotulo + total. Sem codigo de
+          // conta, sem contagem e sem itens — nada que permita abrir o valor.
+          .concat([...ag.agrupados.entries()].map(([rotulo, v]) => ({
+            conta: '',
+            descricao: rotulo,
+            valor: v,
+            qtdItens: 0,
+            pctCC: ag.valor > 0 ? (v / ag.valor) * 100 : 0,
+            agrupado: true,
+            itens: []
+          })))
           .sort((a, b) => b.valor - a.valor);
 
         return {
@@ -811,7 +870,7 @@ module.exports = (app) => ({
       });
 
       // 8) Totais agregados. Conta os documentos que REALMENTE entraram na arvore
-      // (respeitando escopo do usuario, conta oculta e mes que saiu pelo razao) —
+      // (respeitando escopo do usuario, conta agrupada e mes que saiu pelo razao) —
       // reprocessar o sc7 cru aqui inflaria o numero pro gestor restrito.
       const qtdPedidosUnicos = new Set();
       porCC.forEach(ag => ag.pedidos.forEach(d => qtdPedidosUnicos.add(d)));
@@ -832,13 +891,13 @@ module.exports = (app) => ({
         periodo: { inicio, fim, ano: anoFim, mesFim },
         geradoEm: new Date().toISOString(),
         // Escopo aplicado. restrito=true => o usuario so enxerga os CCs listados e
-        // as contas ocultas nao entram em NENHUM total desta resposta. Devolve so a
-        // CONTAGEM de contas ocultas — listar os codigos entregaria justamente o que
-        // se quer esconder.
+        // as contas agrupadas entram nos totais so como linha consolidada. Devolve so
+        // a CONTAGEM dessas contas — listar os codigos entregaria o que se quer
+        // manter sem detalhe.
         escopo: {
           restrito: escopo.restrito,
           centrosCusto: escopo.restrito ? [...escopo.ccs] : null,
-          qtdContasOcultas: escopo.restrito ? escopo.contasOcultas.size : 0
+          qtdContasAgrupadas: escopo.restrito ? escopo.contasAgrupadas.size : 0
         },
         fontePorMes,
         totais: {
@@ -858,6 +917,8 @@ module.exports = (app) => ({
           qtdLancamentosRazao: qtdLancRazao,
           valorRazao,
           valorAjusteManual,
+          // Parte do total que o gestor restrito ve so como linha consolidada.
+          valorAgrupado,
           mesesPeloRazao: fontePorMes.filter(f => f.fonte === 'RAZAO').length,
           mesesProvisorios: fontePorMes.filter(f => f.fonte === 'PROVISORIO').length,
           valorOrcadoAnual: orcadoAnualTotal || null,
