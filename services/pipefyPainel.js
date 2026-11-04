@@ -1,43 +1,56 @@
-// services/pipefyPainel.js — snapshot org-wide do Pipefy pro Painel de Gestão à
-// Vista (TVs). Varre os pipes CONSIDERADOS da organização e agrega os cards
-// ABERTOS (fases done ficam de fora): atrasados, responsáveis, SETORES,
-// gargalos, aging.
+// services/pipefyPainel.js — Painel de Gestão à Vista (TVs + Visão Executiva).
+// Agrega os cards ABERTOS dos pipes CONSIDERADOS da organização (fases done
+// ficam de fora): atrasados, responsáveis, SETORES, gargalos, aging.
+//
+// ESPELHO NO BANCO (migration 142) — o Pipefy é lido em horários fixos, não a
+// cada vez que alguém abre a tela:
+//   sincronizar()   chamado pelo scheduler (job "painel-pipefy", padrão de 3 em 3h
+//                   das 06h às 18h, seg-sex). Lê a lista de pipes da org + os cards
+//                   abertos de cada pipe considerado e grava em
+//                   tab_painel_pipefy_pipe / tab_painel_pipefy_card. Cada leitura
+//                   fica em tab_painel_pipefy_sync com o custo em chamadas.
+//   obterSnapshot() o que as telas usam. Monta o retrato a partir do BANCO (zero
+//                   chamada ao Pipefy). Idades e "vencido pela data" são contadas
+//                   na hora; late/expired valem como estavam na última leitura.
+//   Espelho vazio (1º acesso depois do deploy): obterSnapshot faz UMA leitura.
+//   Pipe que falha numa leitura mantém os cards da leitura anterior.
 //
 // CONFIG NO BANCO (migration 97, tela /gerencia/painel-vista/config):
 //   tab_painel_pipe          pipe considerar true/false (sem linha = considera —
 //                            pipe novo entra sozinho no painel)
 //   tab_painel_usuario_setor responsável (nome do assignee) -> setor
 //   tab_painel_setor         setores da empresa (seed fixo)
-// A visão "setores com maior índice de atraso" atribui cada card aberto ao(s)
-// setor(es) dos seus responsáveis; sem responsável ou sem vínculo cai em
+// Desmarcar um pipe vale na hora (filtro na leitura); marcar dispara a leitura
+// só daquele pipe (lerPipeAgora). Card sem responsável ou sem vínculo cai em
 // "(SEM SETOR)" — aparece no painel de propósito, pra forçar o cadastro.
 //
-// CACHE EM MEMÓRIA com TTL (default 5 min) + single-flight; a tela de config
-// invalida o cache ao salvar (invalidarCache) pro painel refletir rápido.
-//
-// "Atrasado" = card.late OU card.expired OU due_date < agora (o Pipefy marca
-// late/expired pelo SLA da fase mesmo sem due_date).
+// Situação do card (campo `s`, Visão Executiva):
+//   2 vencido          card.expired (vencimento do pipe) OU due_date < agora
+//   1 atrasado na fase card.late (passou do SLA da fase)
+//   0 no prazo
+// "Atrasado" (campo `a`, TV e histórico) = situação 1 ou 2.
 //
 // Config (.env): PIPEFY_TOKEN, PAINEL_PIPEFY_EXCLUIR (CSV extra de pipe ids,
-// além da tabela), PAINEL_PIPEFY_TTL_MIN (default 5).
+// além da tabela). Cron em services/scheduler.js (CRON_PAINEL_PIPEFY).
 
 const Metrica = require('./pipefyMetrica');
 const trim = (v) => String(v == null ? '' : v).trim();
 
 const TOKEN = () => trim(process.env.PIPEFY_TOKEN);
 const ORG_ID = () => trim(process.env.PIPEFY_ORG_ID || '301239355');
-const TTL_MS = () => Math.max(1, Number(process.env.PAINEL_PIPEFY_TTL_MIN || 5)) * 60000;
 const EXCLUIR_ENV = () => new Set(
   (process.env.PAINEL_PIPEFY_EXCLUIR || '').split(',').map(s => trim(s)).filter(Boolean)
 );
 
 const disponivel = () => !!TOKEN();
 
-async function gql(query, variables) {
+// `cont` (opcional) soma as chamadas de uma leitura, pra gravar o custo dela
+async function gql(query, variables, cont) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
     Metrica.contar('painel');   // consumo do contrato do Pipefy (tab_pipefy_uso)
+    if (cont) cont.n++;
     const r = await fetch('https://api.pipefy.com/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN()}` },
@@ -53,10 +66,10 @@ async function gql(query, variables) {
   } catch (e) { clearTimeout(timer); throw e; }
 }
 
-// Lista leve de pipes da org (pra config e pro sweep): id, nome, abertos estimados
-async function listarPipesOrg() {
+// Lista leve de pipes da org: id, nome, abertos estimados (1 chamada)
+async function listarPipesOrg(cont) {
   const d = await gql(`query($org: ID!) { organization(id: $org) {
-    pipes { id name phases { done cards_count } } } }`, { org: ORG_ID() });
+    pipes { id name phases { done cards_count } } } }`, { org: ORG_ID() }, cont);
   return (d.organization?.pipes || []).map(p => ({
     id: trim(p.id), nome: trim(p.name),
     abertosEstimados: p.phases.filter(f => !f.done).reduce((s, f) => s + (f.cards_count || 0), 0)
@@ -92,12 +105,12 @@ const CARD_FIELDS = () => (camposExt ? CARD_FIELDS_EXT : CARD_FIELDS_BASE);
 
 // Cards abertos de um pipe: 1 request pega as primeiras 50 de cada fase;
 // pagina só as fases que passarem disso.
-async function cardsAbertosDoPipe(pipe) {
+async function cardsAbertosDoPipe(pipe, cont) {
   const cards = [];
   const d = await gql(`query($id: ID!) { pipe(id: $id) { phases {
     id name done cards_count
     cards(first: 50) { pageInfo { hasNextPage endCursor } edges { node { ${CARD_FIELDS()} } } }
-  } } }`, { id: pipe.id });
+  } } }`, { id: pipe.id }, cont);
 
   for (const fase of (d.pipe?.phases || [])) {
     if (fase.done) continue;
@@ -107,7 +120,7 @@ async function cardsAbertosDoPipe(pipe) {
     while (pageInfo?.hasNextPage) {
       const pg = await gql(`query($f: ID!, $a: String) { phase(id: $f) {
         cards(first: 50, after: $a) { pageInfo { hasNextPage endCursor } edges { node { ${CARD_FIELDS()} } } }
-      } }`, { f: fase.id, a: pageInfo.endCursor });
+      } }`, { f: fase.id, a: pageInfo.endCursor }, cont);
       edges = pg.phase?.cards?.edges || [];
       edges.forEach(e => cards.push({ ...e.node, fase: fase.name }));
       pageInfo = pg.phase?.cards?.pageInfo;
@@ -116,7 +129,22 @@ async function cardsAbertosDoPipe(pipe) {
   return cards;
 }
 
-function montarSnapshot(pipesBrutos, cfg) {
+// Lê os cards do pipe; se o Pipefy recusar updated_at/current_phase_age, desliga
+// os extras e repete uma vez.
+async function cardsComFallback(pipe, cont) {
+  try {
+    return await cardsAbertosDoPipe(pipe, cont);
+  } catch (e) {
+    if (camposExt && /updated_at|current_phase_age/i.test(e.message)) {
+      camposExt = false;
+      console.warn(`[pipefy-painel] campos extras recusados (${e.message}) — seguindo sem "dias na fase"`);
+      return cardsAbertosDoPipe(pipe, cont);
+    }
+    throw e;
+  }
+}
+
+function montarSnapshot(pipesBrutos, cfg, ext) {
   const agora = Date.now();
   const DIA = 864e5;
   const dias = (iso) => (iso ? Math.floor((agora - new Date(iso).getTime()) / DIA) : null);
@@ -140,10 +168,11 @@ function montarSnapshot(pipesBrutos, cfg) {
     let atrasados = 0, somaIdade = 0, maisAntigo = null;
 
     for (const c of p.cards) {
-      const vencido = c.due_date ? new Date(c.due_date).getTime() < agora : false;
-      const atrasado = c.late === true || c.expired === true || vencido;
+      const vencidoData = c.due_date ? new Date(c.due_date).getTime() < agora : false;
+      const situacao = (c.expired === true || vencidoData) ? 2 : c.late === true ? 1 : 0;
+      const atrasado = situacao > 0;
       const idadeDias = dias(c.createdAt) ?? 0;
-      const diasAtraso = vencido ? dias(c.due_date) : null;
+      const diasAtraso = vencidoData ? dias(c.due_date) : null;
       somaIdade += idadeDias;
       if (atrasado) atrasados++;
       porFase.set(c.fase, (porFase.get(c.fase) || 0) + 1);
@@ -175,7 +204,7 @@ function montarSnapshot(pipesBrutos, cfg) {
       // agrega no navegador. A rota da TV tira este campo da resposta.
       todosCards.push({
         id: trim(c.id), p: p.id, t: trim(c.title).slice(0, 80), f: trim(c.fase),
-        r: nomes, a: atrasado ? 1 : 0, v: diasAtraso, i: idadeDias,
+        r: nomes, a: atrasado ? 1 : 0, s: situacao, v: diasAtraso, i: idadeDias,
         fa: c.current_phase_age != null ? Math.floor(Number(c.current_phase_age) / 86400) : null,
         u: c.updated_at ? dias(c.updated_at) : null
       });
@@ -227,14 +256,16 @@ function montarSnapshot(pipesBrutos, cfg) {
     // --- só Visão Executiva (a rota da TV remove) ---
     cards: todosCards,
     setorPorResp: Object.fromEntries(cfg.setorPorUsuario),
-    camposExt,
+    camposExt: ext,
     pipesComErro: pipesBrutos.filter(p => p.erro).map(p => p.nome)
   };
 }
 
 // ---------- histórico diário (migration 137) ----------
 // Uma linha por dia × (total | pipe | setor); a última leitura do dia vence.
-// Ciclo com pipe falhando NÃO grava — o pipe viria zerado e a série cairia à toa.
+// Gravado a cada leitura do Pipefy (sincronizar), então todo dia útil ganha ponto.
+// Leitura com pipe falhando NÃO grava — o pipe viria com dado velho e a série
+// ficaria torta.
 async function gravarHistorico(Pg, snap) {
   if (!Pg || snap.pipesComErro.length) return;
   const nomePipe = new Map(snap.pipes.map(p => [p.id, p.nome]));
@@ -288,58 +319,265 @@ async function lerHistorico(Pg, dias = 120) {
   }
 }
 
-// ---------- cache single-flight ----------
-let cache = null;
-let construindo = null;
+// ---------- espelho: gravação (migration 142) ----------
 
-async function construir(Pg) {
-  const cfg = await lerConfig(Pg);
-  const excluirEnv = EXCLUIR_ENV();
-  const todos = await listarPipesOrg();
-  const alvos = todos.filter(p => !excluirEnv.has(p.id) && !cfg.pipesDesconsiderados.has(p.id));
-
-  const pipesBrutos = [];
-  for (const alvo of alvos) {
-    if (alvo.abertosEstimados === 0) { pipesBrutos.push({ ...alvo, cards: [] }); continue; }
-    try {
-      pipesBrutos.push({ ...alvo, cards: await cardsAbertosDoPipe(alvo) });
-    } catch (e) {
-      // Pipefy recusou updated_at/current_phase_age: desliga os extras e repete o pipe
-      if (camposExt && /updated_at|current_phase_age/i.test(e.message)) {
-        camposExt = false;
-        console.warn(`[pipefy-painel] campos extras recusados (${e.message}) — seguindo sem "dias na fase"`);
-        try { pipesBrutos.push({ ...alvo, cards: await cardsAbertosDoPipe(alvo) }); continue; }
-        catch (e2) { e = e2; }
-      }
-      console.warn(`[pipefy-painel] pipe ${alvo.nome} falhou (${e.message}) — segue sem ele neste ciclo`);
-      pipesBrutos.push({ ...alvo, cards: [], erro: true });
-    }
-  }
-  const snap = montarSnapshot(pipesBrutos, cfg);
-  gravarHistorico(Pg, snap).catch(e =>
-    console.warn('[pipefy-painel] historico nao gravado (migration 137?):', e.message));
-  return snap;
+async function gravarPipesOrg(Pg, pipes) {
+  const dados = JSON.stringify(pipes.map(p => ({ id: p.id, nome: p.nome.slice(0, 160), abertos: p.abertosEstimados })));
+  await Pg.connectAndQuery(`
+    INSERT INTO tab_painel_pipefy_pipe (pipe_id, nome, abertos_estimados, lido_em)
+    SELECT x.id, x.nome, x.abertos, NOW()
+      FROM jsonb_to_recordset(@dados::jsonb) AS x(id text, nome text, abertos int)
+    ON CONFLICT (pipe_id) DO UPDATE SET
+      nome = EXCLUDED.nome, abertos_estimados = EXCLUDED.abertos_estimados, lido_em = NOW()`, { dados });
+  // pipe que sumiu da organização (excluído no Pipefy) sai do espelho
+  await Pg.connectAndQuery(
+    `DELETE FROM tab_painel_pipefy_pipe WHERE NOT (pipe_id = ANY(@ids::text[]))`, { ids: pipes.map(p => p.id) });
 }
 
-// Snapshot vigente (cache + single-flight); em falha serve o último bom.
-async function obterSnapshot(Pg) {
-  const fresco = cache && (Date.now() - new Date(cache.geradoEm).getTime()) < TTL_MS();
-  if (fresco) return cache;
-  if (!construindo) {
-    construindo = construir(Pg)
-      .then(s => { cache = s; return s; })
-      .finally(() => { construindo = null; });
+// Troca os cards do pipe pelos recém-lidos, numa transação (quem lê no meio vê
+// a versão anterior inteira, nunca metade).
+async function gravarCardsDoPipe(Pg, pipeId, cards, lidoEm) {
+  const unicos = new Map();
+  cards.forEach(c => unicos.set(trim(c.id), c));   // paginação pode repetir card que mudou de lugar
+  const linhas = [...unicos.values()].map(c => ({
+    id: trim(c.id),
+    titulo: trim(c.title).slice(0, 300),
+    fase: trim(c.fase).slice(0, 200),
+    resp: (c.assignees || []).map(a => trim(a.name)).filter(Boolean),
+    late: c.late === true,
+    expired: c.expired === true,
+    due: c.due_date || null,
+    criado: c.createdAt || null,
+    atualizado: c.updated_at || null,
+    fase_desde: c.current_phase_age != null
+      ? new Date(lidoEm.getTime() - Number(c.current_phase_age) * 1000).toISOString() : null
+  }));
+  await Pg.withTransaction(async (cli) => {
+    await cli.query('DELETE FROM tab_painel_pipefy_card WHERE pipe_id = $1', [pipeId]);
+    if (linhas.length) {
+      await cli.query(`
+        INSERT INTO tab_painel_pipefy_card
+          (card_id, pipe_id, titulo, fase, responsaveis, atrasado_fase, vencido_pipe,
+           vencimento, criado_em, atualizado_em, na_fase_desde, lido_em)
+        SELECT x.id, $1, x.titulo, x.fase,
+               ARRAY(SELECT jsonb_array_elements_text(COALESCE(x.resp, '[]'::jsonb))),
+               x.late, x.expired, x.due, x.criado, x.atualizado, x.fase_desde, $3
+          FROM jsonb_to_recordset($2::jsonb) AS x(
+               id text, titulo text, fase text, resp jsonb, late boolean, expired boolean,
+               due timestamptz, criado timestamptz, atualizado timestamptz, fase_desde timestamptz)
+        ON CONFLICT (card_id) DO UPDATE SET
+          pipe_id = EXCLUDED.pipe_id, titulo = EXCLUDED.titulo, fase = EXCLUDED.fase,
+          responsaveis = EXCLUDED.responsaveis, atrasado_fase = EXCLUDED.atrasado_fase,
+          vencido_pipe = EXCLUDED.vencido_pipe, vencimento = EXCLUDED.vencimento,
+          criado_em = EXCLUDED.criado_em, atualizado_em = EXCLUDED.atualizado_em,
+          na_fase_desde = EXCLUDED.na_fase_desde, lido_em = EXCLUDED.lido_em`,
+        [pipeId, JSON.stringify(linhas), lidoEm]);
+    }
+    await cli.query(
+      `UPDATE tab_painel_pipefy_pipe SET cards_em = $2, erro = NULL, erro_em = NULL WHERE pipe_id = $1`,
+      [pipeId, lidoEm]);
+  });
+  return linhas.length;
+}
+
+async function lerEGravarPipe(Pg, pipe, cont) {
+  const lidoEm = new Date();
+  // pipe sem card aberto (pela contagem da org) não gasta chamada
+  const cards = pipe.abertosEstimados === 0 ? [] : await cardsComFallback(pipe, cont);
+  return gravarCardsDoPipe(Pg, pipe.id, cards, lidoEm);
+}
+
+async function marcarErroPipe(Pg, pipeId, msg) {
+  await Pg.connectAndQuery(
+    `UPDATE tab_painel_pipefy_pipe SET erro = @msg, erro_em = NOW() WHERE pipe_id = @id`,
+    { id: pipeId, msg: String(msg).slice(0, 500) }).catch(() => {});
+}
+
+// ---------- espelho: leitura completa (scheduler) ----------
+let sincronizando = null;
+
+// Single-flight: cron e 1º acesso ao mesmo tempo fazem UMA leitura só.
+function sincronizar(Pg, origem = 'CRON') {
+  if (!sincronizando) {
+    sincronizando = executarSincronia(Pg, origem).finally(() => { sincronizando = null; });
   }
+  return sincronizando;
+}
+
+async function executarSincronia(Pg, origem) {
+  const cont = { n: 0 };
+  const [{ id: syncId }] = await Pg.connectAndQuery(
+    `INSERT INTO tab_painel_pipefy_sync (origem, completa) VALUES (@origem, TRUE) RETURNING id`, { origem });
   try {
-    return await construindo;
+    const cfg = await lerConfig(Pg);
+    const excluirEnv = EXCLUIR_ENV();
+    const todos = await listarPipesOrg(cont);
+    await gravarPipesOrg(Pg, todos);
+    const alvos = todos.filter(p => !excluirEnv.has(p.id) && !cfg.pipesDesconsiderados.has(p.id));
+
+    const comErro = [];
+    let cards = 0;
+    for (const alvo of alvos) {
+      try {
+        cards += await lerEGravarPipe(Pg, alvo, cont);
+      } catch (e) {
+        console.warn(`[pipefy-painel] pipe ${alvo.nome} falhou (${e.message}) — fica com a leitura anterior`);
+        comErro.push(alvo.nome);
+        await marcarErroPipe(Pg, alvo.id, e.message);
+      }
+    }
+    // cards de pipe que saiu do painel (desmarcado na config ou excluído do Pipefy)
+    await Pg.connectAndQuery(
+      `DELETE FROM tab_painel_pipefy_card WHERE NOT (pipe_id = ANY(@ids::text[]))`, { ids: alvos.map(p => p.id) });
+
+    await Pg.connectAndQuery(`
+      UPDATE tab_painel_pipefy_sync
+         SET fim = NOW(), requisicoes = @req, pipes = @pipes, cards = @cards,
+             pipes_com_erro = @erros::text[], campos_ext = @ext
+       WHERE id = @id`,
+      { id: syncId, req: cont.n, pipes: alvos.length, cards, erros: comErro, ext: camposExt });
+    invalidarCache();
+
+    // Foto do dia para a tendência (só quando todos os pipes vieram)
+    if (!comErro.length) {
+      const snap = await montarDoBanco(Pg);
+      await gravarHistorico(Pg, snap).catch(e =>
+        console.warn('[pipefy-painel] historico nao gravado (migration 137?):', e.message));
+    }
+    return { requisicoes: cont.n, pipes: alvos.length, cards, pipesComErro: comErro };
   } catch (e) {
-    if (cache) return { ...cache, desatualizado: true, erroAtualizacao: e.message };
+    await Pg.connectAndQuery(
+      `UPDATE tab_painel_pipefy_sync SET fim = NOW(), requisicoes = @req, erro = @msg WHERE id = @id`,
+      { id: syncId, req: cont.n, msg: String(e.message).slice(0, 500) }).catch(() => {});
+    invalidarCache();   // a tela passa a avisar que está mostrando a leitura anterior
     throw e;
   }
 }
 
-// Tela de config salva -> derruba o cache pro próximo GET refletir na hora
+// Tela de config marcou um pipe: lê só ele agora, pra não esperar a próxima
+// leitura agendada. Custo: 1 chamada + 1 por página extra de 50 cards.
+async function lerPipeAgora(Pg, pipeId, nome) {
+  const cont = { n: 0 };
+  const [{ id: syncId }] = await Pg.connectAndQuery(
+    `INSERT INTO tab_painel_pipefy_sync (origem, completa, pipes) VALUES ('CONFIG', FALSE, 1) RETURNING id`, {});
+  try {
+    await Pg.connectAndQuery(`
+      INSERT INTO tab_painel_pipefy_pipe (pipe_id, nome, lido_em) VALUES (@id, @nome, NOW())
+      ON CONFLICT (pipe_id) DO NOTHING`, { id: pipeId, nome: trim(nome).slice(0, 160) || null });
+    const cards = await lerEGravarPipe(Pg, { id: pipeId, abertosEstimados: null }, cont);
+    await Pg.connectAndQuery(
+      `UPDATE tab_painel_pipefy_sync SET fim = NOW(), requisicoes = @req, cards = @cards, campos_ext = @ext WHERE id = @id`,
+      { id: syncId, req: cont.n, cards, ext: camposExt });
+    invalidarCache();
+    return { requisicoes: cont.n, cards };
+  } catch (e) {
+    await marcarErroPipe(Pg, pipeId, e.message);
+    await Pg.connectAndQuery(
+      `UPDATE tab_painel_pipefy_sync SET fim = NOW(), requisicoes = @req, erro = @msg WHERE id = @id`,
+      { id: syncId, req: cont.n, msg: String(e.message).slice(0, 500) }).catch(() => {});
+    throw e;
+  }
+}
+
+// ---------- espelho: leitura pelas telas ----------
+
+// Próxima leitura agendada (o scheduler registra o job aqui)
+let agenda = null;
+function definirAgenda(job) { agenda = job || null; }
+function proximaLeitura() {
+  try {
+    const d = agenda && agenda.nextInvocation();
+    if (!d) return null;
+    return new Date(typeof d.getTime === 'function' ? d.getTime() : d).toISOString();
+  } catch { return null; }
+}
+
+const ultimaLeitura = async (Pg, soOk) => (await Pg.connectAndQuery(`
+  SELECT id, fim, erro, campos_ext FROM tab_painel_pipefy_sync
+   WHERE completa AND fim IS NOT NULL ${soOk ? 'AND erro IS NULL' : ''}
+   ORDER BY id DESC LIMIT 1`, {}))[0] || null;
+
+async function montarDoBanco(Pg) {
+  let ok = await ultimaLeitura(Pg, true);
+  if (!ok) {
+    // Espelho vazio (1º acesso depois do deploy). Lê o Pipefy uma vez — mas se a
+    // última tentativa falhou há pouco, não insiste a cada clique.
+    const tentativa = await ultimaLeitura(Pg, false);
+    const recente = tentativa && (Date.now() - new Date(tentativa.fim).getTime()) < 10 * 60000;
+    if (recente) throw new Error(`a última leitura do Pipefy falhou (${tentativa.erro})`);
+    if (!disponivel()) throw new Error('PIPEFY_TOKEN não configurado no servidor.');
+    await sincronizar(Pg, 'INICIAL');
+    ok = await ultimaLeitura(Pg, true);
+    if (!ok) throw new Error('a leitura inicial do Pipefy não terminou');
+  }
+  const ultima = await ultimaLeitura(Pg, false);
+
+  const cfg = await lerConfig(Pg);
+  const excluirEnv = EXCLUIR_ENV();
+  const [pipes, cards] = await Promise.all([
+    Pg.connectAndQuery(`SELECT pipe_id, nome, erro FROM tab_painel_pipefy_pipe`, {}),
+    Pg.connectAndQuery(`
+      SELECT card_id, pipe_id, titulo, fase, responsaveis, atrasado_fase, vencido_pipe,
+             vencimento, criado_em, atualizado_em, na_fase_desde
+        FROM tab_painel_pipefy_card`, {})
+  ]);
+
+  // Linha do banco -> mesmo formato do card do Pipefy (montarSnapshot é o mesmo)
+  const agora = Date.now();
+  const iso = (d) => (d ? new Date(d).toISOString() : null);
+  const porPipe = new Map();
+  for (const r of cards) {
+    const pid = trim(r.pipe_id);
+    if (!porPipe.has(pid)) porPipe.set(pid, []);
+    porPipe.get(pid).push({
+      id: trim(r.card_id), title: r.titulo || '', fase: r.fase || '',
+      assignees: (r.responsaveis || []).map(name => ({ name })),
+      late: r.atrasado_fase === true, expired: r.vencido_pipe === true,
+      due_date: iso(r.vencimento), createdAt: iso(r.criado_em), updated_at: iso(r.atualizado_em),
+      current_phase_age: r.na_fase_desde ? Math.max(0, (agora - new Date(r.na_fase_desde).getTime()) / 1000) : null
+    });
+  }
+  const pipesBrutos = pipes
+    .map(p => ({ id: trim(p.pipe_id), nome: trim(p.nome), erro: !!p.erro }))
+    .filter(p => !excluirEnv.has(p.id) && !cfg.pipesDesconsiderados.has(p.id))
+    .map(p => ({ ...p, cards: porPipe.get(p.id) || [] }));
+
+  const snap = montarSnapshot(pipesBrutos, cfg, ok.campos_ext !== false);
+  snap.geradoEm = iso(ok.fim);              // hora em que os dados saíram do Pipefy
+  snap.proximaLeitura = proximaLeitura();
+  if (ultima && ultima.id !== ok.id) {
+    snap.desatualizado = true;              // a última leitura falhou inteira
+    snap.erroAtualizacao = ultima.erro;
+  }
+  return snap;
+}
+
+// Cache curto em memória: várias TVs batendo juntas não refazem a conta. O
+// banco é a fonte; isto só evita remontar o mesmo retrato a cada requisição.
+const CACHE_MS = 60000;
+let cache = null;
+let montando = null;
+
+async function obterSnapshot(Pg) {
+  if (cache && Date.now() - cache.em < CACHE_MS) return cache.snap;
+  if (!montando) {
+    montando = montarDoBanco(Pg)
+      .then(snap => { cache = { snap, em: Date.now() }; return snap; })
+      .finally(() => { montando = null; });
+  }
+  return montando;
+}
+
+// Config salva ou leitura nova -> próximo GET remonta
 function invalidarCache() { cache = null; }
+
+// Pipes da org para a tela de config: do espelho; se ainda vazio, do Pipefy
+async function listarPipesEspelho(Pg) {
+  const rows = await Pg.connectAndQuery(
+    `SELECT pipe_id, nome, abertos_estimados FROM tab_painel_pipefy_pipe`, {});
+  if (!rows.length) return listarPipesOrg();
+  return rows.map(r => ({ id: trim(r.pipe_id), nome: trim(r.nome), abertosEstimados: Number(r.abertos_estimados || 0) }));
+}
 
 // Resposta da TV: sem os campos pesados da Visão Executiva
 function paraTv(snap) {
@@ -347,4 +585,7 @@ function paraTv(snap) {
   return resto;
 }
 
-module.exports = { disponivel, obterSnapshot, listarPipesOrg, invalidarCache, lerHistorico, paraTv };
+module.exports = {
+  disponivel, obterSnapshot, listarPipesOrg, listarPipesEspelho, invalidarCache, lerHistorico, paraTv,
+  sincronizar, lerPipeAgora, definirAgenda
+};

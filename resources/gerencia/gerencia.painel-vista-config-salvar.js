@@ -1,7 +1,8 @@
 // POST /gerencia/painel-vista/config/pipe    — { pipeId, nome, considerar }
 // POST /gerencia/painel-vista/config/usuario — { nome, setorId|null }
 // Salvam a config do Painel de Gestão à Vista e derrubam o cache do snapshot
-// (o painel reflete no próximo refresh). Perm 10004. Auditado.
+// (o painel reflete no próximo refresh; pipe marcado é lido do Pipefy na hora).
+// Perm 10004. Auditado.
 // (Dois endpoints num arquivo só via rota com :alvo — mesmo padrão de upsert.)
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10004]);
@@ -40,6 +41,12 @@ module.exports = (app) => ({
           descricao: `Pipe "${nome || pipeId}" ${considerar ? 'INCLUÍDO no' : 'REMOVIDO do'} painel`
         });
         PipefyPainel.invalidarCache();
+        // Desmarcar vale na hora (filtro na leitura do espelho). Marcar lê só este
+        // pipe no Pipefy em segundo plano, sem esperar a próxima leitura agendada.
+        if (considerar && PipefyPainel.disponivel()) {
+          PipefyPainel.lerPipeAgora(Pg, pipeId, nome).catch(e =>
+            console.warn(`[painel-vista-config] leitura do pipe ${pipeId} falhou:`, e.message));
+        }
         return res.json({ ok: true });
       }
 

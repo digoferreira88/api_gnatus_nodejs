@@ -2,9 +2,10 @@
 // Gestão à Vista: pipes da org (com flag considerar), universo de responsáveis
 // (com setor atual) e a lista de setores. Perm 10004.
 //
-// Pipes vêm DIRETO do Pipefy (1 request leve) — inclusive os desconsiderados,
-// senão não daria pra remarcar um pipe desligado. Usuários vêm do último
-// snapshot (quem aparece em card aberto) + os já vinculados no banco.
+// Pipes vêm do espelho do Pipefy no banco (a leitura agendada grava TODOS os
+// pipes da org, inclusive os desconsiderados — senão não daria pra remarcar um
+// pipe desligado). Zero chamada ao Pipefy. Usuários vêm do último snapshot (quem
+// aparece em card aberto) + os já vinculados no banco.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10004]);
 const PipefyPainel = require('../../services/pipefyPainel');
@@ -17,13 +18,11 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Pg } = app.services;
-    if (!PipefyPainel.disponivel()) {
-      return res.status(503).json({ message: 'PIPEFY_TOKEN não configurado no servidor.' });
-    }
     try {
-      const [pipesOrg, snap, setores, flagsPipe, vinculos] = await Promise.all([
-        PipefyPainel.listarPipesOrg(),
-        PipefyPainel.obterSnapshot(Pg),
+      // snapshot primeiro: no 1º acesso depois do deploy ele enche o espelho
+      const snap = await PipefyPainel.obterSnapshot(Pg);
+      const [pipesOrg, setores, flagsPipe, vinculos] = await Promise.all([
+        PipefyPainel.listarPipesEspelho(Pg),
         Pg.connectAndQuery(`SELECT id, nome FROM tab_painel_setor ORDER BY ordem, id`, {}),
         Pg.connectAndQuery(`SELECT pipe_id, considerar FROM tab_painel_pipe`, {}),
         Pg.connectAndQuery(`SELECT usuario_nome, setor_id FROM tab_painel_usuario_setor`, {})

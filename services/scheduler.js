@@ -286,6 +286,13 @@ const CRON_KANBAN_ENTREGAS = '5,35 6-22 * * *';
 // para tab_pipefy_uso. Só grava se houve chamada.
 const CRON_PIPEFY_USO = '*/10 * * * *';
 
+// Gestão à Vista (TV + Visão Executiva): lê o Pipefy e grava o espelho no banco
+// (tab_painel_pipefy_*, migration 142); as telas leem só do banco. Este cron é em
+// horário de BRASÍLIA — o job passa tz explícito, então a VPS em UTC não o adianta.
+// Padrão: de 3 em 3h — 06h, 09h, 12h, 15h e 18h, seg-sex (5 leituras/dia). Custo de cada uma
+// em tab_painel_pipefy_sync.requisicoes. PAINEL_PIPEFY_ATIVO=0 desliga.
+const CRON_PAINEL_PIPEFY = process.env.CRON_PAINEL_PIPEFY || '0 6-18/3 * * 1-5';
+
 // NPS pós-venda: pedidos faturados (estatus 99) -> convite + WhatsApp. Comercial,
 // de hora em hora (só roda com o módulo ATIVO + template Suri configurado).
 const CRON_NPS_POSVENDA = '40 8-19 * * 1-5';  // :40, 08h-19h, seg-sex
@@ -469,6 +476,23 @@ function start(app) {
     }
   });
   console.log(`[scheduler] pipefy-uso agendado: cron "${CRON_PIPEFY_USO}"`);
+
+  // Gestão à Vista: espelho do Pipefy no banco. Dormente sem PIPEFY_TOKEN.
+  if (jobs.painelPipefy) jobs.painelPipefy.cancel();
+  if (String(process.env.PAINEL_PIPEFY_ATIVO || '1') !== '0') {
+    const PipefyPainel = require('./pipefyPainel');
+    jobs.painelPipefy = schedule.scheduleJob({ rule: CRON_PAINEL_PIPEFY, tz: 'America/Sao_Paulo' }, async () => {
+      try {
+        if (!PipefyPainel.disponivel()) return;   // sem token: silêncio
+        const r = await PipefyPainel.sincronizar(app.services.Pg, 'CRON');
+        console.log('[scheduler] painel-pipefy:', JSON.stringify(r));
+      } catch (err) {
+        console.error('[scheduler] erro no painel-pipefy:', err.message);
+      }
+    });
+    PipefyPainel.definirAgenda(jobs.painelPipefy);   // a tela mostra a próxima leitura
+    console.log(`[scheduler] painel-pipefy agendado: cron "${CRON_PAINEL_PIPEFY}" (America/Sao_Paulo)`);
+  }
 
   // RHP × OneDrive: conserta o link do PDF que o Zap externo deixou como "Erro no
   // upload" (corrida de tempo). Dormente sem RHP_RECON_ATIVO=1 (+ PIPEFY_TOKEN e M365_*).
