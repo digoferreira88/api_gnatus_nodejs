@@ -1,7 +1,8 @@
-// POST /universidade/rh/cargo/:codigo/trilhas — define quais trilhas o cargo recebe.
-// Body: { trilhaIds: [1, 2] }. Recalcula os requisitos. Perm 15004/15003.
+// POST /universidade/rh/cargo/:codigo/trilhas — define quais trilhas o cargo recebe
+// EM QUALQUER SETOR. Body: { trilhaIds: [1, 2] }. Recalcula os requisitos.
+// (Para cargo só num setor, ou setor inteiro, use POST /rh/regras.) Perm 15004/15003.
 
-const { ESCREVER, requirePerm, trim, usuario, audit } = require('./_rh');
+const { ESCREVER, requirePerm, trim, usuario, audit, definirTrilhasDaChave } = require('./_rh');
 const UniRh = require('../../services/universidadeRh');
 
 module.exports = (app) => ({
@@ -19,22 +20,13 @@ module.exports = (app) => ({
     const cargo = await Pg.connectAndQuery(`SELECT codigo, descricao FROM tab_uni_cargo WHERE codigo = @c`, { c: codigo });
     if (!cargo.length) return res.status(404).json({ message: 'Cargo não encontrado (sincronize com o Protheus).' });
 
-    await Pg.withTransaction(async (cli) => {
-      await cli.query(
-        `DELETE FROM tab_uni_cargo_trilha WHERE cargo_codigo = $1 AND NOT (trilha_id = ANY($2::int[]))`, [codigo, ids]);
-      if (ids.length) {
-        await cli.query(`
-          INSERT INTO tab_uni_cargo_trilha (cargo_codigo, trilha_id, criado_por)
-          SELECT $1, t.id, $3 FROM tab_uni_trilha t WHERE t.id = ANY($2::int[])
-          ON CONFLICT DO NOTHING`, [codigo, ids, u.ID || null]);
-      }
-    });
+    await Pg.withTransaction(cli => definirTrilhasDaChave(cli, codigo, null, ids, u.ID));
 
     const requisitos = await UniRh.recalcularRequisitos(app);
     const nomes = await Pg.connectAndQuery(
       `SELECT string_agg(codigo, ', ' ORDER BY codigo) AS t FROM tab_uni_trilha WHERE id = ANY(@ids::int[])`, { ids });
     await audit(app, req, 'ALTERAR', 'uni_cargo', codigo,
-      `Cargo ${codigo} (${cargo[0].descricao || ''}) recebe as trilhas: ${nomes[0]?.t || 'nenhuma'}`, { trilhaIds: ids });
+      `Cargo ${codigo} (${cargo[0].descricao || ''}) em qualquer setor recebe as trilhas: ${nomes[0]?.t || 'nenhuma'}`, { trilhaIds: ids });
 
     return res.json({ ok: true, requisitos });
   }

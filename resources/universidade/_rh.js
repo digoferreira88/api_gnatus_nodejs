@@ -58,7 +58,78 @@ function situacaoGeral(c) {
   return 'em_dia';
 }
 
+// ---------------------------------------------------------------- regras cargo/setor (migration 141)
+// Normaliza [{cargoCodigo, deptoCodigo}] — ao menos um dos dois; remove repetidas.
+function normalizarRegras(lista) {
+  const vistos = new Set();
+  const out = [];
+  for (const r of Array.isArray(lista) ? lista : []) {
+    const cargo = trim(r && r.cargoCodigo) || null;
+    const depto = trim(r && r.deptoCodigo) || null;
+    if (!cargo && !depto) continue;
+    const k = `${cargo || ''}|${depto || ''}`;
+    if (vistos.has(k)) continue;
+    vistos.add(k);
+    out.push({ cargo, depto });
+  }
+  return out;
+}
+
+// Confere se cargos e setores existem no espelho. Devolve mensagem de erro ou null.
+async function validarRegras(cli, regras) {
+  const cargos = [...new Set(regras.map(r => r.cargo).filter(Boolean))];
+  const deptos = [...new Set(regras.map(r => r.depto).filter(Boolean))];
+  if (cargos.length) {
+    const r = await cli.query(`SELECT codigo FROM tab_uni_cargo WHERE codigo = ANY($1::text[])`, [cargos]);
+    const ok = new Set(r.rows.map(x => x.codigo));
+    const falta = cargos.filter(c => !ok.has(c));
+    if (falta.length) return `Cargo não encontrado: ${falta.join(', ')} (sincronize com o Protheus).`;
+  }
+  if (deptos.length) {
+    const r = await cli.query(`SELECT codigo FROM tab_uni_departamento WHERE codigo = ANY($1::text[])`, [deptos]);
+    const ok = new Set(r.rows.map(x => x.codigo));
+    const falta = deptos.filter(c => !ok.has(c));
+    if (falta.length) return `Setor não encontrado: ${falta.join(', ')} (sincronize com o Protheus).`;
+  }
+  return null;
+}
+
+// Troca as regras de UMA trilha pelo conjunto informado. Regra que continua mantém a
+// data de criação (é dela que conta o prazo de quem já estava no cargo/setor).
+async function gravarRegrasTrilha(cli, trilhaId, regras, userId) {
+  const atuais = await cli.query(
+    `SELECT id, COALESCE(cargo_codigo, '') AS c, COALESCE(depto_codigo, '') AS d FROM tab_uni_trilha_regra WHERE trilha_id = $1`, [trilhaId]);
+  const quer = new Set(regras.map(r => `${r.cargo || ''}|${r.depto || ''}`));
+  const tem = new Set(atuais.rows.map(r => `${r.c}|${r.d}`));
+  const remover = atuais.rows.filter(r => !quer.has(`${r.c}|${r.d}`)).map(r => r.id);
+  if (remover.length) await cli.query(`DELETE FROM tab_uni_trilha_regra WHERE id = ANY($1::int[])`, [remover]);
+  for (const r of regras) {
+    if (tem.has(`${r.cargo || ''}|${r.depto || ''}`)) continue;
+    await cli.query(
+      `INSERT INTO tab_uni_trilha_regra (trilha_id, cargo_codigo, depto_codigo, criado_por) VALUES ($1, $2, $3, $4)
+       ON CONFLICT DO NOTHING`, [trilhaId, r.cargo, r.depto, userId || null]);
+  }
+  return { removidas: remover.length };
+}
+
+// Define quais trilhas valem para UMA chave (cargo, setor) — qualquer dos dois pode ser null.
+async function definirTrilhasDaChave(cli, cargo, depto, trilhaIds, userId) {
+  await cli.query(`
+    DELETE FROM tab_uni_trilha_regra
+     WHERE COALESCE(cargo_codigo, '') = COALESCE($1, '') AND COALESCE(depto_codigo, '') = COALESCE($2, '')
+       AND NOT (trilha_id = ANY($3::int[]))`, [cargo, depto, trilhaIds]);
+  if (trilhaIds.length) {
+    await cli.query(`
+      INSERT INTO tab_uni_trilha_regra (trilha_id, cargo_codigo, depto_codigo, criado_por)
+      SELECT t.id, $1::varchar, $2::varchar, $4::int FROM tab_uni_trilha t WHERE t.id = ANY($3::int[])
+      ON CONFLICT DO NOTHING`, [cargo, depto, trilhaIds, userId || null]);
+  }
+}
+
+const VIA = { todos: 'todos', cargo: 'cargo', setor: 'setor', cargo_setor: 'cargo+setor' };
+
 module.exports = {
   LER, ESCREVER, UPLOAD_ROOT, requirePerm, trim, txt, int, num, dataISO, usuario, audit,
-  limpa, camel, SITUACOES, CONFORMES, IRREGULARES, situacaoGeral
+  limpa, camel, SITUACOES, CONFORMES, IRREGULARES, situacaoGeral,
+  normalizarRegras, validarRegras, gravarRegrasTrilha, definirTrilhasDaChave, VIA
 };

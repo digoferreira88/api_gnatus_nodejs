@@ -1076,6 +1076,8 @@ Origem: NC de auditoria (ISO 13485 §6.2) — colaborador exercendo a função s
 
 **Evidência** (`vw_uni_evidencia`, view — o dado fica no módulo de origem): registro manual/lote/histórico (`tab_uni_registro`, imutável — só se anula com motivo), matrícula EAD concluída (`tab_uni_matricula` via `user_id`) e **presença marcada em turma do Treinamentos** cujo `tab_treina_treinamento.curso_id` aponta para o curso. Situação de cada requisito em `vw_uni_requisito_situacao`: em_dia · a_vencer (≤60 dias) · pendente · atrasado · vencido (validade) · desatualizado (versão) · dispensado.
 
+**Cargo + setor (migration [141](database/postgres/141-universidade-trilha-cargo-setor.sql), 11/2026):** quem recebe a trilha é uma **regra** em `tab_uni_trilha_regra` = (cargo opcional, setor opcional): cargo em qualquer setor · cargo só num setor · setor inteiro. Setor = `RA_DEPTO` → SQB (`tab_uni_departamento`, sincronizado junto). `vw_uni_colaborador_trilha` diz qual trilha vale p/ quem e por qual regra (`via` = todos/cargo/setor/cargo_setor) — é a base do recálculo. Mudança de setor no Protheus gera evento `mudanca_setor` e reinicia `cargo_desde`. `tab_uni_cargo_trilha` (140) foi copiada p/ a regra nova como "cargo em qualquer setor" e ficou como legado (não é mais gravada). Endpoint novo [POST /rh/regras](resources/universidade/universidade.rh-regras.js) (chaves cargo/setor → trilhas); `POST /rh/trilha` aceita `regras` (e ainda `cargos`).
+
 **Permissões:** `15004` RH (edita), `15005` consulta (Qualidade/auditoria), `15003`/`0` admin. "Minha trilha" = qualquer usuário logado (acha o colaborador pelo e-mail do login).
 
 | Página | Rota | Endpoints |

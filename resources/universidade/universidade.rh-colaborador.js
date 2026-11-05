@@ -19,13 +19,13 @@ async function fichaColaborador(Pg, id) {
     Pg.connectAndQuery(`
       SELECT id, tipo, de, para, data::text AS data, registrado_em
         FROM tab_uni_colaborador_evento WHERE colaborador_id = @id ORDER BY registrado_em DESC, id DESC`, { id }),
+    // trilhas que valem p/ a pessoa e por qual regra (a mais específica, se houver mais de uma)
     Pg.connectAndQuery(`
-      SELECT t.id, t.codigo, t.nome, t.aplica_todos
-        FROM tab_uni_trilha t
-       WHERE t.ativo AND t.publico = 'interno'
-         AND (t.aplica_todos OR EXISTS (SELECT 1 FROM tab_uni_cargo_trilha ct
-                                         WHERE ct.trilha_id = t.id AND ct.cargo_codigo = @cargo))
-       ORDER BY t.aplica_todos DESC, t.codigo`, { cargo: c.cargo_codigo || '' }),
+      SELECT DISTINCT ON (t.id) t.id, t.codigo, t.nome, t.aplica_todos, ct.via
+        FROM vw_uni_colaborador_trilha ct
+        JOIN tab_uni_trilha t ON t.id = ct.trilha_id
+       WHERE ct.colaborador_id = @id
+       ORDER BY t.id, CASE ct.via WHEN 'cargo_setor' THEN 0 WHEN 'cargo' THEN 1 WHEN 'setor' THEN 2 ELSE 3 END`, { id }),
     Pg.connectAndQuery(`
       SELECT s.id, s.curso_id, cu.codigo AS curso_codigo, cu.titulo AS curso_titulo, cu.formato,
              cu.validade_meses, a.codigo AS area,

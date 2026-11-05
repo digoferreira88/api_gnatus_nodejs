@@ -1,11 +1,13 @@
-// POST /universidade/rh/trilha — cria/edita uma trilha (Formação) com seus cursos e,
-// opcionalmente, os cargos que a recebem. Recalcula os requisitos de todo mundo.
+// POST /universidade/rh/trilha — cria/edita uma trilha (Formação) com seus cursos e
+// quem a recebe. Recalcula os requisitos de todo mundo.
 // Body: { id?, codigo, nome, descricao, aplicaTodos, ativo,
 //         itens: [{ cursoId, ordem, obrigatorio, prazoDias, codigoExibicao }],
-//         cargos?: ['00051', ...] }
+//         regras?: [{ cargoCodigo|null, deptoCodigo|null }],   ← cargo e/ou setor (migration 141)
+//         cargos?: ['00051', ...] }                            ← legado: = cargo em qualquer setor
+// Sem regras/cargos no body, as regras da trilha não mudam.
 // Perm 15004/15003.
 
-const { ESCREVER, requirePerm, trim, txt, int, usuario, audit } = require('./_rh');
+const { ESCREVER, requirePerm, trim, txt, int, usuario, audit, normalizarRegras, validarRegras, gravarRegrasTrilha } = require('./_rh');
 const UniRh = require('../../services/universidadeRh');
 
 module.exports = (app) => ({
@@ -37,7 +39,10 @@ module.exports = (app) => ({
     if (itens.some(i => i.prazoDias != null && (i.prazoDias < 0 || i.prazoDias > 3650))) {
       return res.status(400).json({ message: 'Prazo deve ficar entre 0 e 3650 dias.' });
     }
-    const cargos = Array.isArray(b.cargos) ? [...new Set(b.cargos.map(c => trim(c)).filter(Boolean))] : null;
+
+    let regras = null;
+    if (Array.isArray(b.regras)) regras = normalizarRegras(b.regras);
+    else if (Array.isArray(b.cargos)) regras = normalizarRegras(b.cargos.map(c => ({ cargoCodigo: c })));
 
     let trilhaId;
     try {
@@ -73,15 +78,10 @@ module.exports = (app) => ({
             [tid, i.cursoId, i.ordem, i.obrigatorio, i.prazoDias, i.codigoExibicao]);
         }
 
-        if (cargos) {
-          await cli.query(
-            `DELETE FROM tab_uni_cargo_trilha WHERE trilha_id = $1 AND NOT (cargo_codigo = ANY($2::text[]))`, [tid, cargos]);
-          if (cargos.length) {
-            await cli.query(`
-              INSERT INTO tab_uni_cargo_trilha (cargo_codigo, trilha_id, criado_por)
-              SELECT g.codigo, $1, $3 FROM tab_uni_cargo g WHERE g.codigo = ANY($2::text[])
-              ON CONFLICT DO NOTHING`, [tid, cargos, u.ID || null]);
-          }
+        if (regras) {
+          const erro = await validarRegras(cli, regras);
+          if (erro) { const e = new Error(erro); e.status = 400; throw e; }
+          await gravarRegrasTrilha(cli, tid, regras, u.ID);
         }
         return tid;
       });
@@ -92,10 +92,19 @@ module.exports = (app) => ({
     }
 
     const requisitos = await UniRh.recalcularRequisitos(app);
-    await audit(app, req, id ? 'ALTERAR' : 'CRIAR', 'uni_trilha', trilhaId,
-      `${id ? 'Alterou' : 'Criou'} a trilha ${codigo} — ${nome} (${itens.length} curso(s)${cargos ? `, ${cargos.length} cargo(s)` : ''})`,
-      { codigo, nome, aplicaTodos: !!b.aplicaTodos, ativo: b.ativo !== false, itens, cargos });
+    const info = await Pg.connectAndQuery(`
+      SELECT (SELECT count(DISTINCT colaborador_id) FROM vw_uni_colaborador_trilha WHERE trilha_id = @t)::int AS pessoas,
+             (SELECT count(*) FROM tab_uni_trilha_item ti JOIN tab_uni_curso c ON c.id = ti.curso_id AND c.ativo
+               WHERE ti.trilha_id = @t AND ti.obrigatorio)::int AS cursos_obrigatorios,
+             (SELECT count(*) FROM tab_uni_trilha_regra WHERE trilha_id = @t)::int AS regras`, { t: trilhaId });
 
-    return res.json({ ok: true, id: trilhaId, requisitos });
+    await audit(app, req, id ? 'ALTERAR' : 'CRIAR', 'uni_trilha', trilhaId,
+      `${id ? 'Alterou' : 'Criou'} a trilha ${codigo} — ${nome} (${itens.length} curso(s), ${info[0].regras} regra(s) de cargo/setor, ${info[0].pessoas} pessoa(s))`,
+      { codigo, nome, aplicaTodos: !!b.aplicaTodos, ativo: b.ativo !== false, itens, regras });
+
+    return res.json({
+      ok: true, id: trilhaId, requisitos,
+      pessoas: info[0].pessoas, cursosObrigatorios: info[0].cursos_obrigatorios, regras: info[0].regras
+    });
   }
 });

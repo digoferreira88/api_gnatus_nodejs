@@ -1,11 +1,12 @@
 // Universidade · RH — espelho de cargos e colaboradores do Protheus + requisitos de treinamento.
 //
 // Fluxo (job diário e botão "Sincronizar agora"):
-//   1) SQ3010 → tab_uni_cargo                       (cargos)
-//   2) SRA010 → tab_uni_colaborador (chave = CPF)   (admissão, mudança de cargo, desligamento
-//                                                     viram eventos em tab_uni_colaborador_evento)
+//   1) SQ3010 → tab_uni_cargo  ·  SQB010 → tab_uni_departamento   (cargos e setores)
+//   2) SRA010 → tab_uni_colaborador (chave = CPF)   (admissão, mudança de cargo/setor e
+//                                                     desligamento viram eventos em tab_uni_colaborador_evento)
 //   3) liga colaborador ↔ usuário da intranet pelo e-mail (p/ "Minha trilha" e EAD)
-//   4) recalcula tab_uni_requisito: cargo → trilhas → cursos (+ trilhas "para todos")
+//   4) recalcula tab_uni_requisito: regras (cargo e/ou setor) → trilhas → cursos
+//      (+ trilhas "para todos"). Quem recebe o quê está em vw_uni_colaborador_trilha.
 //
 // Protheus é só LIDO. Nada é apagado: requisito que deixa de valer fica ativo=false.
 
@@ -44,6 +45,31 @@ async function sincronizarCargos(app) {
     off AS (
       UPDATE tab_uni_cargo c SET ativo = FALSE
        WHERE c.ativo AND NOT EXISTS (SELECT 1 FROM x WHERE x.codigo = c.codigo)
+      RETURNING 1)
+    SELECT (SELECT count(*) FROM up)::int AS total, (SELECT count(*) FROM off)::int AS desativados`,
+    { dados: JSON.stringify(dados) });
+  return { total: r[0].total, desativados: r[0].desativados };
+}
+
+async function sincronizarDepartamentos(app) {
+  const { Pg, Protheus } = app.services;
+  const rows = await Protheus.connectAndQuery(`
+    SELECT RTRIM(QB_DEPTO) codigo, MAX(LTRIM(RTRIM(QB_DESCRIC))) descricao
+      FROM SQB010 WITH (NOLOCK)
+     WHERE D_E_L_E_T_ <> '*' AND RTRIM(QB_DEPTO) <> ''
+     GROUP BY RTRIM(QB_DEPTO)`);
+  const dados = rows.map(r => ({ codigo: trim(r.codigo), descricao: trim(r.descricao) || null }));
+  if (!dados.length) return { total: 0, desativados: 0 };
+  const r = await Pg.connectAndQuery(`
+    WITH x AS (SELECT * FROM jsonb_to_recordset(@dados::jsonb) AS x(codigo text, descricao text)),
+    up AS (
+      INSERT INTO tab_uni_departamento (codigo, descricao, ativo, sincronizado_em)
+      SELECT codigo, descricao, TRUE, NOW() FROM x
+      ON CONFLICT (codigo) DO UPDATE SET descricao = EXCLUDED.descricao, ativo = TRUE, sincronizado_em = NOW()
+      RETURNING 1),
+    off AS (
+      UPDATE tab_uni_departamento d SET ativo = FALSE
+       WHERE d.ativo AND NOT EXISTS (SELECT 1 FROM x WHERE x.codigo = d.codigo)
       RETURNING 1)
     SELECT (SELECT count(*) FROM up)::int AS total, (SELECT count(*) FROM off)::int AS desativados`,
     { dados: JSON.stringify(dados) });
@@ -103,14 +129,14 @@ async function sincronizarColaboradores(app) {
   const { Pg } = app.services;
   const pessoas = await lerColaboradoresProtheus(app);
   const existentes = await Pg.connectAndQuery(
-    `SELECT id, chave, cargo_codigo, cargo_desc, ativo FROM tab_uni_colaborador`);
+    `SELECT id, chave, cargo_codigo, cargo_desc, depto_codigo, depto_desc, ativo FROM tab_uni_colaborador`);
   const mapa = new Map(existentes.map(e => [e.chave, e]));
   const primeiraCarga = existentes.length === 0;
   const hoje = hojeISO();
 
   const gravar = [];
   const eventos = [];
-  const cont = { admissoes: 0, mudancasCargo: 0, desligamentos: 0, readmissoes: 0, cargaInicial: 0 };
+  const cont = { admissoes: 0, mudancasCargo: 0, mudancasSetor: 0, desligamentos: 0, readmissoes: 0, cargaInicial: 0 };
 
   for (const p of pessoas) {
     const ex = mapa.get(p.chave);
@@ -135,10 +161,18 @@ async function sincronizarColaboradores(app) {
       cont.readmissoes++;
       p.cargo_desde = p.admissao || hoje;
       eventos.push({ chave: p.chave, tipo: 'readmissao', de: null, para: cargoTxt(p), data: p.admissao || hoje });
-    } else if (p.ativo && ex.cargo_codigo && p.cargo_codigo && ex.cargo_codigo !== p.cargo_codigo) {
-      cont.mudancasCargo++;
-      p.cargo_desde = hoje;
-      eventos.push({ chave: p.chave, tipo: 'mudanca_cargo', de: cargoTxt(ex), para: cargoTxt(p), data: hoje });
+    } else if (p.ativo) {
+      // Mudou de cargo e/ou de setor: a trilha pode mudar → "no cargo/setor desde" = hoje.
+      if (ex.cargo_codigo && p.cargo_codigo && ex.cargo_codigo !== p.cargo_codigo) {
+        cont.mudancasCargo++;
+        p.cargo_desde = hoje;
+        eventos.push({ chave: p.chave, tipo: 'mudanca_cargo', de: cargoTxt(ex), para: cargoTxt(p), data: hoje });
+      }
+      if (ex.depto_codigo && p.depto_codigo && ex.depto_codigo !== p.depto_codigo) {
+        cont.mudancasSetor++;
+        p.cargo_desde = hoje;
+        eventos.push({ chave: p.chave, tipo: 'mudanca_setor', de: setorTxt(ex), para: setorTxt(p), data: hoje });
+      }
     }
     gravar.push(p);
   }
@@ -191,6 +225,11 @@ async function sincronizarColaboradores(app) {
   };
 }
 
+function setorTxt(x) {
+  const desc = trim(x.depto_desc);
+  return desc || trim(x.depto_codigo) || null;
+}
+
 function cargoTxt(x) {
   const cod = trim(x.cargo_codigo);
   const desc = trim(x.cargo_desc);
@@ -198,8 +237,9 @@ function cargoTxt(x) {
   return desc ? `${cod} · ${desc}` : cod;
 }
 
-// cargo → trilhas → cursos (+ trilhas "para todos"). Mantém a data em que a exigência
-// nasceu (desde) enquanto ela continuar valendo; o prazo é desde + prazo_dias.
+// regras (cargo e/ou setor) → trilhas → cursos (+ trilhas "para todos"), via
+// vw_uni_colaborador_trilha. Mantém a data em que a exigência nasceu (desde) enquanto
+// ela continuar valendo; o prazo é desde + prazo_dias.
 async function recalcularRequisitos(app) {
   const { Pg } = app.services;
   const r = await Pg.connectAndQuery(`
@@ -211,13 +251,12 @@ async function recalcularRequisitos(app) {
              MIN(GREATEST(
                    COALESCE(col.cargo_desde, col.admissao, CURRENT_DATE),
                    ti.criado_em::date,
-                   CASE WHEN t.aplica_todos THEN t.criado_em::date ELSE ct.criado_em::date END)) AS desde
-        FROM tab_uni_colaborador col
-        JOIN tab_uni_trilha t ON t.ativo AND t.publico = 'interno'
-        LEFT JOIN tab_uni_cargo_trilha ct ON ct.trilha_id = t.id AND ct.cargo_codigo = col.cargo_codigo
+                   ap.desde_regra)) AS desde
+        FROM vw_uni_colaborador_trilha ap
+        JOIN tab_uni_colaborador col ON col.id = ap.colaborador_id
+        JOIN tab_uni_trilha t ON t.id = ap.trilha_id
         JOIN tab_uni_trilha_item ti ON ti.trilha_id = t.id
         JOIN tab_uni_curso cu ON cu.id = ti.curso_id AND cu.ativo
-       WHERE col.ativo AND (t.aplica_todos OR ct.trilha_id IS NOT NULL)
        GROUP BY col.id, ti.curso_id
     ), up AS (
       INSERT INTO tab_uni_requisito AS r (colaborador_id, curso_id, obrigatorio, origem, desde, prazo_dias, ativo)
@@ -258,9 +297,10 @@ async function sincronizar(app, { origem = 'manual', userId = null } = {}) {
     const logId = log[0].id;
     try {
       const cargos = await sincronizarCargos(app);
+      const departamentos = await sincronizarDepartamentos(app);
       const colaboradores = await sincronizarColaboradores(app);
       const requisitos = await recalcularRequisitos(app);
-      const resumo = { cargos, colaboradores, requisitos };
+      const resumo = { cargos, departamentos, colaboradores, requisitos };
       await Pg.connectAndQuery(
         `UPDATE tab_uni_sync_log SET concluido_em = NOW(), ok = TRUE, resumo = @r::jsonb WHERE id = @id`,
         { r: JSON.stringify(resumo), id: logId });
@@ -276,6 +316,6 @@ async function sincronizar(app, { origem = 'manual', userId = null } = {}) {
 }
 
 module.exports = {
-  sincronizar, sincronizarCargos, sincronizarColaboradores, recalcularRequisitos,
+  sincronizar, sincronizarCargos, sincronizarDepartamentos, sincronizarColaboradores, recalcularRequisitos,
   CONFORMES, IRREGULARES, hojeISO, trim, soDig
 };
