@@ -15,7 +15,7 @@
 const { buscarNotaServico } = require('./nfseProtheus');
 const { montarDps } = require('./nfseXml');
 const { assinarXml, carregarCertificado } = require('./nfseAssinatura');
-const { emitirDps, ambiente } = require('./nfseBarretos');
+const { emitirDps, consultarDps, consultarNfse, ambiente } = require('./nfseBarretos');
 const { gravarAposEmissao } = require('./nfseWriteback');
 
 const soDig = (v) => String(v == null ? '' : v).replace(/\D/g, '');
@@ -98,6 +98,39 @@ function resolverCtribNac(nota) {
   const dp = depara()[produto] || {};
   const ctribnac = soDig(principal.itemListaServico) || dp.cTribNac || '';  // 1) B1_CODISS  2) de-para
   return { ctribnac, cIndOp: dp.cIndOp || '', nbs: dp.nbs || '', aliqIss: dp.aliqIss, produto };
+}
+
+// A NFS-e recuperada é desta nota? Confere tomador (CNPJ/CPF) e valor do serviço no XML.
+// Necessário porque o Id do DPS usa o número da NF do Protheus, e já houve nota excluída
+// e refeita com o número trocado entre clientes (002006/002007, 07/08/2026).
+function nfseConfere(nfseXml, nota) {
+  const x = String(nfseXml || '');
+  const toma = (x.match(/<toma>([\s\S]*?)<\/toma>/) || [])[1] || '';
+  const docToma = soDig((toma.match(/<(?:CNPJ|CPF)>(\d+)<\/(?:CNPJ|CPF)>/) || [])[1]);
+  const vServ = Number((x.match(/<vServ>([\d.]+)<\/vServ>/) || [])[1]);
+  const docNota = soDig(nota && nota.tomador && nota.tomador.cpfCnpj);
+  return !!docToma && docToma === docNota && Math.abs(vServ - Number((nota && nota.valorServicos) || 0)) < 0.005;
+}
+
+// Emissor nacional: procura a NFS-e gerada a partir deste DPS (GET /dps/{id}). Usado
+// quando o envio deu timeout/erro de conexão ou voltou "já emitida". Só aceita a chave
+// se a NFS-e for desta nota; se for de outra, devolve { conflito, chaveEncontrada }.
+// null = não achou (ou o destino não tem consulta, como o endpoint antigo da RLZ).
+async function recuperarPorDps(dpsId, nota, tentativas = 2) {
+  for (let i = 0; i < tentativas; i++) {
+    if (i) await new Promise((res) => setTimeout(res, 5000));   // a NFS-e pode estar terminando de gerar
+    try {
+      const c = await consultarDps(dpsId);
+      if (c.indisponivel) return null;
+      if (!c.encontrada) continue;
+      const n = await consultarNfse(c.chaveAcesso);
+      if (n.ok && nfseConfere(n.nfseXml, nota)) {
+        return { ok: true, httpStatus: 200, chaveAcesso: c.chaveAcesso, nfseXml: n.nfseXml, erros: [], alertas: [], recuperada: true };
+      }
+      return { ok: false, conflito: true, chaveEncontrada: c.chaveAcesso, xmlConferido: !!n.ok };
+    } catch (e) { /* tenta de novo */ }
+  }
+  return null;
 }
 
 // UPDATE de finalização da linha reservada. `f` traz só os campos a gravar.
@@ -193,12 +226,32 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
     cfg.aliqIss = aliqIss;   // ISS: alíquota do de-para (0 = NÃO INCIDÊNCIA → tribISSQN=4)
     const { xml, id: dpsId } = montarDps(nota, cfg);
     const signed = assinarXml(xml);                          // RSA-SHA1 (default, exigido por Barretos v1.00)
-    const r = await emitirDps(signed);
-    const status = r.ok ? 'EMITIDA' : (r.erros && r.erros.length ? 'REJEITADA' : 'ERRO');
+    let r;
+    try {
+      r = await emitirDps(signed);
+    } catch (e) {
+      // timeout/conexão: a NFS-e pode ter sido gerada mesmo assim (ambiguidade de timeout)
+      r = { ok: false, httpStatus: 0, excecao: true, erros: [{ Codigo: 'EXCECAO', Descricao: e.message }], alertas: [] };
+    }
+    // Timeout ou "já emitida": tenta recuperar a chave pelo Id do DPS (emissor nacional).
+    let recuperacao = null;
+    if (!r.ok && (r.excecao || provavelmenteEmitida(r.erros))) {
+      recuperacao = await recuperarPorDps(dpsId, nota);
+      if (recuperacao && recuperacao.ok) r = recuperacao;
+      else if (recuperacao && recuperacao.conflito) {
+        r.erros = [{ Codigo: 'DPS_JA_USADO', Descricao: `Já existe NFS-e com este número de DPS para outro tomador/valor (chave ${recuperacao.chaveEncontrada}). Confira com o fiscal antes de reemitir.` }, ...(r.erros || [])];
+      }
+    }
+    const status = r.ok ? 'EMITIDA' : (r.excecao ? 'ERRO' : (r.erros && r.erros.length ? 'REJEITADA' : 'ERRO'));
     await finalizar(Pg, id, {
       ...dados, status, dps_id: dpsId, dps_xml: signed,
       nfse_chave: r.chaveAcesso, nfse_xml: r.nfseXml,
-      retorno: { httpStatus: r.httpStatus, ok: r.ok, alertas: r.alertas || [] }, erros: r.erros || []
+      retorno: {
+        httpStatus: r.httpStatus, ok: r.ok, alertas: r.alertas || [],
+        ...(r.recuperada ? { recuperadaPorDps: true } : {}),
+        ...(recuperacao && recuperacao.conflito ? { conflitoDps: recuperacao.chaveEncontrada } : {})
+      },
+      erros: r.erros || []
     });
     // Grava a chave no Protheus em segundo plano (sem await: a emissão não espera o ERP).
     if (r.ok && ambienteRotulo === 'producao') gravarAposEmissao(app, id, { por, origem: 'emissao' });
@@ -220,4 +273,4 @@ function provavelmenteEmitida(erros) {
   return /504\s*gateway|compartilhada com o adn|j[áa] escriturada|\be1268\b|\be0014\b/.test(txt);
 }
 
-module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido, provavelmenteEmitida };
+module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido, provavelmenteEmitida, recuperarPorDps, nfseConfere };
