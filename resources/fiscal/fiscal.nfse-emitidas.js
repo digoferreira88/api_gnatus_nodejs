@@ -30,6 +30,7 @@ module.exports = (app) => ({
       rows = await Pg.connectAndQuery(`
         SELECT id, serie, doc, cliente, loja, cliente_nome, valor, ctribnac, ambiente,
                status, nfse_chave, nfse_numero, dps_id, writeback, erros,
+               retorno->'writeback'->>'erro' AS wb_erro, retorno->'writeback'->>'at' AS wb_at,
                (dps_xml IS NOT NULL) AS tem_dps, (nfse_xml IS NOT NULL) AS tem_nfse,
                emitido_por, emitido_em, criado_em
           FROM tab_nfse_emitida
@@ -44,6 +45,9 @@ module.exports = (app) => ({
       clienteNome: trim(r.cliente_nome), valor: Number(r.valor || 0), ctribnac: trim(r.ctribnac),
       ambiente: trim(r.ambiente), status: trim(r.status), chave: trim(r.nfse_chave),
       numero: trim(r.nfse_numero), dpsId: trim(r.dps_id), writeback: trim(r.writeback),
+      // última falha do writeback (mensagem do Protheus), só enquanto não gravou
+      writebackErro: trim(r.writeback) !== 'OK' ? trim(r.wb_erro) : '',
+      writebackEm: trim(r.wb_at),
       erros: r.erros || [], temDps: !!r.tem_dps, temNfse: !!r.tem_nfse,
       verificarPortal: trim(r.status) !== 'EMITIDA' && provavelmenteEmitida(r.erros),
       emitidoPor: trim(r.emitido_por),

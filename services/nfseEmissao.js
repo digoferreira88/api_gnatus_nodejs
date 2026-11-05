@@ -3,8 +3,11 @@
 //   nfseProtheus (lê a nota) → resolve cTribNac → nfseXml (monta DPS) →
 //   nfseAssinatura (assina RSA-SHA1) → nfseBarretos (envia) → grava tab_nfse_emitida.
 //
-// READ-ONLY no Protheus. A ÚNICA escrita é no Postgres (tab_nfse_emitida). Trava de
-// emissão dupla via "reserva" PENDENTE + índice único parcial (ver migration 83).
+// Escreve no Postgres (tab_nfse_emitida). Trava de emissão dupla via "reserva"
+// PENDENTE + índice único parcial (ver migration 83). No Protheus, a única escrita é
+// a chave na SF2 pelo writeback acordado com o Diego, disparado em segundo plano após
+// a emissão de PRODUÇÃO (nfseWriteback.gravarAposEmissao; desliga com
+// NFSE_WRITEBACK_AUTO=0).
 //
 // Config (.env): NFSE_AMBIENTE (homologacao=restrita | producao), NFSE_IM,
 // NFSE_CMUN, NFSE_OPSIMPNAC, NFSE_REGESPTRIB, NFSE_SERIE_DPS. CNPJ vem do cert.
@@ -13,6 +16,7 @@ const { buscarNotaServico } = require('./nfseProtheus');
 const { montarDps } = require('./nfseXml');
 const { assinarXml, carregarCertificado } = require('./nfseAssinatura');
 const { emitirDps, ambiente } = require('./nfseBarretos');
+const { gravarAposEmissao } = require('./nfseWriteback');
 
 const soDig = (v) => String(v == null ? '' : v).replace(/\D/g, '');
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -196,6 +200,8 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
       nfse_chave: r.chaveAcesso, nfse_xml: r.nfseXml,
       retorno: { httpStatus: r.httpStatus, ok: r.ok, alertas: r.alertas || [] }, erros: r.erros || []
     });
+    // Grava a chave no Protheus em segundo plano (sem await: a emissão não espera o ERP).
+    if (r.ok && ambienteRotulo === 'producao') gravarAposEmissao(app, id, { por, origem: 'emissao' });
     return { ok: r.ok, status, id, chave: r.chaveAcesso || null, httpStatus: r.httpStatus, erros: r.erros || [], ctribnac };
   } catch (e) {
     await finalizar(Pg, id, { status: 'ERRO', erros: [{ Codigo: 'EXCECAO', Descricao: e.message }] });

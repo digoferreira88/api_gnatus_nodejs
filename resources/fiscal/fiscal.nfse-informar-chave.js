@@ -3,12 +3,14 @@
 // resposta veio como erro (timeout do ADN nacional — 504/"já escriturada"/"chave já
 // compartilhada com o ADN"), então o registro ficou REJEITADA/ERRO sem a chave. O fiscal
 // copia a chave de acesso (50 díg.) do portal cidadaoonline e informa aqui: o registro
-// passa a EMITIDA e fica pronto pro writeback (POST /fiscal/nfse/writeback).
+// passa a EMITIDA e, em produção, a chave vai para o Protheus em segundo plano
+// (nfseWriteback.gravarAposEmissao; o botão "Reconciliar writeback" segue de reserva).
 // NÃO chama a prefeitura — é só consolidação interna. Perm 16001. Audita CRÍTICO.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([16001, 0]);
 const Auditoria = require('../../services/auditoria');
 const { cnpjPrestador } = require('../../services/nfseEmissao');
+const { gravarAposEmissao } = require('../../services/nfseWriteback');
 
 const trim = (v) => String(v == null ? '' : v).trim();
 const soDig = (v) => String(v == null ? '' : v).replace(/\D/g, '');
@@ -74,7 +76,11 @@ module.exports = (app) => ({
         meta: { id, doc: trim(row.doc), cliente: trim(row.cliente), loja: trim(row.loja), ambiente: trim(row.ambiente), valor: Number(row.valor || 0), chave }
       });
 
-      return res.json({ ok: true, id: upd.id, status: trim(upd.status), chave: trim(upd.nfse_chave), writeback: trim(upd.writeback) });
+      // Em produção, grava a chave no Protheus em segundo plano (sem await).
+      const writebackAuto = trim(row.ambiente) === 'producao';
+      if (writebackAuto) gravarAposEmissao(app, upd.id, { por, origem: 'informar-chave' });
+
+      return res.json({ ok: true, id: upd.id, status: trim(upd.status), chave: trim(upd.nfse_chave), writeback: trim(upd.writeback), writebackAuto });
     } catch (err) {
       if ((err && err.code === '23505') || /duplicate key|unique|índice/i.test(err.message || '')) {
         return res.status(409).json({ message: 'Já existe uma emissão ativa para este documento neste ambiente (conflito de índice único).' });

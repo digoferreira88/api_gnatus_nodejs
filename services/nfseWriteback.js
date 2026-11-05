@@ -11,10 +11,25 @@
 //
 // Config (.env): PROTHEUS_NFSE_URL (default = PROTHEUS_API_URL), PROTHEUS_API_USER/PASS
 // (mesma credencial do contcega/SC001), PROTHEUS_NFSE_PATH_{WRITEBACK,DIAG,CONSULTA}.
+// NFSE_WRITEBACK_AUTO (default ligado; 0/false/off desliga): grava a chave logo após a
+// emissão de produção e após o "Informar chave" (gravarAposEmissao). Antes era só pelo
+// botão, e de 15/08 a 04/11/2026 ninguém apertou: 380 notas ficaram sem chave no ERP.
 
 const { fetchProtheusComRetry, ehConexao } = require('./protheusErro');
+const Auditoria = require('./auditoria');
 
 const trim = (v) => String(v == null ? '' : v).trim();
+
+// Mensagem de erro legível. A rota do Protheus devolve { errorCode, errorMessage }
+// (ex.: 404 "Nota nao encontrada: fil=01 serie=C doc=002007 cli=170609/01.").
+function msgErro(resp) {
+  if (resp.ok) return null;
+  const b = resp.body || {};
+  const m = trim(b.errorMessage || b.message || b.codigo_erro || b.raw || '');
+  if (m) return m.slice(0, 300);
+  if (resp.erroConexao || resp.httpStatus === 0) return 'Sem conexão com o Protheus';
+  return `HTTP ${resp.httpStatus}`;
+}
 
 // emitido_em (Date/timestamptz) -> 'YYYY-MM-DD' (F2_XNFSDT é char(8); Diego aceita
 // YYYY-MM-DD ou YYYYMMDD; omitido usa dDataBase do lado dele).
@@ -87,11 +102,13 @@ async function gravar({ filial = '01', serie = 'C', doc, cliente, loja, nfse_cha
   }, 60000);
 }
 
-// Grava só o resultado do writeback na linha (não toca nfse_chave/status da emissão).
+// Grava o resultado da tentativa no retorno da linha (não toca nfse_chave/status da
+// emissão). writeback=null mantém a coluna como está (falha: segue PENDENTE, mas a
+// mensagem fica registrada para a tela mostrar).
 async function _marcar(Pg, id, writeback, resp) {
   await Pg.connectAndQuery(`
     UPDATE tab_nfse_emitida
-       SET writeback     = @wb,
+       SET writeback     = COALESCE(@wb, writeback),
            retorno       = COALESCE(retorno, '{}'::jsonb) || @extra::jsonb,
            atualizado_em = NOW()
      WHERE id = @id`,
@@ -102,7 +119,7 @@ async function _marcar(Pg, id, writeback, resp) {
           at: new Date().toISOString(),
           httpStatus: resp.httpStatus,
           acao: (resp.body && resp.body.acao) || null,
-          erro: resp.ok ? null : ((resp.body && (resp.body.codigo_erro || resp.body.message)) || null)
+          erro: msgErro(resp)
         }
       })
     });
@@ -154,13 +171,14 @@ async function reconciliar(app, { simular = true, limite = 25, id = null } = {})
     if (!simular && gravou) novoWb = 'OK';
     else if (divergente) novoWb = 'DIVERGENTE';   // p/ revisão humana; não sobrescreve a chave
     if (novoWb) await _marcar(Pg, r.id, novoWb, resp);
+    else if (!simular) await _marcar(Pg, r.id, null, resp);   // falha real: registra a mensagem, segue PENDENTE
 
     resultados.push({
       id: r.id, doc: trim(r.doc), cliente: trim(r.cliente), loja: trim(r.loja),
       httpStatus: resp.httpStatus, acao: acao || null, ok: !!resp.ok,
       gravou, divergente,
       writeback: novoWb || (simular ? 'SIMULADO' : 'PENDENTE'),
-      erro: resp.ok ? null : ((resp.body && (resp.body.codigo_erro || resp.body.message)) || (resp.erroConexao ? 'CONEXAO' : 'ERRO'))
+      erro: msgErro(resp)
     });
   }
 
@@ -174,4 +192,38 @@ async function reconciliar(app, { simular = true, limite = 25, id = null } = {})
   return { ok: true, simular: !!simular, campos_ok: true, resumo, resultados };
 }
 
-module.exports = { config, diag, consultar, gravar, reconciliar };
+const autoLigado = () => !/^(0|false|off|nao|não)$/i.test(trim(process.env.NFSE_WRITEBACK_AUTO));
+
+// Writeback automático de UMA linha recém-emitida (ou reconciliada pelo "Informar
+// chave"). Chamado sem await por quem emite: a emissão nunca espera nem falha por
+// causa do Protheus. Se falhar, a linha fica PENDENTE com a mensagem registrada e o
+// botão "Reconciliar writeback" continua valendo. As guardas são as do reconciliar()
+// (só produção, só EMITIDA com chave de 50 díg., diag antes).
+async function gravarAposEmissao(app, id, { por, origem = 'emissao' } = {}) {
+  if (!autoLigado() || !id) return { ok: false, motivo: 'DESLIGADO' };
+  try {
+    const r = await reconciliar(app, { simular: false, id });
+    if (!r.ok) {
+      console.warn(`[nfseWriteback] auto id=${id}: ${r.erro || 'falha'} — ${r.message || ''}`);
+      return r;
+    }
+    const x = r.resultados[0];
+    if (x && (x.gravou || x.divergente)) {
+      Auditoria.registrar(app, {
+        modulo: 'Fiscal', submodulo: 'NFSe', acao: 'WRITEBACK_NFSE',
+        severidade: x.divergente ? 'ALERTA' : 'CRITICO',
+        usuarioEmail: por || null, entidade: 'nfse', entidadeId: x.doc,
+        descricao: `Writeback NFS-e automático (${origem}): ${x.doc} → ${x.gravou ? 'gravado' : 'DIVERGENTE'}.`,
+        meta: { ...r.resumo, origem: 'auto-' + origem, id }
+      });
+    } else if (x) {
+      console.warn(`[nfseWriteback] auto id=${id} doc=${x.doc}: não gravou — ${x.erro || x.acao || 'sem resposta'}`);
+    }
+    return r;
+  } catch (e) {
+    console.error(`[nfseWriteback] auto id=${id}:`, e.message);
+    return { ok: false, erro: 'EXCECAO', message: e.message };
+  }
+}
+
+module.exports = { config, diag, consultar, gravar, reconciliar, gravarAposEmissao, msgErro };
