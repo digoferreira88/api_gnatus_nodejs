@@ -680,8 +680,8 @@
     "aliqIss": "0.03",
     "codServPrefeitura": "1104",
     "cTribNac": "11.04.01",
-    "nbs": "",
-    "cIndOp": ""
+    "nbs": "1.0602.90.00",
+    "cIndOp": "050101"
   },
   {
     "codigo": "010744",
@@ -853,5 +853,23 @@
     "cTribNac": "14.01.01",
     "nbs": "1.2001.82.00",
     "cIndOp": "050102"
+  },
+  {
+    "codigo": "012437",
+    "descricao": "118062000 - SERVIÇOS DE COBRANÇA",
+    "aliqIss": "0.05",
+    "codServPrefeitura": "1722",
+    "cTribNac": "17.22.01",
+    "nbs": "1.1806.20.00",
+    "cIndOp": "100301"
+  },
+  {
+    "codigo": "012634",
+    "descricao": "109051100 - SERVICOS DE CORRETAGEM DE TITULOS",
+    "aliqIss": "0.05",
+    "codServPrefeitura": "1002",
+    "cTribNac": "10.02.02",
+    "nbs": "1.0905.11.00",
+    "cIndOp": "100301"
   }
 ]
