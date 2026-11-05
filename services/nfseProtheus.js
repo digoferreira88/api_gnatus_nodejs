@@ -7,6 +7,8 @@
 // ⚠️ ISS vem ZERADO no Protheus (calculado hoje na emissão manual do portal); a
 // alíquota/LC116 entram pela config/de-para fiscal, não daqui.
 
+const { montarDiscriminacao } = require('./nfseDiscriminacao');
+
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 
@@ -55,7 +57,7 @@ async function buscarNotaServico(Protheus, { serie = 'C', doc, cliente, loja }) 
   //   B1_ALIQISS = Alíq. ISS     → alíquota de ISS
   //   B1_TRIBMUN = C. Trib. Mun  → CodigoTributacaoMunicipio (se o município exigir)
   const itensRows = await Protheus.connectAndQuery(
-    `SELECT RTRIM(d2.D2_ITEM) item, RTRIM(d2.D2_COD) cod, d2.D2_QUANT quant, d2.D2_TOTAL total,
+    `SELECT RTRIM(d2.D2_ITEM) item, RTRIM(d2.D2_COD) cod, d2.D2_QUANT quant, d2.D2_TOTAL total, RTRIM(d2.D2_PEDIDO) pedido,
             RTRIM(sb1.B1_DESC) descricao, RTRIM(sb1.B1_CODISS) codiss, RTRIM(sb1.B1_TIPO) tipo,
             sb1.B1_ALIQISS aliqiss, RTRIM(sb1.B1_TRIBMUN) tribmun
        FROM SD2010 d2 WITH (NOLOCK)
@@ -67,15 +69,15 @@ async function buscarNotaServico(Protheus, { serie = 'C', doc, cliente, loja }) 
 
   const itens = itensRows.map(r => ({
     codigo: trim(r.cod), descricao: trim(r.descricao), quantidade: N(r.quant), valorTotal: N(r.total),
+    pedido: trim(r.pedido),                            // D2_PEDIDO (vai no "REF PEDIDO" da descrição)
     itemListaServico: trim(r.codiss),                 // B1_CODISS (LC116)
     aliquota: N(r.aliqiss),                            // B1_ALIQISS
     codigoTributacaoMunicipio: trim(r.tribmun)         // B1_TRIBMUN
   }));
 
   const end = splitEndereco(t.endereco);
-  const discriminacao = itens.map(i =>
-    `${i.descricao}${i.quantidade > 1 ? ` (${i.quantidade}x)` : ''} - R$ ${N(i.valorTotal).toFixed(2)}`
-  ).join(' | ');
+  // Descrição no padrão do fiscal (mensagem fixa / instalação / demais + REF PEDIDO).
+  const discriminacao = montarDiscriminacao(itens);
 
   // ABRASF 2.03: 1 <Servico> por RPS. Se a nota tiver vários serviços, elege o item
   // "principal" (o 1º com LC116 preenchido; senão o de maior valor) p/ LC116/alíquota/

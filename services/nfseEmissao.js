@@ -208,7 +208,7 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
     // Observação do usuário → anexada à discriminação do serviço (xDescServ do DPS).
     // Campo comprovadamente aceito; evita mexer na estrutura do XML em produção.
     const obs = trim(observacao).slice(0, 500);
-    if (obs) nota.discriminacao = (trim(nota.discriminacao) + ' | Obs.: ' + obs).slice(0, 4000);
+    if (obs) nota.discriminacao = (trim(nota.discriminacao) + ' | Obs.: ' + obs).slice(0, 2000);   // xDescServ: até 2000
 
     const { ctribnac, cIndOp, nbs, aliqIss, produto } = resolverCtribNac(nota);
     const dados = {

@@ -69,7 +69,8 @@
     "codServPrefeitura": "1706",
     "cTribNac": "17.06.01",
     "nbs": "1.1406.11.00",
-    "cIndOp": "100301"
+    "cIndOp": "100301",
+    "mensagem": "PROMOÇÃO DE VENDAS PARCERIA ADITEK"
   },
   {
     "codigo": "009481",
@@ -78,7 +79,8 @@
     "codServPrefeitura": "0302",
     "cTribNac": "03.02.01",
     "nbs": "1.1104.20.00",
-    "cIndOp": "100501"
+    "cIndOp": "100501",
+    "mensagem": "CESSÃO DE DIREITO DE USO DE MARCAS E DE SINAIS DE PROPAGANDA - TAXA DE FRANQUIA"
   },
   {
     "codigo": "009634",
@@ -672,7 +674,8 @@
     "codServPrefeitura": "0302",
     "cTribNac": "03.02.01",
     "nbs": "1.1104.20.00",
-    "cIndOp": "100501"
+    "cIndOp": "100501",
+    "mensagem": "Royalties mensais referentes à cessão de uso da marca, sem prestação de serviço, conforme contrato de franquia. REF. PEDIDO ...."
   },
   {
     "codigo": "010708",
@@ -681,7 +684,8 @@
     "codServPrefeitura": "1104",
     "cTribNac": "11.04.01",
     "nbs": "1.0602.90.00",
-    "cIndOp": "050101"
+    "cIndOp": "050101",
+    "mensagem": "SERVIÇO DE ARMAZENAGEM REF. PEDIDO ....."
   },
   {
     "codigo": "010744",
@@ -690,7 +694,8 @@
     "codServPrefeitura": "0106",
     "cTribNac": "01.06.01",
     "nbs": "1.1510.00.00",
-    "cIndOp": "100301"
+    "cIndOp": "100301",
+    "mensagem": "SERVIÇO COBRANÇA DE E-MAILS ADICIONAIS REF. PEDIDO"
   },
   {
     "codigo": "010773",
@@ -699,7 +704,8 @@
     "codServPrefeitura": "0302",
     "cTribNac": "03.02.01",
     "nbs": "1.1104.20.00",
-    "cIndOp": "100501"
+    "cIndOp": "100501",
+    "mensagem": "Royalties de produtos referentes à cessão de uso da marca, sem prestação de serviço, conforme contrato de franquia. REF. PEDIDO ..../2"
   },
   {
     "codigo": "011589",
