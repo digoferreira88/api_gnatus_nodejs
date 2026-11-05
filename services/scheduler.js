@@ -254,9 +254,11 @@ const CRON_PIPEFY_OP = '0 7-20 * * 1-5';    // 07:00..20:00, de hora em hora, se
 
 // SA1 (Protheus) -> database CLIENTES do Pipefy: cria os que faltam (represado
 // pelo teto diário) e espelha mudanças. Dormente sem PIPEFY_CLIENTES_ATIVO=1
-// (+ PIPEFY_TOKEN). De hora em hora no horário comercial — cliente novo entra no
-// mesmo dia, e cada ciclo é limitado por PIPEFY_CLIENTES_TETO_CICLO/_TETO_DIA.
-const CRON_PIPEFY_CLIENTES = '45 7-20 * * 1-5';   // :45, 07h-20h, seg-sex
+// (+ PIPEFY_TOKEN). Cada ciclo é limitado por PIPEFY_CLIENTES_TETO_CICLO/_TETO_DIA.
+// Horário de BRASÍLIA (o job passa tz explícito; a VPS roda em UTC).
+// 05/11/2026: backfill concluído → de hora em hora virou 2x/dia (08h e 13h, seg-sex),
+// a pedido do usuário. Só cliente novo/alterado gera chamada ao Pipefy.
+const CRON_PIPEFY_CLIENTES = process.env.CRON_PIPEFY_CLIENTES || '0 8,13 * * 1-5';
 
 // Protheus (ACV/SB1/DA1) -> loja Shopify: cria os produtos que a ACV marcou e espelha
 // mudança de preço. Dormente sem SHOPIFY_ATIVO=1 (+ SHOPIFY_SHOP/SHOPIFY_TOKEN), e com
@@ -408,7 +410,7 @@ function start(app) {
 
   // SA1 -> Pipefy CLIENTES (espelho de clientes). Dormente sem PIPEFY_CLIENTES_ATIVO=1.
   if (jobs.pipefyClientes) jobs.pipefyClientes.cancel();
-  jobs.pipefyClientes = schedule.scheduleJob(CRON_PIPEFY_CLIENTES, async () => {
+  jobs.pipefyClientes = schedule.scheduleJob({ rule: CRON_PIPEFY_CLIENTES, tz: 'America/Sao_Paulo' }, async () => {
     try {
       const PipefyClientes = require('./pipefyClientes');
       if (!PipefyClientes.disponivel()) return;   // sem gate/token: silêncio
@@ -418,7 +420,7 @@ function start(app) {
       console.error('[scheduler] erro no pipefy-clientes:', err.message);
     }
   });
-  console.log(`[scheduler] pipefy-clientes agendado: cron "${CRON_PIPEFY_CLIENTES}"`);
+  console.log(`[scheduler] pipefy-clientes agendado: cron "${CRON_PIPEFY_CLIENTES}" (America/Sao_Paulo)`);
 
   // Protheus -> Shopify (espelho de produtos). Dormente sem SHOPIFY_ATIVO=1 + token.
   if (jobs.shopifyProdutos) jobs.shopifyProdutos.cancel();
