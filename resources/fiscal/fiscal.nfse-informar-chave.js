@@ -1,8 +1,9 @@
 // POST /fiscal/nfse/informar-chave  — body: { id, chave }
 // Reconciliação MANUAL de uma NFS-e órfã: a nota FOI gerada na prefeitura mas nossa
 // resposta veio como erro (timeout do ADN nacional — 504/"já escriturada"/"chave já
-// compartilhada com o ADN"), então o registro ficou REJEITADA/ERRO sem a chave. O fiscal
-// copia a chave de acesso (50 díg.) do portal cidadaoonline e informa aqui: o registro
+// compartilhada com o ADN"), ou a nota foi emitida À MÃO no portal nacional, então o
+// registro ficou REJEITADA/ERRO sem a chave. O fiscal copia a chave de acesso (50 díg.)
+// do portal e informa aqui: o registro
 // passa a EMITIDA e, em produção, a chave vai para o Protheus em segundo plano
 // (nfseWriteback.gravarAposEmissao; o botão "Reconciliar writeback" segue de reserva).
 // NÃO chama a prefeitura — é só consolidação interna. Perm 16001. Audita CRÍTICO.
@@ -56,10 +57,12 @@ module.exports = (app) => ({
         { s: row.serie, d: row.doc, cli: row.cliente, l: row.loja, a: row.ambiente, id });
       if (ja.length) return res.status(409).json({ message: 'Já existe uma NFS-e EMITIDA para este documento (id ' + ja[0].id + ').' });
 
+      // @por::text — dentro do jsonb_build_object o Postgres não deduz o tipo do parâmetro
+      // ("could not determine data type of parameter $2"); o cast resolve.
       const upd = (await Pg.connectAndQuery(`
         UPDATE tab_nfse_emitida
            SET status='EMITIDA', nfse_chave=@c, erros='[]'::jsonb,
-               retorno = jsonb_build_object('ok', true, 'httpStatus', 201, 'reconciliadoManual', true, 'reconciliadoPor', @por, 'reconciliadoEm', to_char(NOW(),'YYYY-MM-DD"T"HH24:MI:SSOF')),
+               retorno = jsonb_build_object('ok', true, 'httpStatus', 201, 'reconciliadoManual', true, 'reconciliadoPor', @por::text, 'reconciliadoEm', to_char(NOW(),'YYYY-MM-DD"T"HH24:MI:SSOF')),
                emitido_por = COALESCE(NULLIF(emitido_por,''), @por),
                emitido_em = COALESCE(emitido_em, NOW()),
                atualizado_em = NOW()
