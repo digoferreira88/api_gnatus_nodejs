@@ -116,6 +116,36 @@ function serieDpsDe(serieProtheus) {
   return { serieDps: sd };
 }
 
+// cTribNac → código de tributação MUNICIPAL de Barretos (cTribMun, 3 dígitos). Sem ele o
+// Emissor Nacional recusa com E0312. Conferido em 06/11/2026 no ADN
+// (GET /parametrizacao/3505500/{cTribNac}.{cTribMun}/historicoaliquotas = 200, vigente desde
+// 29/09/2024) e confirmado pela NFS-e 14 emitida à mão no portal ("08.02.01 / 802").
+// Barretos guardou o item da LC116 (4 dígitos) num campo de 3: "0802"→802, "1401"→140 —
+// por isso 17.01/17.06 dão 170 e 17.22/17.23 dão 172. NÃO derivar pela regra: só código
+// conferido. 01.06.01 e 01.08.01 NÃO estão cadastrados (varridos 001–999) → não emitem.
+// NFSE_CTRIBMUN_MAP="010601=123;..." acrescenta/sobrepõe; NFSE_CTRIBMUN=0 volta a não mandar.
+const CTRIBMUN_BARRETOS = {
+  '140101': '140',   // 3% — manutenção/instalação
+  '080201': '802',   // 3% — treinamento
+  '030201': '302',   // 3% — cessão de uso de marca (royalties)
+  '170101': '170',   // 5%
+  '170601': '170',   // 5%
+  '172301': '172',   // 3%  (a de-para do fiscal diz 5% p/ o 012088; vale a do município)
+  '110401': '110',   // 3% — armazenagem
+  '172201': '172',   // 5% — cobrança (OMNI)
+  '100202': '100'    // 5% — corretagem (OMNI)
+};
+function cTribMunDe(ctribnac) {
+  if (/^(0|false|off|nao|não)$/i.test(trim(process.env.NFSE_CTRIBMUN))) return { cTribMun: '', desligado: true };
+  const m = { ...CTRIBMUN_BARRETOS };
+  for (const par of String(process.env.NFSE_CTRIBMUN_MAP || '').split(/[;,]/)) {
+    const [n, c] = par.split(/[=:]/).map(soDig);
+    if (n && c) m[n] = c;
+  }
+  const c = m[soDig(ctribnac)];
+  return c ? { cTribMun: c } : { erro: true };
+}
+
 // Elege o item principal e resolve cTribNac + cIndOp + NBS (todos sem pontos).
 // Retorna { ctribnac, cIndOp, nbs, produto } — ctribnac vazio = não resolvido.
 function resolverCtribNac(nota) {
@@ -255,7 +285,15 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
       return { ok: false, erro: 'SEM_CTRIBNAC', produto, id };
     }
 
+    const tm = cTribMunDe(ctribnac);
+    if (tm.erro) {
+      const fmt = ctribnac.replace(/^(\d{2})(\d{2})(\d{2})$/, '$1.$2.$3');
+      await finalizar(Pg, id, { ...dados, status: 'ERRO', erros: [{ Codigo: 'SEM_CTRIBMUN', Descricao: `O serviço ${fmt} (produto ${produto}) não está cadastrado em Barretos no Sistema Nacional (sem código municipal). Confira no portal nacional qual código a Prefeitura oferece para esse serviço, ou peça o cadastro à Prefeitura.` }] });
+      return { ok: false, erro: 'SEM_CTRIBMUN', produto, id };
+    }
+
     cfg.cTribNacPadrao = ctribnac;
+    cfg.cTribMun = tm.cTribMun;   // código municipal de Barretos (obrigatório no Emissor Nacional)
     cfg.cIndOp = cIndOp;     // IBS/CBS: indicador da operação (por serviço, de-para)
     cfg.cNBS = nbs;          // IBS/CBS: item da NBS (por serviço, de-para)
     cfg.aliqIss = aliqIss;   // ISS: alíquota do de-para (0 = NÃO INCIDÊNCIA → tribISSQN=4)
@@ -308,4 +346,4 @@ function provavelmenteEmitida(erros) {
   return /504\s*gateway|compartilhada com o adn|j[áa] escriturada|\be1268\b|\be0014\b/.test(txt);
 }
 
-module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido, provavelmenteEmitida, recuperarPorDps, nfseConfere, serieDpsDe, seriesDps };
+module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido, provavelmenteEmitida, recuperarPorDps, nfseConfere, serieDpsDe, seriesDps, cTribMunDe, CTRIBMUN_BARRETOS };

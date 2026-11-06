@@ -144,15 +144,19 @@ function blocoIbsCbsOper(cfg) {
 
 function blocoServValores(nota, cfg) {
   const cLoc = soDig(cfg.codigoMunicipioPrestador);          // Barretos 3505500 (prestação)
-  // cTribNac = código nacional SEM pontos (ex.: "080201"). Barretos localiza o
-  // serviço por cTribNac + CNPJ + IM do prestador. ⚠️ cTribMun NÃO deve ser
-  // informado nesse cenário (orientação RLZ 29/07/2026 — a 1ª nota aceita foi sem).
+  // cTribNac = código nacional SEM pontos (ex.: "080201").
+  // cTribMun = código municipal (3 dígitos). No sistema antigo da prefeitura (RLZ) ia SEM
+  // ele; no Emissor Nacional (Barretos desde 01/11/2026) é OBRIGATÓRIO: Barretos cadastrou
+  // os serviços como "08.02.01.802", e sem o 802 o Sefin procura "08.02.01.000" → E0312.
+  // Vem de cfg.cTribMun (tabela em nfseEmissao.js); vazio = não manda.
   const cTribNac = soDig(nota.itemListaServico || cfg.cTribNacPadrao);
+  const cTribMun = soDig(cfg.cTribMun);
   const cNBS = soDig(cfg.cNBS);                               // NBS sem pontos (IBS/CBS)
   const serv = `<serv>` +
     `<locPrest><cLocPrestacao>${cLoc}</cLocPrestacao></locPrest>` +
     `<cServ>` +
       `<cTribNac>${esc(cTribNac)}</cTribNac>` +
+      (cTribMun ? `<cTribMun>${esc(cTribMun)}</cTribMun>` : '') +
       `<xDescServ>${esc(nota.discriminacao)}</xDescServ>` +
       ((cfg.ibsCbs && cNBS) ? `<cNBS>${esc(cNBS)}</cNBS>` : '') +
     `</cServ>` +
