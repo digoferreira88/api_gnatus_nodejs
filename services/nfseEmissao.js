@@ -80,6 +80,10 @@ function config() {
       regEspTrib: Number(process.env.NFSE_REGESPTRIB || 0),
       serieDps: trim(process.env.NFSE_SERIE_DPS || '1'),
       tpAmb: amb === 'producao' ? 1 : 2,
+      // Total aproximado dos tributos (Lei 12.741) em % — o municipal sai da alíquota do ISS
+      // do de-para; federal (PIS 0,65 + COFINS 3,00) e estadual são os do Emissor Web.
+      pTotTribFed: Number(process.env.NFSE_PTOTTRIB_FED ?? 4.65),
+      pTotTribEst: Number(process.env.NFSE_PTOTTRIB_EST ?? 0),
       // 🔶 Reforma Tributária (IBS/CBS) — grupo novo exigido por Barretos desde
       // 03/08/2026. Gated por env (default OFF) até validar ordem/versão do XSD
       // na Produção Restrita. Ligar com NFSE_IBSCBS=1 só p/ testar na restrita.

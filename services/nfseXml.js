@@ -167,6 +167,19 @@ function blocoServValores(nota, cfg) {
   // obrigação de dar, não serviço). Confirmado 201 na Produção Restrita. Só dispara com
   // alíquota EXPLICITAMENTE 0 no de-para; produto sem alíquota (undefined) = tributável (1).
   const tribISSQN = Number(cfg.aliqIss) === 0 ? '4' : '1';
+  // Total aproximado dos tributos (Lei 12.741/2012). A Gnatus NÃO é optante do Simples:
+  // o Sistema Nacional recusa indTotTrib e pTotTribSN para não optante (E0713, 06/11/2026 —
+  // o RLZ aceitava indTotTrib=0). Vai em PERCENTUAIS, como o Emissor Web monta (NFS-e 16,
+  // armazenagem): federal = PIS 0,65 + COFINS 3,00 · estadual 0 · municipal = alíquota do ISS
+  // do de-para (fração 0.03 → 3,00; não incidência → 0).
+  const pct = (v) => (Math.round((Number(v) || 0) * 100) / 100).toFixed(2);
+  const aliq = Number(cfg.aliqIss);
+  const pMun = tribISSQN === '4' ? 0 : (Number.isFinite(aliq) && cfg.aliqIss !== undefined ? (aliq < 1 ? aliq * 100 : aliq) : (cfg.pTotTribMun ?? 3));
+  const totTrib = `<totTrib><pTotTrib>` +
+      `<pTotTribFed>${pct(cfg.pTotTribFed ?? 4.65)}</pTotTribFed>` +
+      `<pTotTribEst>${pct(cfg.pTotTribEst ?? 0)}</pTotTribEst>` +
+      `<pTotTribMun>${pct(pMun)}</pTotTribMun>` +
+    `</pTotTrib></totTrib>`;
   const valores = `<valores>` +
     `<vServPrest><vServ>${money(nota.valorServicos)}</vServ></vServPrest>` +
     `<trib>` +
@@ -174,7 +187,7 @@ function blocoServValores(nota, cfg) {
         `<tribISSQN>${tribISSQN}</tribISSQN>` +                // 1=Tributável · 4=Não Incidência
         `<tpRetISSQN>${nota.issRetido ? 2 : 1}</tpRetISSQN>` + // 1=Não retido, 2=Retido tomador
       `</tribMun>` +                                           // alíquota NÃO vai no DPS — a prefeitura calcula
-      `<totTrib><indTotTrib>0</indTotTrib></totTrib>` +        // 0=Não informa (aprox. Lei 12.741)
+      totTrib +                                                // aprox. Lei 12.741, em percentuais
     `</trib>` +
   `</valores>`;
   return serv + valores;
