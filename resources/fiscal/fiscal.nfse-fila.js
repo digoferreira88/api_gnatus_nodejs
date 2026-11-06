@@ -1,10 +1,10 @@
 // GET /fiscal/nfse/fila?inicio=YYYY-MM-DD&fim=YYYY-MM-DD&pendentes=1
-// Fila de emissão de NFS-e: lista as NF de serviço (SF2 série C) do período e
-// cruza com tab_nfse_emitida pra mostrar o status (NAO_EMITIDA / EMITIDA /
-// REJEITADA / ERRO / PENDENTE). Perm 16001.
+// Fila de emissão de NFS-e: lista as NF de serviço (SF2 séries C e SV, ver
+// seriesServico) do período e cruza com tab_nfse_emitida pra mostrar o status
+// (NAO_EMITIDA / EMITIDA / REJEITADA / ERRO / PENDENTE). Perm 16001.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([16001, 0]);
-const { listarNotasServicoPeriodo, dataIso } = require('../../services/nfseProtheus');
+const { listarNotasServicoPeriodo, seriesServico, dataIso } = require('../../services/nfseProtheus');
 const { config, clienteExcluido } = require('../../services/nfseEmissao');
 
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -29,7 +29,7 @@ module.exports = (app) => ({
     let notas;
     try {
       notas = await listarNotasServicoPeriodo(Protheus, {
-        serie: 'C', inicio: inicio.replace(/-/g, ''), fim: fim.replace(/-/g, '')
+        series: seriesServico(), inicio: inicio.replace(/-/g, ''), fim: fim.replace(/-/g, '')
       });
     } catch (e) {
       return res.status(500).json({ message: 'Erro ao ler NF de serviço no Protheus: ' + e.message });
@@ -54,12 +54,16 @@ module.exports = (app) => ({
     let emit = [];
     try {
       emit = await Pg.connectAndQuery(
-        `SELECT doc, cliente, loja, status, nfse_chave, ctribnac
-           FROM tab_nfse_emitida WHERE ambiente=@amb AND serie='C'`, { amb: ambienteRotulo });
+        `SELECT serie, doc, cliente, loja, status, nfse_chave, ctribnac
+           FROM tab_nfse_emitida WHERE ambiente=@amb
+          ORDER BY (status = 'EMITIDA'), id`, { amb: ambienteRotulo });
     } catch (e) {
       return res.status(500).json({ message: 'Erro ao ler emissões: ' + e.message });
     }
-    const mapEmit = new Map(emit.map((e) => [`${trim(e.doc)}|${trim(e.cliente)}|${trim(e.loja)}`, e]));
+    // Chave com a SÉRIE: a SV recomeça em 000001, então o mesmo número pode existir na C.
+    // Ordem da query: a última tentativa vence, e uma EMITIDA vence qualquer outra.
+    const kEmit = (s, d, c, l) => `${trim(s).toUpperCase()}|${trim(d)}|${trim(c)}|${trim(l)}`;
+    const mapEmit = new Map(emit.map((e) => [kEmit(e.serie, e.doc, e.cliente, e.loja), e]));
 
     // Corte de emissão (YYYYMMDD): NF de serviço faturada ANTES desta data e sem
     // registro de emissão = LEGADA (a NFS-e já foi feita MANUALMENTE no portal antes
@@ -68,7 +72,7 @@ module.exports = (app) => ({
     const corte = trim(process.env.NFSE_EMISSAO_CORTE).replace(/\D/g, '');
     let docs = notas.map((n) => {
       const doc = trim(n.doc), cli = trim(n.cliente), loja = trim(n.loja);
-      const e = mapEmit.get(`${doc}|${cli}|${loja}`);
+      const e = mapEmit.get(kEmit(n.serie, doc, cli, loja));
       const emiRaw = trim(n.emissao).replace(/\D/g, '').slice(0, 8);
       let status = e ? e.status : (corte && emiRaw && emiRaw < corte ? 'LEGADA' : 'NAO_EMITIDA');
       // Cliente com emissão suspensa (cadastro pendente na prefeitura) → EXCLUIDA.

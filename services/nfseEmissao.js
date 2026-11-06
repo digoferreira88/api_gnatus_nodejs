@@ -1,5 +1,5 @@
 // services/nfseEmissao.js — orquestra a emissão de NFS-e (Padrão Nacional/DPS) de
-// uma NF de serviço (SF2 série C) do Protheus:
+// uma NF de serviço (SF2 série C ou SV — a SV entrou em 05/11/2026) do Protheus:
 //   nfseProtheus (lê a nota) → resolve cTribNac → nfseXml (monta DPS) →
 //   nfseAssinatura (assina RSA-SHA1) → nfseBarretos (envia) → grava tab_nfse_emitida.
 //
@@ -10,7 +10,8 @@
 // NFSE_WRITEBACK_AUTO=0).
 //
 // Config (.env): NFSE_AMBIENTE (homologacao=restrita | producao), NFSE_IM,
-// NFSE_CMUN, NFSE_OPSIMPNAC, NFSE_REGESPTRIB, NFSE_SERIE_DPS. CNPJ vem do cert.
+// NFSE_CMUN, NFSE_OPSIMPNAC, NFSE_REGESPTRIB, NFSE_SERIE_DPS, NFSE_SERIE_DPS_MAP.
+// CNPJ vem do cert.
 
 const { buscarNotaServico } = require('./nfseProtheus');
 const { montarDps } = require('./nfseXml');
@@ -86,6 +87,33 @@ function config() {
       versaoLeiaute: trim(process.env.NFSE_VERSAO_LEIAUTE || '')   // override manual; vazio = auto
     }
   };
+}
+
+// Série da nota no Protheus → série do DPS (numérica; entra no Id do DPS, que é a chave
+// da recuperação por GET /dps). Cada série do Protheus precisa da SUA série de DPS: a
+// numeração da SV recomeça em 000001 e, na mesma série de DPS da C, repetiria Ids.
+//   C  → NFSE_SERIE_DPS ou 1 (a de sempre: não mudar, senão a recuperação das antigas quebra)
+//   SV → 2 (conferido em 06/11/2026 no Sefin: série 2 nunca usada; a 3 tem notas feitas
+//        à mão no portal, 01.08.01, então NÃO usar a 3)
+// NFSE_SERIE_DPS_MAP="C=1;SV=2" sobrepõe. Série sem mapa, ou duas séries com a mesma série
+// de DPS, não emitem (devolve o motivo em vez de cair num padrão).
+const SERIE_DPS_PADRAO = { C: '1', SV: '2' };
+function seriesDps() {
+  const m = { ...SERIE_DPS_PADRAO, C: soDig(process.env.NFSE_SERIE_DPS) || SERIE_DPS_PADRAO.C };
+  for (const par of String(process.env.NFSE_SERIE_DPS_MAP || '').split(/[;,]/)) {
+    const [s, d] = par.split(/[=:]/).map(trim);
+    if (s && soDig(d)) m[s.toUpperCase()] = soDig(d);
+  }
+  return m;
+}
+function serieDpsDe(serieProtheus) {
+  const s = trim(serieProtheus).toUpperCase();
+  const m = seriesDps();
+  const sd = m[s];
+  if (!sd) return { erro: `Série ${s || '(vazia)'} sem série de DPS configurada (NFSE_SERIE_DPS_MAP).` };
+  const outra = Object.keys(m).find((k) => k !== s && Number(m[k]) === Number(sd));
+  if (outra) return { erro: `Séries ${s} e ${outra} usam a mesma série de DPS (${sd}); os números se repetiriam.` };
+  return { serieDps: sd };
 }
 
 // Elege o item principal e resolve cTribNac + cIndOp + NBS (todos sem pontos).
@@ -199,6 +227,13 @@ async function emitirNota(app, { serie = 'C', doc, cliente, loja, user, observac
   const id = ins[0].id;
 
   try {
+    const sd = serieDpsDe(k.serie);
+    if (sd.erro) {
+      await finalizar(Pg, id, { status: 'ERRO', erros: [{ Codigo: 'SERIE_SEM_DPS', Descricao: sd.erro }] });
+      return { ok: false, erro: 'SERIE_SEM_DPS', id };
+    }
+    cfg.serieDps = sd.serieDps;
+
     const nota = await buscarNotaServico(Protheus, k);
     if (!nota) {
       await finalizar(Pg, id, { status: 'ERRO', erros: [{ Codigo: 'NAO_ENCONTRADA', Descricao: `Nota ${serie}/${doc} (cliente ${cliente}/${loja}) não encontrada na SF2.` }] });
@@ -273,4 +308,4 @@ function provavelmenteEmitida(erros) {
   return /504\s*gateway|compartilhada com o adn|j[áa] escriturada|\be1268\b|\be0014\b/.test(txt);
 }
 
-module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido, provavelmenteEmitida, recuperarPorDps, nfseConfere };
+module.exports = { emitirNota, resolverCtribNac, config, depara, cnpjPrestador, clienteExcluido, provavelmenteEmitida, recuperarPorDps, nfseConfere, serieDpsDe, seriesDps };

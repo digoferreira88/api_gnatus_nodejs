@@ -108,15 +108,26 @@ async function buscarNotaServico(Protheus, { serie = 'C', doc, cliente, loja }) 
   };
 }
 
-// Lista as notas de serviço (série C) faturadas num período — p/ o scheduler varrer.
-async function listarNotasServicoPeriodo(Protheus, { serie = 'C', inicio, fim }) {
+// Séries de NF de serviço que a Fila lê. Desde 05/11/2026 o fiscal emite na SV; a C
+// segue com as notas antigas. NFSE_SERIES="C,SV" sobrepõe.
+function seriesServico() {
+  const s = String(process.env.NFSE_SERIES || 'C,SV').split(/[;,]/).map((x) => trim(x).toUpperCase()).filter(Boolean);
+  return s.length ? [...new Set(s)] : ['C'];
+}
+
+// Lista as notas de serviço faturadas num período (uma série ou várias).
+async function listarNotasServicoPeriodo(Protheus, { serie, series, inicio, fim }) {
+  const lista = (series && series.length ? series : [serie || 'C']).map(trim).filter(Boolean);
+  const p = { inicio: trim(inicio), fim: trim(fim) };
+  lista.forEach((s, i) => { p[`s${i}`] = s; });
   return await Protheus.connectAndQuery(
     `SELECT RTRIM(F2_DOC) doc, RTRIM(F2_SERIE) serie, RTRIM(F2_CLIENTE) cliente,
             RTRIM(F2_LOJA) loja, F2_EMISSAO emissao, F2_VALBRUT valbrut
        FROM SF2010 WITH (NOLOCK)
-      WHERE D_E_L_E_T_ <> '*' AND F2_SERIE = @serie AND F2_EMISSAO BETWEEN @inicio AND @fim
-      ORDER BY F2_DOC`,
-    { serie, inicio: trim(inicio), fim: trim(fim) });
+      WHERE D_E_L_E_T_ <> '*' AND F2_SERIE IN (${lista.map((_, i) => `@s${i}`).join(',')})
+        AND F2_EMISSAO BETWEEN @inicio AND @fim
+      ORDER BY F2_SERIE, F2_DOC`,
+    p);
 }
 
-module.exports = { buscarNotaServico, listarNotasServicoPeriodo, splitEndereco, dataIso };
+module.exports = { buscarNotaServico, listarNotasServicoPeriodo, seriesServico, splitEndereco, dataIso };
