@@ -1,7 +1,7 @@
 // Atualiza o status de cobrança de um CLIENTE (upsert).
-// Desde 09/11/2026 o status do cliente é só RECUPERAVEL / NAO_RECUPERAVEL
-// (lista canônica em services/cobrancaStatus.js). Os demais status (Em cobrança,
-// Jurídico, Protesto…) são SUB-STATUS e ficam por título (cobranca.status-titulo).
+// Desde 09/11/2026 o status do cliente é só RECUPERAVEL / NAO_RECUPERAVEL /
+// JURIDICO (lista canônica em services/cobrancaStatus.js). Os demais status (Em
+// cobrança, Protesto…) são SUB-STATUS e ficam por título (cobranca.status-titulo).
 const { STATUS_CLIENTE_SET } = require('../../services/cobrancaStatus');
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([9001, 9002]);
@@ -22,7 +22,7 @@ module.exports = (app) => ({
 
     if (!cod || !loja) return res.status(400).json({ message: 'Cliente é obrigatório.' });
     if (!STATUS_CLIENTE_SET.has(status)) {
-      return res.status(400).json({ message: 'Status do cliente inválido. Use Recuperável ou Não recuperável.' });
+      return res.status(400).json({ message: 'Status do cliente inválido. Use Recuperável, Não recuperável ou Jurídico.' });
     }
 
     try {

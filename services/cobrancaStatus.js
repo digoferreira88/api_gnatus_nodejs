@@ -1,16 +1,19 @@
 // services/cobrancaStatus.js — fonte ÚNICA dos status de cobrança (valor + rótulo).
 //
 // Dois níveis (09/11/2026):
-//   - CLIENTE: só RECUPERAVEL / NAO_RECUPERAVEL (STATUS_CLIENTE_LIST), escolha da
-//     equipe, sem vínculo com os títulos.
+//   - CLIENTE: RECUPERAVEL / NAO_RECUPERAVEL / JURIDICO (STATUS_CLIENTE_LIST),
+//     escolha da equipe, sem vínculo com os títulos. Jurídico segue também como
+//     sub-status de título.
 //   - TÍTULO (sub-status): a lista STATUS_LIST abaixo. É ela que o filtro
 //     escondido do dashboard usa (config + validação).
-// Valores antigos de status do CLIENTE (Em cobrança, Jurídico…) continuam gravados
-// até a equipe reclassificar o cliente — rótulo em LABELS para exibir.
+// Valores antigos de status do CLIENTE (Em cobrança, Recompra…) continuam gravados
+// até a equipe reclassificar o cliente — rótulo em LABELS para exibir. Depois da
+// reclassificação, serão removidos (decisão do usuário, 09/11).
 
 const STATUS_CLIENTE_LIST = [
   { value: 'RECUPERAVEL',     label: 'Recuperável' },
-  { value: 'NAO_RECUPERAVEL', label: 'Não recuperável' }
+  { value: 'NAO_RECUPERAVEL', label: 'Não recuperável' },
+  { value: 'JURIDICO',        label: 'Jurídico' }
 ];
 
 const STATUS_LIST = [
