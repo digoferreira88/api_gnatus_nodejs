@@ -1,7 +1,17 @@
 // services/cobrancaStatus.js — fonte ÚNICA dos status de cobrança (valor + rótulo).
-// Espelha STATUS_VALIDOS de resources/cobranca/cobranca.status.js e os rótulos de
-// frontend ClienteCobranca.tsx (STATUS_LABEL). Usado pelo filtro escondido do
-// dashboard (config + validação).
+//
+// Dois níveis (09/11/2026):
+//   - CLIENTE: só RECUPERAVEL / NAO_RECUPERAVEL (STATUS_CLIENTE_LIST), escolha da
+//     equipe, sem vínculo com os títulos.
+//   - TÍTULO (sub-status): a lista STATUS_LIST abaixo. É ela que o filtro
+//     escondido do dashboard usa (config + validação).
+// Valores antigos de status do CLIENTE (Em cobrança, Jurídico…) continuam gravados
+// até a equipe reclassificar o cliente — rótulo em LABELS para exibir.
+
+const STATUS_CLIENTE_LIST = [
+  { value: 'RECUPERAVEL',     label: 'Recuperável' },
+  { value: 'NAO_RECUPERAVEL', label: 'Não recuperável' }
+];
 
 const STATUS_LIST = [
   { value: 'SOLICITACAO_BAIXA_CR', label: 'Solicitação de baixa CR' },
@@ -27,4 +37,12 @@ const STATUS_LIST = [
 const STATUS_VALIDOS = STATUS_LIST.map((s) => s.value);
 const STATUS_SET = new Set(STATUS_VALIDOS);
 
-module.exports = { STATUS_LIST, STATUS_VALIDOS, STATUS_SET };
+const STATUS_CLIENTE_SET = new Set(STATUS_CLIENTE_LIST.map((s) => s.value));
+
+// Rótulo de qualquer status gravado (cliente, título ou valor antigo do cliente).
+const LABELS = Object.fromEntries([...STATUS_CLIENTE_LIST, ...STATUS_LIST].map((s) => [s.value, s.label]));
+
+module.exports = {
+  STATUS_LIST, STATUS_VALIDOS, STATUS_SET,
+  STATUS_CLIENTE_LIST, STATUS_CLIENTE_SET, LABELS
+};

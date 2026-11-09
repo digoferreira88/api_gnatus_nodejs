@@ -204,11 +204,10 @@ module.exports = (app) => ({
 
       // ===== Filtro ESCONDIDO por status de cobranca (config GLOBAL da gestora) =====
       // Quando a operadora liga o "checkbox cego" (filtroEscondido=1), remove do
-      // dashboard INTEIRO (KPIs + listagem + aging + ABC + safra) os titulos de
-      // clientes cujo status de cobranca esta na lista de status EXCLUIDOS
-      // configurada pela gestora (tab_cobranca_filtro_status). Vale o status
-      // EFETIVO do titulo: o proprio do titulo ou, na falta, o do cliente
-      // (services/cobrancaFiltroEscondido). Faturamento (SF2) segue pelo cliente.
+      // dashboard INTEIRO (KPIs + listagem + aging + ABC + safra) os titulos cujo
+      // SUB-STATUS (status do titulo) esta na lista de EXCLUIDOS configurada pela
+      // gestora (tab_cobranca_filtro_status). Desde 09/11/2026 nao herda o status
+      // do cliente (services/cobrancaFiltroEscondido); faturamento (SF2) nao e filtrado.
       const filtroEscondido = /^(1|true|sim|on)$/i.test(String(req.query.filtroEscondido || ''));
       let fe = FiltroEscondido.VAZIO;
       if (filtroEscondido) {

@@ -19,12 +19,11 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([8006, 8007, 15100, 9001, 9002, 9003]);
 const CR = require('../../services/creditoRegistro');
 const CreditoAnalise = require('../../services/creditoAnalise');
-const { STATUS_LIST } = require('../../services/cobrancaStatus');
+const { LABELS: STATUS_LABEL } = require('../../services/cobrancaStatus');
 
 const trim = (v) => String(v == null ? '' : v).trim();
 const N = (v) => Number(v || 0);
 const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
-const STATUS_LABEL = Object.fromEntries(STATUS_LIST.map((s) => [s.value, s.label]));
 const MAX_LOJAS = 20;
 
 module.exports = (app) => ({

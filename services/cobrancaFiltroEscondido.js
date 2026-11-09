@@ -1,17 +1,16 @@
 // Filtro ESCONDIDO de cobranca (checkbox cego da operadora) — regra unica usada
 // pelo dashboard e pelo Faturamento x Inadimplencia.
 //
-// A gestora flaga status a EXCLUIR (tab_cobranca_filtro_status). O status que vale
-// para cada TITULO e o status EFETIVO:
-//   - o status proprio do titulo (tab_cobranca_status_titulo), quando existe;
-//   - senao, o status do cliente (tab_cobranca_status_cliente).
-// Assim um titulo em JURIDICO some mesmo que o cliente esteja "Em cobranca", e um
-// titulo marcado como NEGOCIANDO continua aparecendo mesmo que o cliente esteja
-// em JURIDICO.
+// A gestora flaga SUB-STATUS a EXCLUIR (tab_cobranca_filtro_status). Desde
+// 09/11/2026 vale SO o sub-status do TITULO (tab_cobranca_status_titulo):
+//   - titulo com sub-status excluido some;
+//   - titulo sem sub-status proprio NAO herda mais o status do cliente (decisao
+//     do usuario: o status do cliente virou Recuperavel / Nao recuperavel, e os
+//     titulos sem sub-status voltam a aparecer ate a equipe marca-los).
 //
-// Faturamento (SF2) nao tem titulo: la a exclusao segue pelo status do CLIENTE
-// (o vinculo NF -> titulo por F2_PREFIXO/F2_DUPL so fecha para ~20% dos titulos
-// em aberto; os demais sao de pedido, prefixo PED).
+// Faturamento (SF2) nao tem titulo: antes saia pelo status do CLIENTE; com o
+// status do cliente fora da regra, o faturamento nao e mais filtrado
+// (clienteSql devolve vazio — mantido para os chamadores).
 
 const trim = (v) => String(v == null ? '' : v).trim();
 // Valores entram literais no SQL (lista grande demais p/ parametro): so alfanumerico.
@@ -35,53 +34,31 @@ async function montar({ Pg }) {
   const setEx = new Set(Array.isArray(ex) ? ex.map(trim) : []);
   if (!setEx.size) return VAZIO;
 
-  const [cliRows, titRows] = await Promise.all([
-    Pg.connectAndQuery(`SELECT cliente_cod, cliente_loja, status FROM tab_cobranca_status_cliente`, {}),
-    Pg.connectAndQuery(
-      `SELECT cliente_cod, cliente_loja, titulo_prefixo, titulo_num, titulo_parcela, titulo_tipo, status
-         FROM tab_cobranca_status_titulo`, {})
-  ]);
+  const titRows = await Pg.connectAndQuery(
+    `SELECT cliente_cod, cliente_loja, titulo_prefixo, titulo_num, titulo_parcela, titulo_tipo, status
+       FROM tab_cobranca_status_titulo`, {});
 
-  const clientes = new Set();        // "cod|loja" com status de cliente excluido
-  cliRows.forEach(s => {
-    if (setEx.has(trim(s.status))) clientes.add(`${san(s.cliente_cod)}|${san(s.cliente_loja)}`);
-  });
-  const titExcluir = new Set();      // titulo com status proprio excluido
-  const titManter  = new Set();      // titulo com status proprio NAO excluido (vence o do cliente)
+  const titExcluir = new Set();      // titulo com sub-status excluido
   titRows.forEach(s => {
-    const k = chaveTitulo(s.cliente_cod, s.cliente_loja, s.titulo_prefixo, s.titulo_num, s.titulo_parcela, s.titulo_tipo);
-    (setEx.has(trim(s.status)) ? titExcluir : titManter).add(k);
+    if (setEx.has(trim(s.status))) {
+      titExcluir.add(chaveTitulo(s.cliente_cod, s.cliente_loja, s.titulo_prefixo, s.titulo_num, s.titulo_parcela, s.titulo_tipo));
+    }
   });
 
-  const excluiTitulo = (cod, loja, prefixo, num, parcela, tipo) => {
-    const k = chaveTitulo(cod, loja, prefixo, num, parcela, tipo);
-    if (titExcluir.has(k)) return true;
-    if (titManter.has(k)) return false;
-    return clientes.has(`${san(cod)}|${san(loja)}`);
-  };
+  const excluiTitulo = (cod, loja, prefixo, num, parcela, tipo) =>
+    titExcluir.has(chaveTitulo(cod, loja, prefixo, num, parcela, tipo));
 
   const lista = (set) => [...set].map(k => `'${k}'`).join(',');
-  const clienteSql = (colCli, colLoja) => clientes.size
-    ? ` AND (RTRIM(${colCli}) + '|' + RTRIM(${colLoja})) NOT IN (${lista(clientes)})`
-    : '';
 
-  // Fragmento p/ queries na SE1: mesma precedencia do excluiTitulo.
+  // Fragmento p/ queries na SE1: mesma regra do excluiTitulo.
   const se1Sql = (a = 'se1') => {
-    if (!clientes.size && !titExcluir.size) return '';
-    const kCli = `RTRIM(${a}.E1_CLIENTE) + '|' + RTRIM(${a}.E1_LOJA)`;
-    const kTit = `${kCli} + '|' + RTRIM(${a}.E1_PREFIXO) + '|' + RTRIM(${a}.E1_NUM)`
-      + ` + '|' + RTRIM(${a}.E1_PARCELA) + '|' + RTRIM(${a}.E1_TIPO)`;
-    const conds = [];
-    if (titExcluir.size) conds.push(`${kTit} IN (${lista(titExcluir)})`);
-    if (clientes.size) {
-      conds.push(titManter.size
-        ? `(${kCli} IN (${lista(clientes)}) AND ${kTit} NOT IN (${lista(titManter)}))`
-        : `${kCli} IN (${lista(clientes)})`);
-    }
-    return ` AND NOT (${conds.join(' OR ')})`;
+    if (!titExcluir.size) return '';
+    const kTit = `RTRIM(${a}.E1_CLIENTE) + '|' + RTRIM(${a}.E1_LOJA) + '|' + RTRIM(${a}.E1_PREFIXO)`
+      + ` + '|' + RTRIM(${a}.E1_NUM) + '|' + RTRIM(${a}.E1_PARCELA) + '|' + RTRIM(${a}.E1_TIPO)`;
+    return ` AND ${kTit} NOT IN (${lista(titExcluir)})`;
   };
 
-  return { ativo: true, excluiTitulo, se1Sql, clienteSql };
+  return { ativo: true, excluiTitulo, se1Sql, clienteSql: () => '' };
 }
 
 module.exports = { montar, VAZIO };

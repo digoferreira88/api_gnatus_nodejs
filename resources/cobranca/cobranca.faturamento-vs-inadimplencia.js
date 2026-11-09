@@ -152,8 +152,8 @@ module.exports = (app) => ({
     }
 
     // ===== Filtro escondido (checkbox do operador): exclui titulos com status flagado =====
-    // Mesma regra do dashboard (services/cobrancaFiltroEscondido): vale o status do
-    // TITULO e, na falta, o do cliente. Faturamento (SF2) segue pelo cliente.
+    // Mesma regra do dashboard (services/cobrancaFiltroEscondido): vale SO o
+    // sub-status do TITULO (sem herdar o do cliente). Faturamento (SF2) nao e filtrado.
     let fe = FiltroEscondido.VAZIO;
     if (filtroEscondido) {
       try { fe = await FiltroEscondido.montar({ Pg }); }

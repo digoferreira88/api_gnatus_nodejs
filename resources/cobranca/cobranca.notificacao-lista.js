@@ -47,7 +47,7 @@ module.exports = (app) => ({
         tipos: Object.values(Notif.TIPOS).map(t => ({ tipo: t.tipo, label: t.label, titulo: t.titulo })),
         status_ordem: cfg.statusOrdem,
         // Rótulos vindos da lista canônica (a tela não mantém cópia própria).
-        status_labels: Object.fromEntries(CobrancaStatus.STATUS_LIST.map(s => [s.value, s.label])),
+        status_labels: CobrancaStatus.LABELS,
         hoje: Notif.hojeBR(),
         titulos,
         gerado_em: new Date().toISOString()
