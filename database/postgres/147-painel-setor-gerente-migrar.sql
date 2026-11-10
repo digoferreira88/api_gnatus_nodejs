@@ -6,10 +6,13 @@
 -- leitura agendada): com o espelho vazio nada casaria e os vínculos se perderiam,
 -- então a migration aborta.
 --
--- Casa pelo e-mail. Quem não casar (gerente que não está na database GESTORES)
--- some daqui: cadastrar no Pipefy e vincular de novo na tela.
+-- Casa pelo e-mail; se o e-mail do usuário não está na database, tenta o nome
+-- igual (caso de quem tem e-mail diferente na intranet e no Pipefy). Quem não
+-- casar sai listado no NOTICE e some daqui: cadastrar na database GESTORES (ou
+-- escolher o registro certo) e vincular de novo na tela.
 
 DO $$
+DECLARE r record;
 BEGIN
   IF to_regclass('public.tab_painel_setor_gerente') IS NULL THEN
     RAISE NOTICE 'tab_painel_setor_gerente já não existe — nada a migrar.';
@@ -19,12 +22,33 @@ BEGIN
     RAISE EXCEPTION 'Espelho da database GESTORES vazio: faça a 1a leitura antes desta migration.';
   END IF;
 
+  -- 1) mesmo e-mail
   INSERT INTO tab_painel_setor_gestor (setor_id, gestor_id, criado_por, criado_em)
   SELECT g.setor_id, pg.record_id, g.criado_por, g.criado_em
     FROM tab_painel_setor_gerente g
     JOIN tab_intranet_usr u   ON u.id = g.id_user
     JOIN tab_painel_gestor pg ON pg.email = lower(trim(u.email))
   ON CONFLICT (setor_id, gestor_id) DO NOTHING;
+
+  -- 2) e-mail fora da database: mesmo nome
+  INSERT INTO tab_painel_setor_gestor (setor_id, gestor_id, criado_por, criado_em)
+  SELECT g.setor_id, pg.record_id, g.criado_por, g.criado_em
+    FROM tab_painel_setor_gerente g
+    JOIN tab_intranet_usr u   ON u.id = g.id_user
+    JOIN tab_painel_gestor pg ON lower(trim(pg.nome)) = lower(trim(u.nome))
+   WHERE NOT EXISTS (SELECT 1 FROM tab_painel_gestor pe WHERE pe.email = lower(trim(u.email)))
+  ON CONFLICT (setor_id, gestor_id) DO NOTHING;
+
+  FOR r IN
+    SELECT s.nome AS setor, u.nome AS usuario, u.email
+      FROM tab_painel_setor_gerente g
+      JOIN tab_painel_setor s ON s.id = g.setor_id
+      JOIN tab_intranet_usr u ON u.id = g.id_user
+     WHERE NOT EXISTS (SELECT 1 FROM tab_painel_gestor pg
+                        WHERE pg.email = lower(trim(u.email)) OR lower(trim(pg.nome)) = lower(trim(u.nome)))
+  LOOP
+    RAISE NOTICE 'Sem par na database GESTORES: % -> % (%)', r.setor, r.usuario, r.email;
+  END LOOP;
 
   DROP TABLE tab_painel_setor_gerente;
 END $$;
