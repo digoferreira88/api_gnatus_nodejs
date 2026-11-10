@@ -1,10 +1,12 @@
 // POST /gerencia/painel-vista/config/pipe    — { pipeId, nome, considerar }
 // POST /gerencia/painel-vista/config/usuario — { nome, setorId|null }
-// POST /gerencia/painel-vista/config/gerente — { setorId, idUser, vincular }
+// POST /gerencia/painel-vista/config/gerente — { setorId, gestorId, vincular }
+// POST /gerencia/painel-vista/config/ler-gestores — relê a database GESTORES do Pipefy
 // Salvam a config do Painel de Gestão à Vista e derrubam o cache do snapshot
 // (o painel reflete no próximo refresh; pipe marcado é lido do Pipefy na hora).
 // Gerente não mexe no snapshot (só alimenta o aviso de atrasos), então não
-// invalida o cache. Perm 10004. Auditado.
+// invalida o cache. gestorId = id do registro na database GESTORES (migration 146).
+// Perm 10004. Auditado.
 // (Dois endpoints num arquivo só via rota com :alvo — mesmo padrão de upsert.)
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10004]);
@@ -81,44 +83,55 @@ module.exports = (app) => ({
 
       if (alvo === 'gerente') {
         const setorId = Number(b.setorId);
-        const idUser = Number(b.idUser);
+        const gestorId = trim(b.gestorId).slice(0, 20);
         const vincular = b.vincular !== false;
-        if (!Number.isInteger(setorId) || !Number.isInteger(idUser)) return res.status(400).json({ message: 'setorId e idUser são obrigatórios.' });
-
-        const [s, u] = await Promise.all([
-          Pg.connectAndQuery(`SELECT nome FROM tab_painel_setor WHERE id = @id`, { id: setorId }),
-          Pg.connectAndQuery(`SELECT nome, ativo FROM tab_intranet_usr WHERE id = @id`, { id: idUser })
-        ]);
-        if (!s.length) return res.status(404).json({ message: 'Setor não encontrado.' });
-        if (!u.length) return res.status(404).json({ message: 'Usuário não encontrado.' });
-        const setorNome = trim(s[0].nome);
-        const gerNome = trim(u[0].nome);
+        if (!Number.isInteger(setorId) || !gestorId) return res.status(400).json({ message: 'setorId e gestorId são obrigatórios.' });
 
         try {
+          const [s, g] = await Promise.all([
+            Pg.connectAndQuery(`SELECT nome FROM tab_painel_setor WHERE id = @id`, { id: setorId }),
+            Pg.connectAndQuery(`SELECT nome, no_pipefy FROM tab_painel_gestor WHERE record_id = @id`, { id: gestorId })
+          ]);
+          if (!s.length) return res.status(404).json({ message: 'Setor não encontrado.' });
+          if (!g.length) return res.status(404).json({ message: 'Gestor não encontrado na database GESTORES.' });
+          const setorNome = trim(s[0].nome);
+          const gerNome = trim(g[0].nome);
+
           if (vincular) {
-            if (u[0].ativo === false) return res.status(400).json({ message: 'Usuário inativo na intranet.' });
+            if (g[0].no_pipefy === false) return res.status(400).json({ message: 'Gestor não está mais na database GESTORES do Pipefy.' });
             await Pg.connectAndQuery(`
-              INSERT INTO tab_painel_setor_gerente (setor_id, id_user, criado_por, criado_em)
-              VALUES (@setor, @usr, @por, NOW())
-              ON CONFLICT (setor_id, id_user) DO NOTHING`,
-              { setor: setorId, usr: idUser, por });
+              INSERT INTO tab_painel_setor_gestor (setor_id, gestor_id, criado_por, criado_em)
+              VALUES (@setor, @ges, @por, NOW())
+              ON CONFLICT (setor_id, gestor_id) DO NOTHING`,
+              { setor: setorId, ges: gestorId, por });
           } else {
-            await Pg.connectAndQuery(`DELETE FROM tab_painel_setor_gerente WHERE setor_id = @setor AND id_user = @usr`,
-              { setor: setorId, usr: idUser });
+            await Pg.connectAndQuery(`DELETE FROM tab_painel_setor_gestor WHERE setor_id = @setor AND gestor_id = @ges`,
+              { setor: setorId, ges: gestorId });
           }
+          Auditoria.registrar(app, {
+            modulo: 'Gerencia', submodulo: 'PainelVista', acao: 'SETOR_GERENTE', severidade: 'INFO', req,
+            entidade: 'painel_setor_gestor', entidadeId: `${setorId}:${gestorId}`,
+            descricao: vincular ? `Vinculou "${gerNome}" como gerente do setor ${setorNome}` : `Removeu "${gerNome}" da gerência do setor ${setorNome}`
+          });
+          return res.json({ ok: true });
         } catch (err) {
-          if (err && err.code === '42P01') return res.status(503).json({ message: 'Tabela de gerentes ainda não criada (migration 145).' });
+          if (err && err.code === '42P01') return res.status(503).json({ message: 'Tabela de gestores ainda não criada (migration 146).' });
           throw err;
         }
-        Auditoria.registrar(app, {
-          modulo: 'Gerencia', submodulo: 'PainelVista', acao: 'SETOR_GERENTE', severidade: 'INFO', req,
-          entidade: 'painel_setor_gerente', entidadeId: `${setorId}:${idUser}`,
-          descricao: vincular ? `Vinculou "${gerNome}" como gerente do setor ${setorNome}` : `Removeu "${gerNome}" da gerência do setor ${setorNome}`
-        });
-        return res.json({ ok: true });
       }
 
-      return res.status(400).json({ message: 'Alvo deve ser pipe, usuario ou gerente.' });
+      if (alvo === 'ler-gestores') {
+        if (!PipefyPainel.disponivel()) return res.status(503).json({ message: 'PIPEFY_TOKEN não configurado no servidor.' });
+        try {
+          const r = await PipefyPainel.lerGestoresAgora(Pg);
+          return res.json({ ok: true, gestores: r.gestores });
+        } catch (err) {
+          if (err && err.code === '42P01') return res.status(503).json({ message: 'Tabela de gestores ainda não criada (migration 146).' });
+          return res.status(502).json({ message: 'Falha ao ler a database GESTORES: ' + err.message });
+        }
+      }
+
+      return res.status(400).json({ message: 'Alvo deve ser pipe, usuario, gerente ou ler-gestores.' });
     } catch (err) {
       console.error('gerencia/painel-vista-config-salvar:', err);
       return res.status(500).json({ message: 'Erro: ' + err.message });

@@ -7,27 +7,40 @@
 // pipe desligado). Zero chamada ao Pipefy. Usuários vêm do último snapshot (quem
 // aparece em card aberto) + os já vinculados no banco.
 //
-// Setor × Gerente (migration 145): gerentes vinculados + usuários ativos da
-// intranet p/ escolher. Sem a tabela (migration não aplicada) a tela segue
-// funcionando e só o quadro de gerentes avisa que falta a migration.
+// Setor × Gerente (migration 146): os gerentes vêm da database GESTORES do
+// Pipefy (espelho tab_painel_gestor, relido nas leituras agendadas). Espelho
+// vazio = 1ª vez: lê a database agora (1 chamada). Sem a tabela (migration não
+// aplicada) a tela segue funcionando e só o quadro de gerentes avisa.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10004]);
 const PipefyPainel = require('../../services/pipefyPainel');
 const trim = (v) => String(v == null ? '' : v).trim();
 
 async function lerGerentes(Pg) {
+  const consultar = () => Promise.all([
+    Pg.connectAndQuery(`SELECT record_id, nome, email, whatsapp, no_pipefy, lido_em FROM tab_painel_gestor ORDER BY nome`, {}),
+    Pg.connectAndQuery(`SELECT setor_id, gestor_id FROM tab_painel_setor_gestor`, {})
+  ]);
   try {
-    const rows = await Pg.connectAndQuery(`
-      SELECT g.setor_id, g.id_user, u.nome, u.email, u.ativo
-        FROM tab_painel_setor_gerente g
-        JOIN tab_intranet_usr u ON u.id = g.id_user
-       ORDER BY u.nome`, {});
+    let [gestores, vinculos] = await consultar();
+    let erro = null;
+    if (!gestores.length && PipefyPainel.disponivel()) {
+      try {
+        await PipefyPainel.lerGestoresAgora(Pg);
+        [gestores, vinculos] = await consultar();
+      } catch (e) { erro = e.message; }
+    }
+    const lidoEm = gestores.reduce((m, g) => (g.no_pipefy && (!m || g.lido_em > m) ? g.lido_em : m), null);
     return {
-      disponivel: true,
-      gerentes: rows.map(r => ({ setorId: r.setor_id, idUser: r.id_user, nome: trim(r.nome), email: trim(r.email), ativo: r.ativo !== false }))
+      disponivel: true, erro,
+      lidoEm: lidoEm ? new Date(lidoEm).toISOString() : null,
+      gestores: gestores.map(g => ({
+        id: trim(g.record_id), nome: trim(g.nome), email: trim(g.email), whatsapp: trim(g.whatsapp), ativo: g.no_pipefy !== false
+      })),
+      gerentes: vinculos.map(v => ({ setorId: v.setor_id, gestorId: trim(v.gestor_id) }))
     };
   } catch (err) {
-    if (err && err.code === '42P01') return { disponivel: false, gerentes: [] };   // tabela ainda não existe
+    if (err && err.code === '42P01') return { disponivel: false, erro: null, lidoEm: null, gestores: [], gerentes: [] };   // migration 146 não aplicada
     throw err;
   }
 }
@@ -42,13 +55,12 @@ module.exports = (app) => ({
     try {
       // snapshot primeiro: no 1º acesso depois do deploy ele enche o espelho
       const snap = await PipefyPainel.obterSnapshot(Pg);
-      const [pipesOrg, setores, flagsPipe, vinculos, ger, usrIntranet] = await Promise.all([
+      const [pipesOrg, setores, flagsPipe, vinculos, ger] = await Promise.all([
         PipefyPainel.listarPipesEspelho(Pg),
         Pg.connectAndQuery(`SELECT id, nome FROM tab_painel_setor ORDER BY ordem, id`, {}),
         Pg.connectAndQuery(`SELECT pipe_id, considerar FROM tab_painel_pipe`, {}),
         Pg.connectAndQuery(`SELECT usuario_nome, setor_id FROM tab_painel_usuario_setor`, {}),
-        lerGerentes(Pg),
-        Pg.connectAndQuery(`SELECT id, nome, email FROM tab_intranet_usr WHERE ativo = true ORDER BY nome`, {})
+        lerGerentes(Pg)
       ]);
 
       const flag = new Map(flagsPipe.map(f => [trim(f.pipe_id), f.considerar !== false]));
@@ -71,9 +83,11 @@ module.exports = (app) => ({
         setores: setores.map(s => ({ id: s.id, nome: trim(s.nome) })),
         pipes,
         usuarios: [...usuarios.values()].sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome)),
+        gestores: ger.gestores,
         gerentes: ger.gerentes,
         gerentesDisponivel: ger.disponivel,
-        usuariosIntranet: usrIntranet.map(u => ({ id: u.id, nome: trim(u.nome), email: trim(u.email) })),
+        gestoresLidoEm: ger.lidoEm,
+        gestoresErro: ger.erro,
         snapshotDe: snap.geradoEm
       });
     } catch (err) {

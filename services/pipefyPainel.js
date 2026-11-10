@@ -30,8 +30,14 @@
 //   0 no prazo
 // "Atrasado" (campo `a`, TV e histórico) = situação 1 ou 2.
 //
+// GERENTES DOS SETORES (migration 146): vêm da database GESTORES do Pipefy (nome,
+// e-mail, WhatsApp). Espelhada em tab_painel_gestor a cada leitura completa
+// (+1 chamada por página de 50) e pelo botão da tela de config; o vínculo
+// setor -> gestor fica em tab_painel_setor_gestor.
+//
 // Config (.env): PIPEFY_TOKEN, PAINEL_PIPEFY_EXCLUIR (CSV extra de pipe ids,
-// além da tabela). Cron em services/scheduler.js (CRON_PAINEL_PIPEFY).
+// além da tabela), PIPEFY_TABELA_GESTORES (padrão ri_r5xI5). Cron em
+// services/scheduler.js (CRON_PAINEL_PIPEFY).
 
 const Metrica = require('./pipefyMetrica');
 const trim = (v) => String(v == null ? '' : v).trim();
@@ -41,6 +47,8 @@ const ORG_ID = () => trim(process.env.PIPEFY_ORG_ID || '301239355');
 const EXCLUIR_ENV = () => new Set(
   (process.env.PAINEL_PIPEFY_EXCLUIR || '').split(',').map(s => trim(s)).filter(Boolean)
 );
+
+const TABELA_GESTORES = () => trim(process.env.PIPEFY_TABELA_GESTORES || 'ri_r5xI5');
 
 const disponivel = () => !!TOKEN();
 
@@ -430,6 +438,10 @@ async function executarSincronia(Pg, origem) {
     await Pg.connectAndQuery(
       `DELETE FROM tab_painel_pipefy_card WHERE NOT (pipe_id = ANY(@ids::text[]))`, { ids: alvos.map(p => p.id) });
 
+    // Gestores dos setores: falha aqui não derruba a leitura do painel
+    await lerGestoresPipefy(cont).then(regs => gravarGestores(Pg, regs)).catch(e =>
+      console.warn('[pipefy-painel] database GESTORES nao lida:', e.message));
+
     await Pg.connectAndQuery(`
       UPDATE tab_painel_pipefy_sync
          SET fim = NOW(), requisicoes = @req, pipes = @pipes, cards = @cards,
@@ -477,6 +489,75 @@ async function lerPipeAgora(Pg, pipeId, nome) {
       { id: syncId, req: cont.n, msg: String(e.message).slice(0, 500) }).catch(() => {});
     throw e;
   }
+}
+
+// ---------- gestores (database GESTORES do Pipefy, migration 146) ----------
+
+// Lê a database inteira (1 chamada por página de 50 registros)
+async function lerGestoresPipefy(cont) {
+  const regs = [];
+  let after = null;
+  do {
+    const d = await gql(`query($t: ID!, $a: String) {
+      table_records(table_id: $t, first: 50, after: $a) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { id title record_fields { field { id } value } } } } }`,
+      { t: TABELA_GESTORES(), a: after }, cont);
+    for (const e of (d.table_records?.edges || [])) {
+      const campo = (id) => trim(((e.node.record_fields || []).find(f => f.field?.id === id) || {}).value);
+      regs.push({
+        id: trim(e.node.id),
+        nome: (campo('nome') || trim(e.node.title)).slice(0, 150),
+        email: campo('e_mail').toLowerCase().slice(0, 150),
+        whatsapp: campo('whatsapp').replace(/\D/g, '').slice(0, 20)
+      });
+    }
+    after = d.table_records?.pageInfo?.hasNextPage ? d.table_records.pageInfo.endCursor : null;
+  } while (after);
+  return regs;
+}
+
+// Grava a leitura COMPLETA: atualiza quem veio e marca no_pipefy = FALSE em quem
+// sumiu (não apaga, pra não levar junto o vínculo com o setor).
+async function gravarGestores(Pg, regs) {
+  await Pg.withTransaction(async (cli) => {
+    if (regs.length) {
+      await cli.query(`
+        INSERT INTO tab_painel_gestor (record_id, nome, email, whatsapp, no_pipefy, lido_em)
+        SELECT x.id, x.nome, NULLIF(x.email, ''), NULLIF(x.whatsapp, ''), TRUE, NOW()
+          FROM jsonb_to_recordset($1::jsonb) AS x(id text, nome text, email text, whatsapp text)
+        ON CONFLICT (record_id) DO UPDATE SET
+          nome = EXCLUDED.nome, email = EXCLUDED.email, whatsapp = EXCLUDED.whatsapp,
+          no_pipefy = TRUE, lido_em = NOW()`, [JSON.stringify(regs)]);
+    }
+    await cli.query(`UPDATE tab_painel_gestor SET no_pipefy = FALSE WHERE NOT (record_id = ANY($1::text[]))`,
+      [regs.map(r => r.id)]);
+  });
+  return regs.length;
+}
+
+// Botão da tela de config (e 1º acesso com espelho vazio). Single-flight; o
+// custo fica registrado em tab_painel_pipefy_sync (origem GESTORES).
+let lendoGestores = null;
+function lerGestoresAgora(Pg) {
+  if (!lendoGestores) {
+    lendoGestores = (async () => {
+      const cont = { n: 0 };
+      const [{ id: syncId }] = await Pg.connectAndQuery(
+        `INSERT INTO tab_painel_pipefy_sync (origem, completa, pipes) VALUES ('GESTORES', FALSE, 0) RETURNING id`, {});
+      try {
+        const n = await gravarGestores(Pg, await lerGestoresPipefy(cont));
+        await Pg.connectAndQuery(`UPDATE tab_painel_pipefy_sync SET fim = NOW(), requisicoes = @req WHERE id = @id`,
+          { id: syncId, req: cont.n });
+        return { gestores: n, requisicoes: cont.n };
+      } catch (e) {
+        await Pg.connectAndQuery(`UPDATE tab_painel_pipefy_sync SET fim = NOW(), requisicoes = @req, erro = @msg WHERE id = @id`,
+          { id: syncId, req: cont.n, msg: String(e.message).slice(0, 500) }).catch(() => {});
+        throw e;
+      }
+    })().finally(() => { lendoGestores = null; });
+  }
+  return lendoGestores;
 }
 
 // ---------- espelho: leitura pelas telas ----------
@@ -587,5 +668,5 @@ function paraTv(snap) {
 
 module.exports = {
   disponivel, obterSnapshot, listarPipesOrg, listarPipesEspelho, invalidarCache, lerHistorico, paraTv,
-  sincronizar, lerPipeAgora, definirAgenda
+  sincronizar, lerPipeAgora, definirAgenda, lerGestoresAgora
 };
