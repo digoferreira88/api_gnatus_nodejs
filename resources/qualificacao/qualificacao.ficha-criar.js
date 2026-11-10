@@ -42,6 +42,16 @@ module.exports = (app) => ({
       const [aberta] = await Pg.connectAndQuery(
         `SELECT * FROM tab_qf_ficha WHERE fornecedor_id = @id AND formulario = @form AND status IN ('RASCUNHO','ENVIADA','DEVOLVIDA')
             AND (qualificacao_id IS NOT DISTINCT FROM @proc) ORDER BY id DESC LIMIT 1`, { id, form: formulario, proc: proc ? proc.id : null });
+      // Já respondido neste processo: um link novo criaria outro formulário e reabriria as
+      // etapas do questionário/análise. Correção se pede por "Devolver ao fornecedor".
+      if (!aberta) {
+        const [respondida] = await Pg.connectAndQuery(
+          `SELECT id FROM tab_qf_ficha WHERE fornecedor_id = @id AND formulario = @form AND status IN ('RESPONDIDA','ANALISADA')
+              AND (qualificacao_id IS NOT DISTINCT FROM @proc) ORDER BY id DESC LIMIT 1`, { id, form: formulario, proc: proc ? proc.id : null });
+        if (respondida) {
+          return res.status(409).json({ message: `O fornecedor já respondeu o FORM ${formulario} deste processo (#${respondida.id}). Para pedir uma correção, use "Devolver ao fornecedor" no formulário, antes de registrar a análise.` });
+        }
+      }
       let ficha;
       if (aberta) {
         [ficha] = await Pg.connectAndQuery(

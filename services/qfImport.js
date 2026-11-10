@@ -253,7 +253,7 @@ function montarInspecao(l, hoje) {
     nivel_inspecao: nv, qtd_recebida: qr, qtd_inspecionada: qi, qtd_aprovada: qa, qtd_reprovada: qrep,
     especificacao: l.esp, criterio_aceitacao: l.crit, resultado_descricao: l.res,
     instrumento_utilizado: l.instr ? l.instr.slice(0, 200) : null, rnc_numero: l.rnc ? l.rnc.slice(0, 40) : null,
-    data_inspecao: data, pct_conforme: qi ? Math.round(Math.min(qa ?? 0, qi) / qi * 100000) / 1000 : null,
+    data_inspecao: data, pct_conforme: qi && qa != null ? Math.round(Math.min(qa, qi) / qi * 100000) / 1000 : null,
     nc: R.ehNC({ qtdReprovada: qrep, rncNumero: l.rnc }),
     indice_c: c, indice_p: p, indice_n: n, iqf,
     responsavel_nome: l.resp ? l.resp.slice(0, 120) : null,
@@ -452,6 +452,8 @@ async function recalcularTodos(app, { regra = null, req = null } = {}) {
     `SELECT f.id, f.classificacao antes, cardinality(f.criticidades) > 0 AS monitorado, AVG(i.iqf) media, COUNT(i.iqf)::int qtd, MAX(i.data_inspecao) ultima
        FROM tab_qf_fornecedor f
        LEFT JOIN tab_qf_inspecao i ON i.fornecedor_id = f.id AND NOT i.excluido AND i.iqf IS NOT NULL
+             -- reaprovado depois de reprovação: a média recomeça em iqf_desde (igual a Core.recalcularFornecedor)
+             AND (f.iqf_desde IS NULL OR i.data_inspecao >= f.iqf_desde)
       GROUP BY f.id, f.classificacao, f.criticidades`);
   const linhas = agg.map(a => {
     const media = a.qtd ? Core.r4(a.media) : null;

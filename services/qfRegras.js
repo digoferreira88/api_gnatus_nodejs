@@ -310,7 +310,9 @@ function checklistDocumentos(tipos, docs, fornecedor, ficha, { hoje = new Date()
         }
       }
     }
-    return { tipoId: tipo.id, codigo: tipo.codigo, nome: tipo.nome, regra, condicao: tipo.condicao, exigeValidade: tipo.exige_validade, geradoSistema: tipo.gerado_sistema, situacao, venceEm, documento: doc };
+    // A condição do tipo explica o "somente se aplicável" (ex.: ISO "Crítico B e C: somente se
+    // aplicável"); para quem o documento é obrigatório ela não vale e confunde.
+    return { tipoId: tipo.id, codigo: tipo.codigo, nome: tipo.nome, regra, condicao: regra === 'CONDICIONAL' ? tipo.condicao : null, exigeValidade: tipo.exige_validade, geradoSistema: tipo.gerado_sistema, situacao, venceEm, documento: doc };
   });
   const ok = (s) => ['OK', 'VENCENDO', 'PROTOCOLADO', 'DISPENSADO'].includes(s);
   const obrig = itens.filter(i => i.regra === 'OBRIGATORIO');

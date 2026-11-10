@@ -17,7 +17,7 @@ module.exports = (app) => ({
       const r = await ativarRegra(app, req, id, motivo);
       return res.json({ ok: true, ...r });
     } catch (err) {
-      if (err.status === 404) return res.status(404).json({ message: err.message });
+      if (err.status === 404 || err.status === 400) return res.status(err.status).json({ message: err.message });
       return Q.falha(res, 'ativar a versão de regra', err);
     }
   }

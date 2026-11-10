@@ -88,10 +88,12 @@ module.exports = (app) => ({
         await q(`UPDATE tab_qf_qualificacao SET status = @st, etapa = 'CONCLUIDO', concluido_em = NOW(),
                    aprovacao_resultado = @res, aprovacao_por = @u, aprovacao_nome = @nome, aprovacao_em = NOW(), aprovacao_ip = @ip,
                    aprovacao_declaracao = @decl, aprovacao_hash = @hash, plano_acao = @plano, prazo_regularizacao = @prazo,
-                   motivo = COALESCE(@obs, motivo), atualizado_por = @u, atualizado_em = NOW()
+                   aprovacao_observacao = @obs,
+                   motivo = CASE WHEN @negativo::boolean THEN COALESCE(@obs, motivo) ELSE motivo END,
+                   atualizado_por = @u, atualizado_em = NOW()
                  WHERE id = @id`,
           { st: negativo ? 'REPROVADO' : 'APROVADO', res: resultado, u: u.id, nome: u.nome, ip: Q.ipDe(req), decl: declaracao, hash,
-            plano, prazo, obs: Q.nul(b.observacao), id: pid });
+            plano, prazo, obs: Q.nul(b.observacao), negativo, id: pid });
         if (negativo && requal) {
           await q(`UPDATE tab_qf_fornecedor SET status_qualificacao = 'SUSPENSO', suspensao_tipo = 'REQUALIFICACAO', suspenso_em = NOW(),
                      motivo_suspensao = @m, atualizado_por = @u, atualizado_em = NOW() WHERE id = @f`,
