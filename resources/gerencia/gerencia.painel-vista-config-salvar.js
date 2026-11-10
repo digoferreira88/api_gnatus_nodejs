@@ -1,8 +1,10 @@
 // POST /gerencia/painel-vista/config/pipe    — { pipeId, nome, considerar }
 // POST /gerencia/painel-vista/config/usuario — { nome, setorId|null }
+// POST /gerencia/painel-vista/config/gerente — { setorId, idUser, vincular }
 // Salvam a config do Painel de Gestão à Vista e derrubam o cache do snapshot
 // (o painel reflete no próximo refresh; pipe marcado é lido do Pipefy na hora).
-// Perm 10004. Auditado.
+// Gerente não mexe no snapshot (só alimenta o aviso de atrasos), então não
+// invalida o cache. Perm 10004. Auditado.
 // (Dois endpoints num arquivo só via rota com :alvo — mesmo padrão de upsert.)
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10004]);
@@ -77,7 +79,46 @@ module.exports = (app) => ({
         return res.json({ ok: true });
       }
 
-      return res.status(400).json({ message: 'Alvo deve ser pipe ou usuario.' });
+      if (alvo === 'gerente') {
+        const setorId = Number(b.setorId);
+        const idUser = Number(b.idUser);
+        const vincular = b.vincular !== false;
+        if (!Number.isInteger(setorId) || !Number.isInteger(idUser)) return res.status(400).json({ message: 'setorId e idUser são obrigatórios.' });
+
+        const [s, u] = await Promise.all([
+          Pg.connectAndQuery(`SELECT nome FROM tab_painel_setor WHERE id = @id`, { id: setorId }),
+          Pg.connectAndQuery(`SELECT nome, ativo FROM tab_intranet_usr WHERE id = @id`, { id: idUser })
+        ]);
+        if (!s.length) return res.status(404).json({ message: 'Setor não encontrado.' });
+        if (!u.length) return res.status(404).json({ message: 'Usuário não encontrado.' });
+        const setorNome = trim(s[0].nome);
+        const gerNome = trim(u[0].nome);
+
+        try {
+          if (vincular) {
+            if (u[0].ativo === false) return res.status(400).json({ message: 'Usuário inativo na intranet.' });
+            await Pg.connectAndQuery(`
+              INSERT INTO tab_painel_setor_gerente (setor_id, id_user, criado_por, criado_em)
+              VALUES (@setor, @usr, @por, NOW())
+              ON CONFLICT (setor_id, id_user) DO NOTHING`,
+              { setor: setorId, usr: idUser, por });
+          } else {
+            await Pg.connectAndQuery(`DELETE FROM tab_painel_setor_gerente WHERE setor_id = @setor AND id_user = @usr`,
+              { setor: setorId, usr: idUser });
+          }
+        } catch (err) {
+          if (err && err.code === '42P01') return res.status(503).json({ message: 'Tabela de gerentes ainda não criada (migration 145).' });
+          throw err;
+        }
+        Auditoria.registrar(app, {
+          modulo: 'Gerencia', submodulo: 'PainelVista', acao: 'SETOR_GERENTE', severidade: 'INFO', req,
+          entidade: 'painel_setor_gerente', entidadeId: `${setorId}:${idUser}`,
+          descricao: vincular ? `Vinculou "${gerNome}" como gerente do setor ${setorNome}` : `Removeu "${gerNome}" da gerência do setor ${setorNome}`
+        });
+        return res.json({ ok: true });
+      }
+
+      return res.status(400).json({ message: 'Alvo deve ser pipe, usuario ou gerente.' });
     } catch (err) {
       console.error('gerencia/painel-vista-config-salvar:', err);
       return res.status(500).json({ message: 'Erro: ' + err.message });

@@ -6,10 +6,31 @@
 // pipes da org, inclusive os desconsiderados — senão não daria pra remarcar um
 // pipe desligado). Zero chamada ao Pipefy. Usuários vêm do último snapshot (quem
 // aparece em card aberto) + os já vinculados no banco.
+//
+// Setor × Gerente (migration 145): gerentes vinculados + usuários ativos da
+// intranet p/ escolher. Sem a tabela (migration não aplicada) a tela segue
+// funcionando e só o quadro de gerentes avisa que falta a migration.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10004]);
 const PipefyPainel = require('../../services/pipefyPainel');
 const trim = (v) => String(v == null ? '' : v).trim();
+
+async function lerGerentes(Pg) {
+  try {
+    const rows = await Pg.connectAndQuery(`
+      SELECT g.setor_id, g.id_user, u.nome, u.email, u.ativo
+        FROM tab_painel_setor_gerente g
+        JOIN tab_intranet_usr u ON u.id = g.id_user
+       ORDER BY u.nome`, {});
+    return {
+      disponivel: true,
+      gerentes: rows.map(r => ({ setorId: r.setor_id, idUser: r.id_user, nome: trim(r.nome), email: trim(r.email), ativo: r.ativo !== false }))
+    };
+  } catch (err) {
+    if (err && err.code === '42P01') return { disponivel: false, gerentes: [] };   // tabela ainda não existe
+    throw err;
+  }
+}
 
 module.exports = (app) => ({
   verb: 'get',
@@ -21,11 +42,13 @@ module.exports = (app) => ({
     try {
       // snapshot primeiro: no 1º acesso depois do deploy ele enche o espelho
       const snap = await PipefyPainel.obterSnapshot(Pg);
-      const [pipesOrg, setores, flagsPipe, vinculos] = await Promise.all([
+      const [pipesOrg, setores, flagsPipe, vinculos, ger, usrIntranet] = await Promise.all([
         PipefyPainel.listarPipesEspelho(Pg),
         Pg.connectAndQuery(`SELECT id, nome FROM tab_painel_setor ORDER BY ordem, id`, {}),
         Pg.connectAndQuery(`SELECT pipe_id, considerar FROM tab_painel_pipe`, {}),
-        Pg.connectAndQuery(`SELECT usuario_nome, setor_id FROM tab_painel_usuario_setor`, {})
+        Pg.connectAndQuery(`SELECT usuario_nome, setor_id FROM tab_painel_usuario_setor`, {}),
+        lerGerentes(Pg),
+        Pg.connectAndQuery(`SELECT id, nome, email FROM tab_intranet_usr WHERE ativo = true ORDER BY nome`, {})
       ]);
 
       const flag = new Map(flagsPipe.map(f => [trim(f.pipe_id), f.considerar !== false]));
@@ -48,6 +71,9 @@ module.exports = (app) => ({
         setores: setores.map(s => ({ id: s.id, nome: trim(s.nome) })),
         pipes,
         usuarios: [...usuarios.values()].sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome)),
+        gerentes: ger.gerentes,
+        gerentesDisponivel: ger.disponivel,
+        usuariosIntranet: usrIntranet.map(u => ({ id: u.id, nome: trim(u.nome), email: trim(u.email) })),
         snapshotDe: snap.geradoEm
       });
     } catch (err) {
