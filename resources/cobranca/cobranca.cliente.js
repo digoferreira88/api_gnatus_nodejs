@@ -69,6 +69,7 @@ module.exports = (app) => ({
            (SELECT TOP 1 RTRIM(A6_NREDUZ) FROM SA6010 WITH (NOLOCK)
               WHERE RTRIM(A6_COD) = RTRIM(se1.E1_PORTADO) AND D_E_L_E_T_ <> '*') portadorNome,
            RTRIM(sc5.C5_ZTIPO) buCod, RTRIM(bu.X5_DESCRI) buNome,
+           RTRIM(sc5.C5_FORMAPG) formaPgCod, RTRIM(fp.X5_DESCRI) formaPgDesc,
            DATEDIFF(day, CONVERT(date, se1.E1_VENCREA, 112), GETDATE()) diasAtraso
          FROM SE1010 se1 WITH (NOLOCK)
          LEFT JOIN SC5010 sc5 WITH (NOLOCK)
@@ -76,6 +77,11 @@ module.exports = (app) => ({
          LEFT JOIN SX5010 bu WITH (NOLOCK)
            ON bu.X5_FILIAL = '  ' AND bu.X5_TABELA = 'Z1'
           AND RTRIM(bu.X5_CHAVE) = RTRIM(sc5.C5_ZTIPO) AND bu.D_E_L_E_T_ <> '*'
+         -- C5_DESCFOR é campo VIRTUAL (não existe na SC5010): o Protheus o calcula
+         -- como SX5 tabela 'Z2' pela chave C5_FORMAPG. Replicamos a mesma regra aqui.
+         LEFT JOIN SX5010 fp WITH (NOLOCK)
+           ON fp.X5_FILIAL = '  ' AND fp.X5_TABELA = 'Z2'
+          AND RTRIM(fp.X5_CHAVE) = RTRIM(sc5.C5_FORMAPG) AND fp.D_E_L_E_T_ <> '*'
          WHERE se1.D_E_L_E_T_ <> '*'
            AND se1.E1_CLIENTE = @cod AND se1.E1_LOJA = @loja
            -- Soh E1_SALDO > 0 (sem checar E1_BAIXA, que pode estar preenchida em baixas parciais)
@@ -115,6 +121,9 @@ module.exports = (app) => ({
           portadorNome: trim(t.portadorNome) || BANCOS[trim(t.portador)] || trim(t.portador) || '—',
           buCod: trim(t.buCod),
           buNome: trim(t.buNome) || trim(t.buCod) || '—',
+          // Forma de pagamento do PEDIDO (C5_DESCFOR). Título sem pedido → '—'.
+          formaPgCod: trim(t.formaPgCod),
+          formaPgDesc: trim(t.formaPgDesc) || trim(t.formaPgCod) || '—',
           faixa: faixaAtraso(d),
           statusTitulo: stTitMap[keyTit(t.prefixo, t.numero, t.parcela, t.tipo)] || null
         };
