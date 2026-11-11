@@ -309,14 +309,16 @@ async function gravarHistorico(Pg, snap) {
       mais_90d = EXCLUDED.mais_90d, atualizado_em = NOW()`, params);
 }
 
-// Série dos últimos N dias (Visão Executiva). Tolerante à migration 137 ausente.
-async function lerHistorico(Pg, dias = 120) {
+// Série dos últimos N dias (Visão Executiva; a TV pede só tipo 'total').
+// Tolerante à migration 137 ausente.
+async function lerHistorico(Pg, dias = 120, tipo = null) {
   try {
     const rows = await Pg.connectAndQuery(`
       SELECT to_char(dia, 'YYYY-MM-DD') dia, tipo, chave, abertos, atrasados, mais_90d
         FROM tab_painel_historico
        WHERE dia >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date - @dias::int
-       ORDER BY dia`, { dias });
+         ${tipo ? 'AND tipo = @tipo' : ''}
+       ORDER BY dia`, tipo ? { dias, tipo } : { dias });
     return rows.map(r => ({
       dia: r.dia, tipo: trim(r.tipo), chave: trim(r.chave),
       abertos: Number(r.abertos), atrasados: Number(r.atrasados), mais90: Number(r.mais_90d)
