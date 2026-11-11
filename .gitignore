@@ -22,3 +22,6 @@ certificados/
 *.crt
 *.pfx
 *.p12
+
+# Mídia do CIOSP (fotos e catálogos) — em produção fica em /home/intranet/storage/ciosp
+storage/
