@@ -26,11 +26,11 @@ module.exports = (app) => ({
       const contagem = Object.fromEntries(NA_FILA.map(s => [s, 0]));
       if (!edicao) return res.json({ edicao: null, contagem, pedidos: [] });
 
-      const p = { edicao };
+      const p = { edicao, eu: uid || 0 };
       const cond = [`p.edicao = @edicao`, `p.situacao <> 'rascunho'`];
       const situacao = trim(req.query.situacao);
       if (NA_FILA.includes(situacao)) { cond.push('p.situacao = @situacao'); p.situacao = situacao; }
-      if (trim(req.query.meus) === '1' && uid) { cond.push('p.adm_responsavel = @eu'); p.eu = uid; }
+      if (trim(req.query.meus) === '1' && uid) cond.push('p.adm_responsavel = @eu');
       const busca = trim(req.query.busca);
       if (busca) {
         cond.push(`(p.cliente_nome ILIKE @busca OR p.vendedor_nome ILIKE @busca
@@ -47,6 +47,7 @@ module.exports = (app) => ({
         Pg.connectAndQuery(
           `SELECT p.id, p.uuid, p.numero, p.cliente_nome, p.cliente_doc, p.vendedor_nome, p.total,
                   p.situacao, p.enviado_em, p.atualizado_em, p.adm_responsavel, u.nome AS adm_nome,
+                  (p.adm_responsavel = @eu) AS meu,
                   f.nome AS forma_nome, p.tabela_comissao, p.credito_status, p.contrato_assinado_em,
                   p.protheus_pedido, p.protheus_conferido, p.venda_id, p.devolvido_motivo,
                   EXISTS (SELECT 1 FROM tab_ciosp_pedido_item i

@@ -35,6 +35,8 @@ module.exports = (app) => ({
 
   handler: async (req, res) => {
     const { Pg } = app.services;
+    const user = req.user && req.user[0];
+    const uid = Number(user?.ID ?? user?.id) || null;
     const uuid = D.trim(req.params.uuid).toLowerCase();
 
     try {
@@ -70,6 +72,7 @@ module.exports = (app) => ({
         pedido, itens, historico,
         forma: ctxPainel.forma,
         adm_nome: adm[0] ? adm[0].nome : null,
+        sou_responsavel: pedido.adm_responsavel != null && Number(pedido.adm_responsavel) === uid,
         pendencias: F.pendenciasFinalizar(pedido),
         painel: Painel.linhaPainel(pedido, ctxPainel),
         venda: venda[0] || null,
