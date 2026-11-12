@@ -1,6 +1,7 @@
 // GET /ciosp/orcamentos/:uuid — abre um orçamento com itens e trilha. Perm 19001.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19005, 0]);
+const F = require('../../services/ciospFluxo');
 const D = require('../../services/ciospDocs');
 
 module.exports = (app) => ({
@@ -21,6 +22,10 @@ module.exports = (app) => ({
       if (!r.length) return res.status(404).json({ message: 'Orçamento não encontrado.' });
 
       const orcamento = r[0];
+      // Quem só tem o app vê apenas os próprios (404, para não revelar que existe).
+      const user = req.user && req.user[0];
+      const so = await F.escopoVendedor(app, user?.ID ?? user?.id);
+      if (so && Number(orcamento.vendedor_id) !== so) return res.status(404).json({ message: 'Orçamento não encontrado.' });
       const itens = await D.lerItens(Pg, 'tab_ciosp_orcamento_item', 'orcamento_id', orcamento.id);
       const historico = await Pg.connectAndQuery(
         `SELECT acao, de, para, usuario_id, em FROM tab_ciosp_doc_log

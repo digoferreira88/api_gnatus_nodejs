@@ -7,7 +7,7 @@
 // Quando não acha, devolve achou=false em vez de erro: cadastro novo é um caminho
 // normal (11% dos casos), não exceção.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19005, 0]);
 const { trim, soDig, documentoValido } = require('../../services/ciospDocs');
 
 module.exports = (app) => ({

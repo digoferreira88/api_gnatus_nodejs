@@ -4,7 +4,8 @@
 // precisa ver a equipe. Por isso `meus=1` filtra pelo usuário logado, e sem ele a
 // lista é do evento inteiro (quem não tiver 19003 só deve usar com meus=1 na tela).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19005, 0]);
+const F = require('../../services/ciospFluxo');
 const { trim, N } = require('../../services/ciospDocs');
 
 module.exports = (app) => ({
@@ -21,6 +22,9 @@ module.exports = (app) => ({
     const situacao = trim(req.query.situacao);
     if (situacao) { cond.push('o.situacao = @situacao'); p.situacao = situacao; }
 
+    // Quem só tem o app (19005) vê apenas os próprios, com ou sem "meus".
+    const so = await F.escopoVendedor(app, user?.ID ?? user?.id);
+    if (so) { cond.push('o.vendedor_id = @so'); p.so = so; }
     if (trim(req.query.meus) === '1' && user?.id) {
       cond.push('o.vendedor_id = @vend'); p.vend = Number(user.id);
     }
