@@ -12,8 +12,15 @@ module.exports = (app) => ({
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: 'id inválido.' });
     try {
+      // Linha que veio de pedido é do pedido: alterar aqui faria o painel divergir.
+      const doPedido = await Pg.connectAndQuery(
+        `SELECT p.numero FROM tab_ciosp_venda v JOIN tab_ciosp_pedido p ON p.id = v.pedido_id WHERE v.id = @id`, { id });
+      if (doPedido.length) {
+        return res.status(409).json({ message: `Esta venda veio do pedido nº ${doPedido[0].numero}: altere pelo pedido.` });
+      }
+
       const del = await Pg.connectAndQuery(
-        `DELETE FROM tab_ciosp_venda WHERE id=@id RETURNING cliente, categoria, valor`, { id });
+        `DELETE FROM tab_ciosp_venda WHERE id=@id AND pedido_id IS NULL RETURNING cliente, categoria, valor`, { id });
       if (!del.length) return res.status(404).json({ message: 'Venda não encontrada.' });
 
       Auditoria.registrar(app, {

@@ -29,7 +29,8 @@ module.exports = (app) => ({
       const rows = await Pg.connectAndQuery(
         `SELECT id, edicao, categoria, cliente, cpf_cnpj, data_venda, vendedor, entrega, uf,
                 pagto_princ, pagto_compl, financiadora, situacao_fin, gerente, origem, equipe,
-                valor, tabela, equipamentos, observacao, observacao2, custo, criado_em
+                valor, tabela, equipamentos, observacao, observacao2, custo, criado_em, pedido_id,
+                (SELECT p.numero FROM tab_ciosp_pedido p WHERE p.id = tab_ciosp_venda.pedido_id) AS pedido_numero
            FROM tab_ciosp_venda ${where}
           ORDER BY data_venda DESC NULLS LAST, id DESC
           LIMIT 5000`, p);
@@ -42,7 +43,9 @@ module.exports = (app) => ({
         situacaoFin: trim(r.situacao_fin), gerente: trim(r.gerente), origem: trim(r.origem),
         equipe: trim(r.equipe), valor: Number(r.valor || 0), tabela: trim(r.tabela),
         equipamentos: trim(r.equipamentos), observacao: trim(r.observacao), observacao2: trim(r.observacao2),
-        custo: r.custo == null ? null : Number(r.custo)
+        custo: r.custo == null ? null : Number(r.custo),
+        // Linha que veio de pedido: somente leitura em Lançamentos.
+        pedidoId: r.pedido_id || null, pedidoNumero: r.pedido_numero || null
       }));
 
       return res.json({ total: docs.length, docs });

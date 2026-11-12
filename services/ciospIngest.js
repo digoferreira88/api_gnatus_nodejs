@@ -110,11 +110,12 @@ function lerWorkbook(wb) {
   return linhas;
 }
 
-// Importa pro Postgres. Se limpar=true, apaga a edição antes (idempotente p/ re-seed).
+// Importa pro Postgres. Se limpar=true, apaga a edição antes (idempotente p/ re-seed) —
+// só as vendas lançadas à mão: as que vieram de pedido ficam (são do pedido).
 async function importar(app, { filePath, buffer, edicao = 'CIOSP 2026', limpar = false, criadoPor = null } = {}) {
   const { Pg } = app.services;
   const linhas = buffer ? await lerBuffer(buffer) : await lerArquivo(filePath);
-  if (limpar) await Pg.connectAndQuery(`DELETE FROM tab_ciosp_venda WHERE edicao=@e`, { e: edicao });
+  if (limpar) await Pg.connectAndQuery(`DELETE FROM tab_ciosp_venda WHERE edicao=@e AND pedido_id IS NULL`, { e: edicao });
 
   let ins = 0;
   for (const l of linhas) {

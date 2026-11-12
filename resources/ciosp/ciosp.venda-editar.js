@@ -16,6 +16,13 @@ module.exports = (app) => ({
     if (erro) return res.status(400).json({ message: erro });
 
     try {
+      // Linha que veio de pedido é do pedido: alterar aqui faria o painel divergir.
+      const doPedido = await Pg.connectAndQuery(
+        `SELECT p.numero FROM tab_ciosp_venda v JOIN tab_ciosp_pedido p ON p.id = v.pedido_id WHERE v.id = @id`, { id });
+      if (doPedido.length) {
+        return res.status(409).json({ message: `Esta venda veio do pedido nº ${doPedido[0].numero}: altere pelo pedido.` });
+      }
+
       const upd = await Pg.connectAndQuery(
         `UPDATE tab_ciosp_venda SET
             edicao=@edicao, categoria=@categoria, cliente=@cliente, cpf_cnpj=@cpf_cnpj,
@@ -24,7 +31,7 @@ module.exports = (app) => ({
             situacao_fin=@situacao_fin, gerente=@gerente, origem=@origem, equipe=@equipe,
             valor=@valor, tabela=@tabela, equipamentos=@equipamentos, observacao=@observacao,
             observacao2=@observacao2, custo=@custo, atualizado_em=NOW()
-          WHERE id=@id RETURNING id`,
+          WHERE id=@id AND pedido_id IS NULL RETURNING id`,
         { ...campos, id });
       if (!upd.length) return res.status(404).json({ message: 'Venda não encontrada.' });
 
