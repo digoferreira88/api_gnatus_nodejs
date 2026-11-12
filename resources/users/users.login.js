@@ -1,16 +1,9 @@
 const bcrypt = require('bcryptjs');
-const rateLimit = require('express-rate-limit');
 const Auditoria = require('../../services/auditoria');
-
-// Rate limit: 5 tentativas por IP a cada 15 min. Mais que suficiente pra uso
-// legitimo (humano) e bloqueia brute force.
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: 'Muitas tentativas. Tente novamente em 15 minutos.' }
-});
+// Limitador compartilhado: 20 tentativas ERRADAS por IP a cada 15 min; login certo
+// não conta. O antigo (5 por IP, contando os certos) travaria uma sala de
+// treinamento ou o estande do CIOSP, onde todos saem pelo mesmo IP.
+const { loginLimiter } = require('../../middlewares/rateLimit');
 
 module.exports = (app) => ({
   verb: "post",
