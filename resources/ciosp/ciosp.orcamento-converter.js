@@ -11,7 +11,7 @@
 // O documento do cliente, opcional no orçamento, passa a ser OBRIGATÓRIO aqui: é por
 // ele que o ERP resolve o cliente quando a integração entrar (fase 5).
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 19005, 0]);
 const Auditoria = require('../../services/auditoria');
 const D = require('../../services/ciospDocs');
 const F = require('../../services/ciospFluxo');
@@ -38,6 +38,9 @@ module.exports = (app) => ({
       const r = await Pg.connectAndQuery(`SELECT * FROM tab_ciosp_orcamento WHERE uuid = @uuid`, { uuid });
       if (!r.length) return res.status(404).json({ message: 'Orçamento não encontrado.' });
       const o = r[0];
+      // Quem só tem o app converte apenas os próprios orçamentos.
+      const so = await F.escopoVendedor(app, user?.ID ?? user?.id);
+      if (so && Number(o.vendedor_id) !== so) return res.status(404).json({ message: 'Orçamento não encontrado.' });
 
       // Idempotente: reenviar a conversão devolve o pedido que já existe, em vez de
       // criar um segundo. Vale para o tablet que perdeu a resposta e tentou de novo.
@@ -46,6 +49,18 @@ module.exports = (app) => ({
         { id: o.id, uuidPedido });
       if (jaTem.length) {
         return res.json({ ok: true, jaExistia: true, pedido: jaTem[0] });
+      }
+
+      // Desconto acima do livre só vira pedido com o gerente de acordo (spec §6.1).
+      if (['pendente', 'recusado'].includes(o.desconto_status)) {
+        return res.status(409).json({
+          message: o.desconto_status === 'recusado'
+            ? 'O gerente recusou o desconto: ajuste os preços antes de converter.'
+            : 'O desconto passa do livre: peça a aprovação do gerente antes de converter.'
+        });
+      }
+      if (!['rascunho', 'enviado'].includes(o.situacao)) {
+        return res.status(409).json({ message: `Orçamento ${o.situacao}: não pode virar pedido.` });
       }
 
       if (!D.documentoValido(o.cliente_doc)) {
