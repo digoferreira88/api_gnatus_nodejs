@@ -271,3 +271,18 @@ test('tabelaComissao só aceita 13 ou 11', () => {
   assert.equal(F.tabelaComissao(12), null);
   assert.equal(F.tabelaComissao(null), null);
 });
+
+// ---------------------------------------------------------------- correções da revisão final
+
+test('devolver mantém o nº do Protheus mas exige conferir de novo', () => {
+  const r = F.aplicarAcao(pronto({ protheus_conferido: 'ok' }), 'devolver', { motivo: 'CPF do cliente errado' }, ctx());
+  assert.equal('protheus_pedido' in r.campos, false);
+  assert.equal(r.campos.protheus_conferido, null);
+  assert.equal(r.campos.protheus_conferido_em, null);
+});
+
+test('escopoVendedor: só quem tem apenas o app (19005) fica restrito aos próprios pedidos', async () => {
+  const app = (temAlguma) => ({ services: { Pg: { connectAndQuery: async () => (temAlguma ? [{ ok: 1 }] : []) } } });
+  assert.equal(await F.escopoVendedor(app(true), 7), null);
+  assert.equal(await F.escopoVendedor(app(false), 7), 7);
+});

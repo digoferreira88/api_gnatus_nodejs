@@ -85,3 +85,10 @@ test('linhaPainel: forma sem financeira, sem parcelas, entrega na região amazô
   assert.equal(linha.tabela, '11%');
   assert.equal(linha.origem, 'Online');
 });
+
+test('exigeLinhaPainel: tomar o pedido não depende da linha do painel', () => {
+  assert.equal(P.exigeLinhaPainel('assumir', 'conferido'), false);
+  assert.equal(P.exigeLinhaPainel('contrato', 'conferido'), true);
+  assert.equal(P.exigeLinhaPainel('finalizar', 'finalizado'), true);
+  assert.equal(P.exigeLinhaPainel('devolver', 'devolvido'), false);
+});

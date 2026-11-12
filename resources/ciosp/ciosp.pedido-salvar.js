@@ -47,8 +47,10 @@ module.exports = (app) => ({
 
     try {
       const existe = await Pg.connectAndQuery(
-        `SELECT id, numero, situacao, orcamento_id, edicao FROM tab_ciosp_pedido WHERE uuid = @uuid`, { uuid });
+        `SELECT id, numero, situacao, orcamento_id, edicao, vendedor_id FROM tab_ciosp_pedido WHERE uuid = @uuid`, { uuid });
       const atual = existe[0] || null;
+      const so = atual ? await F.escopoVendedor(app, user?.ID ?? user?.id) : null;
+      if (so && Number(atual.vendedor_id) !== so) return res.status(404).json({ message: 'Pedido não encontrado.' });
       const situacao = atual ? atual.situacao : 'rascunho';
 
       if (atual) {

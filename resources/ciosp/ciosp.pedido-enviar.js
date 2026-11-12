@@ -24,10 +24,12 @@ module.exports = (app) => ({
     const uuid = D.trim(req.params.uuid).toLowerCase();
 
     try {
+      const so = await F.escopoVendedor(app, uid);
       const r = await Pg.withTransaction(async (db) => {
         const ped = await q(db, `SELECT * FROM tab_ciosp_pedido WHERE uuid = $1 FOR UPDATE`, [uuid]);
         if (!ped.length) return { status: 404, erro: 'Pedido não encontrado.' };
         const pedido = ped[0];
+        if (so && Number(pedido.vendedor_id) !== so) return { status: 404, erro: 'Pedido não encontrado.' };
 
         const forma = pedido.forma_pagto_id
           ? (await q(db, `SELECT id, edicao, nome, parcelas_max, ativo FROM tab_ciosp_forma_pagto WHERE id = $1`,

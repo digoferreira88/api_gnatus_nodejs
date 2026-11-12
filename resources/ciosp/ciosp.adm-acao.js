@@ -79,7 +79,7 @@ module.exports = (app) => ({
 
         // Se o pedido continua (ou passa a estar) no painel, a linha tem que fechar
         // com os campos novos — ex.: tirar a categoria de um pedido conferido.
-        if (['conferido', 'finalizado'].includes(resultado.situacao)) {
+        if (Painel.exigeLinhaPainel(acao, resultado.situacao)) {
           const depois = { ...pedido, ...resultado.campos, situacao: resultado.situacao };
           const erroLinha = Painel.linhaPainel(depois, ctxPainel).erro;
           if (erroLinha) return { status: 400, erro: erroLinha };
@@ -95,7 +95,11 @@ module.exports = (app) => ({
               WHERE id = $1`,
             [pedido.id, resultado.situacao, uid, ...campos.map(c => resultado.campos[c])]);
         }
-        const painel = await Painel.sincronizarPainel(db, pedido.id);
+        // Assumir/tomar não mexe no painel (ver exigeLinhaPainel): só lê a linha atual.
+        const painel = acao === 'assumir'
+          ? ((await q(db, `SELECT id AS venda_id, situacao_fin FROM tab_ciosp_venda WHERE pedido_id = $1`, [pedido.id]))[0]
+            || { venda_id: null, situacao_fin: null })
+          : await Painel.sincronizarPainel(db, pedido.id);
         return { pedido, resultado, painel, mudou };
       });
 

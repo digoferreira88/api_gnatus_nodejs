@@ -3,6 +3,7 @@
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19004, 19005, 0]);
 const { trim, N } = require('../../services/ciospDocs');
+const F = require('../../services/ciospFluxo');
 
 module.exports = (app) => ({
   verb: 'get',
@@ -20,6 +21,9 @@ module.exports = (app) => ({
     if (trim(req.query.meus) === '1' && user?.id) {
       cond.push('p.vendedor_id = @vend'); p.vend = Number(user.id);
     }
+    // Só o app (19005): apenas os próprios pedidos, com ou sem "meus".
+    const so = await F.escopoVendedor(app, user?.ID ?? user?.id);
+    if (so) { cond.push('p.vendedor_id = @so'); p.so = so; }
     const busca = trim(req.query.busca);
     if (busca) {
       cond.push(`(p.cliente_nome ILIKE @busca OR p.cliente_doc LIKE @buscaDoc OR CAST(p.numero AS TEXT) = @buscaNum)`);

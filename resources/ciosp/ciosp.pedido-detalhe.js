@@ -48,6 +48,8 @@ module.exports = (app) => ({
       if (!r.length) return res.status(404).json({ message: 'Pedido não encontrado.' });
 
       const pedido = r[0];
+      const so = await F.escopoVendedor(app, uid);
+      if (so && Number(pedido.vendedor_id) !== so) return res.status(404).json({ message: 'Pedido não encontrado.' });
       const itens = await D.lerItens(Pg, 'tab_ciosp_pedido_item', 'pedido_id', pedido.id);
       const historico = await Pg.connectAndQuery(
         `SELECT l.acao, l.de, l.para, l.usuario_id, u.nome AS usuario_nome, l.em

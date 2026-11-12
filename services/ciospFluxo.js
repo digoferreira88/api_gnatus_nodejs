@@ -112,6 +112,9 @@ function aplicarAcao(pedido, acao, dados = {}, ctx = {}) {
         conferido_por: null, conferido_em: null,
         credito_status: null, credito_parecer: null, credito_por: null, credito_em: null,
         contrato_assinado_por: null, contrato_assinado_em: null,
+        // O cliente pode mudar na correção (CPF errado é motivo comum de devolução):
+        // o nº fica, mas precisa ser conferido de novo contra o Protheus.
+        protheus_conferido: null, protheus_conferido_em: null,
         adm_responsavel: null, adm_assumiu_em: null
       }, { acao: 'devolveu', para: motivo });
     }
@@ -205,6 +208,13 @@ async function temPerm(app, userId, perms) {
   return r.length > 0;
 }
 
+// Quem só tem o app do estande (19005) — vendedor ou revenda — vê e mexe apenas nos
+// PRÓPRIOS pedidos. A equipe interna (19001 a 19004, ou admin) vê todos, como a
+// retaguarda da spec (seção 9). Devolve o id do vendedor a filtrar, ou null.
+async function escopoVendedor(app, userId) {
+  return (await temPerm(app, userId, [19001, 19002, 19003, 19004])) ? null : Number(userId);
+}
+
 // Forma de pagamento escolhida no documento: tem que existir e ser da mesma edição.
 // Devolve { forma } (null quando não escolhida) ou { erro }.
 async function lerForma(app, id, edicao) {
@@ -243,5 +253,5 @@ async function conferirNumeroProtheus(app, numero, doc) {
 module.exports = {
   SITUACOES, ACOES_ADM, ROTULO,
   podeEditar, validarEnvio, pendenciasFinalizar, aplicarAcao,
-  temPerm, conferirNumeroProtheus, lerForma, tabelaComissao
+  temPerm, escopoVendedor, conferirNumeroProtheus, lerForma, tabelaComissao
 };

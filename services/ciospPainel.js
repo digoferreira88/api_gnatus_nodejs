@@ -99,6 +99,13 @@ async function contextoPainel(db, pedido) {
   return { membro, gerenteNome, forma, itens };
 }
 
+// A linha do painel precisa fechar depois da ação? Sim quando o pedido fica conferido
+// ou finalizado — exceto "assumir": tomar o pedido não muda nada do que vai para o
+// painel, e não pode ser barrado por uma linha que só o novo responsável vai poder
+// ajustar (ex.: vendedor que saiu da equipe do evento).
+const exigeLinhaPainel = (acao, situacao) =>
+  acao !== 'assumir' && ['conferido', 'finalizado'].includes(situacao);
+
 const COLUNAS = ['edicao', 'categoria', 'cliente', 'cpf_cnpj', 'data_venda', 'vendedor', 'uf', 'pagto_princ',
   'pagto_compl', 'financiadora', 'situacao_fin', 'gerente', 'origem', 'equipe', 'valor', 'tabela',
   'equipamentos', 'observacao', 'pedido_id'];
@@ -135,4 +142,4 @@ async function sincronizarPainel(db, pedidoId) {
   return { venda_id: vendaId, situacao_fin: l.situacao_fin };
 }
 
-module.exports = { dataBrasil, resumoItens, linhaPainel, contextoPainel, sincronizarPainel };
+module.exports = { dataBrasil, resumoItens, linhaPainel, contextoPainel, sincronizarPainel, exigeLinhaPainel };
