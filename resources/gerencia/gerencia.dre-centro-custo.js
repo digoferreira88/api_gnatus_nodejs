@@ -32,6 +32,16 @@
 // "SALARIOS – PRESTADORES DE SERVICO") sem itens/lancamentos/fornecedor — o gestor ve
 // quanto custa, nao quem nem quanto cada um. Contas com o mesmo rotulo somam juntas.
 // A visao completa (10001/0) nao muda.
+//
+// SO NF, FT E FOLHA; CREDITO FORA (12/11/2026, pedido do usuario). No razao entram
+// apenas os DEBITOS de tres origens — ver SQL_FILTRO_ORIGEM_RAZAO. Ficam de fora movimento
+// bancario (juros/tarifas/IOF, LP 562), juros/multa/desconto na baixa (LP 530),
+// amortizacoes/rateios manuais (lote 000001) e requisicoes (MATA330). TODO o lado
+// credito saiu (estornos, creditos de PIS/COFINS, rendimentos, creditos da folha),
+// e nao so o PIS/COFINS de 21/08. No mes em aberto, pedidos e titulos FT tambem passaram
+// a exigir conta classe 4 (C7_CONTA / E2_CONTAD). Medicao jan–set/26: tira R$ 0,4–1,25 mi/mes (ex.
+// 202609: R$ 3,60 mi -> 3,08 mi = NF 1,56 + FT 1,13 + folha 0,40). No mes em aberto
+// os titulos diretos ficam so os de tipo FT (os TX sairam), pela mesma regra.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([10001, 10003]);
 
@@ -45,6 +55,20 @@ const toN = (v) => Number(v || 0);
 // zerando o mes; fechados (so classe 4, desde 21/08) tem 1.481–1.878 (ago–set/26).
 // 500 e o mesmo corte do DRE Contabil.
 const MIN_LINHAS_RAZAO = 500;
+
+// Origens do razao que entram na visao (so lado DEBITO), pelo lote padrao do Protheus:
+//   NF    = lote 008810 (Compras: NF de entrada — CTBANFE e o lancamento manual no lote)
+//   FT    = lote 008850, LP 510 (inclusao de titulo a pagar) com E2_TIPO 'FT'. O tipo
+//           sai da CT2_KEY (E2_FILIAL 2 + PREFIXO 3 + NUM 9 + PARCELA 2 -> TIPO na pos. 17)
+//   FOLHA = lote 008890 (GPE)
+// A deteccao de mes fechado (linhasRazaoPorMes) continua contando todo o razao classe 4:
+// ela responde "o mes ja foi contabilizado?", nao "o que entra no valor".
+const SQL_ORIGEM_RAZAO = `CASE WHEN RTRIM(CT2_LOTE) = '008810' THEN 'NF'
+            WHEN RTRIM(CT2_LOTE) = '008890' THEN 'FOLHA'
+            ELSE 'FT' END`;
+const SQL_FILTRO_ORIGEM_RAZAO = `(RTRIM(CT2_LOTE) IN ('008810', '008890')
+              OR (RTRIM(CT2_LOTE) = '008850' AND RTRIM(CT2_LP) = '510'
+                  AND RTRIM(SUBSTRING(CT2_KEY, 17, 3)) = 'FT'))`;
 
 // Descobre, por mes do range, quantas linhas de despesa COM centro de custo ja
 // existem no razao. Vazio/baixo = mes ainda nao contabilizado.
@@ -187,26 +211,15 @@ module.exports = (app) => ({
                    RTRIM(CT2_DEBITO) conta, RTRIM(ISNULL(CT2_DOC, '')) doc,
                    RTRIM(ISNULL(CT2_LOTE, '')) lote, RTRIM(ISNULL(CT2_HIST, '')) hist,
                    RTRIM(ISNULL(CT2_CODFOR, '')) fornece, RTRIM(ISNULL(CT2_MANUAL, '')) manual,
+                   ${SQL_ORIGEM_RAZAO} origem,
                    CT2_VALOR valor
               FROM CT2010 WITH (NOLOCK)
              WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
                AND LEFT(RTRIM(CT2_DEBITO), 1) = '4'
                AND RTRIM(ISNULL(CT2_CCD, '')) <> ''
-            UNION ALL
-            SELECT LEFT(CT2_DATA, 6) ymes, CT2_DATA data, RTRIM(CT2_CCC) cc,
-                   RTRIM(CT2_CREDIT) conta, RTRIM(ISNULL(CT2_DOC, '')) doc,
-                   RTRIM(ISNULL(CT2_LOTE, '')) lote, RTRIM(ISNULL(CT2_HIST, '')) hist,
-                   RTRIM(ISNULL(CT2_CODFOR, '')) fornece, RTRIM(ISNULL(CT2_MANUAL, '')) manual,
-                   -CT2_VALOR valor
-              FROM CT2010 WITH (NOLOCK)
-             WHERE D_E_L_E_T_ <> '*' AND CT2_DATA BETWEEN @inicio AND @fim
-               AND LEFT(RTRIM(CT2_CREDIT), 1) = '4'
-               AND RTRIM(ISNULL(CT2_CCC, '')) <> ''
-               -- Ponto 3 (controladoria): desconsiderar CREDITOS de PIS/COFINS, que
-               -- reduziam a despesa (hist "CRED COFINS/PIS S/NF ..."). Sem eles a
-               -- despesa fica BRUTA. So no lado credito (e onde o credito tributario cai).
-               AND NOT (UPPER(RTRIM(ISNULL(CT2_HIST, ''))) LIKE '%CRED%COFINS%'
-                     OR UPPER(RTRIM(ISNULL(CT2_HIST, ''))) LIKE '%CRED%PIS%')`, { inicio, fim });
+               AND ${SQL_FILTRO_ORIGEM_RAZAO}
+            -- Lado CREDITO inteiro fora (12/11/2026): estornos, creditos de PIS/COFINS,
+            -- rendimentos e creditos da folha nao reduzem mais a despesa do CC.`, { inicio, fim });
           candidatos.forEach(([ymes]) => mesesFechadosOk.add(ymes));
 
           // Nome do fornecedor do lancamento (CT2_CODFOR), quando houver.
@@ -253,6 +266,10 @@ module.exports = (app) => ({
            AND sc7.C7_FILIAL = '01'
            AND sc7.C7_EMISSAO BETWEEN @inicio AND @fim
            AND RTRIM(sc7.C7_CC) <> ''
+           -- So conta de DESPESA (classe 4), como no razao (12/11/2026). Pedido em conta
+           -- 1x (estoque/MP/imobilizado) nunca vira despesa e inflava o mes aberto:
+           -- out/26 tinha R$ 4,76 mi assim contra R$ 1,06 mi em conta 4.
+           AND LEFT(RTRIM(sc7.C7_CONTA), 1) = '4'
       `, { inicio, fim });
 
       // 2) Numeros de pedido (PC) e SC de origem -> consulta SCR pra achar REJEITADOS
@@ -413,7 +430,13 @@ module.exports = (app) => ({
               ON sa2.A2_COD = e2.E2_FORNECE AND sa2.A2_LOJA = e2.E2_LOJA AND sa2.D_E_L_E_T_ <> '*'
            WHERE e2.D_E_L_E_T_ <> '*' AND e2.E2_FILIAL = '01'
              AND RTRIM(e2.E2_ORIGEM) = 'FINA050'
-             AND RTRIM(e2.E2_TIPO) NOT IN ('PA', 'RA')
+             -- So FT (12/11/2026): mesma regra do razao (NF, FT e folha). Antes era
+             -- NOT IN ('PA','RA') e entravam os TX (impostos lancados no financeiro).
+             AND RTRIM(e2.E2_TIPO) = 'FT'
+             -- So conta de DESPESA (classe 4), como no razao (que so pega LP 510 debitando
+             -- conta 4). Os FT em conta 2x sao parcela de emprestimo/financiamento a banco
+             -- (out/26: R$ 1,18 mi) e os 1x sao adiantamento/ativo — nenhum e despesa do CC.
+             AND LEFT(RTRIM(ISNULL(e2.E2_CONTAD, '')), 1) = '4'
              AND e2.E2_VALOR > 0
              AND e2.E2_EMISSAO BETWEEN @inicio AND @fim`, { inicio, fim });
 
@@ -521,9 +544,9 @@ module.exports = (app) => ({
       // reclassificacao e ajuste manual. **Somente contas 4* (DESPESA)** com CC
       // preenchido — a classe 5 (CUSTOS: salarios/INSS/FGTS/materiais indiretos da
       // producao) foi EXCLUIDA por decisao da controladoria (21/08/2026): a analise
-      // de despesa e so pela conta 4. O lado CREDITO entra negativo (estorno reduz a
-      // despesa), mas os CREDITOS de PIS/COFINS foram excluidos na query (despesa
-      // bruta). Arvore: CC -> conta contabil -> historico -> lancamento.
+      // de despesa e so pela conta 4. Desde 12/11/2026 so DEBITOS de NF, FT e folha
+      // (ver SQL_FILTRO_ORIGEM_RAZAO); o lado credito nao entra mais.
+      // Arvore: CC -> conta contabil -> historico -> lancamento.
       let qtdLancRazao = 0, valorRazao = 0, valorAjusteManual = 0;
       for (const r of razaoRows) {
         const ymes = trim(r.ymes);
@@ -564,6 +587,7 @@ module.exports = (app) => ({
           fornece: forn, forneceLoja: '',
           moeda: 1, taxa: 0, valorMoeda: valor, valor,
           razao: true,
+          origem: trim(r.origem),   // NF | FT | FOLHA
           historico: hist,
           ajusteManual: manual   // lancado a mao pela contabilidade no fechamento
         });
@@ -812,6 +836,7 @@ module.exports = (app) => ({
                       valor: d.valor,
                       direto: d.direto === true,   // título FINA050 (sem pedido)
                       razao: d.razao === true,          // lançamento do razão (mês contabilizado)
+                      origem: d.origem || '',           // NF | FT | FOLHA (só razão)
                       historico: d.historico || '',     // CT2_HIST (só razão)
                       ajusteManual: d.ajusteManual === true,   // CT2_MANUAL='1'
                       // Contexto do pedido completo (evita ler o valor do item como
