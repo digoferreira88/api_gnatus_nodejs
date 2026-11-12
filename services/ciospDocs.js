@@ -17,6 +17,9 @@ const n2 = (v) => Math.round(N(v) * 100) / 100;
 // o valor da venda é acrescido de 3%.
 const UF_AMAZONIA = new Set(['AC', 'AM', 'RO', 'RR', 'PA', 'AP']);
 const PRAZO_EXPEDICAO_PADRAO = 30;   // cláusula 3: prazo em branco = 30 dias
+const DESCRICAO_MAX = 2000;
+
+const inteiroOuNulo = (v) => { const n = Number(v); return v != null && v !== '' && Number.isInteger(n) && n > 0 ? n : null; };
 
 const ehAmazonia = (uf) => UF_AMAZONIA.has(trim(uf).toUpperCase());
 const acrescimoAmazonia = (uf, total) => (ehAmazonia(uf) ? n2(N(total) * 0.03) : 0);
@@ -42,7 +45,8 @@ function normalizarItem(it, i) {
     item: {
       seq: i + 1,
       produto: trim(it.produto).slice(0, 15) || null,
-      descricao: trim(it.descricao).slice(0, 200),
+      // Os consultórios da Tabela Comercial têm descrição de mais de 700 caracteres.
+      descricao: trim(it.descricao).slice(0, DESCRICAO_MAX),
       modelo: trim(it.modelo).slice(0, 80) || null,
       quantidade,
       preco_tabela: precoTabela,
@@ -52,7 +56,14 @@ function normalizarItem(it, i) {
       cor_estofamento: trim(it.cor_estofamento || it.corEstofamento).slice(0, 40) || null,
       voltagem: trim(it.voltagem).slice(0, 20) || null,
       prazo_fabric: it.prazo_fabric != null ? Math.round(N(it.prazo_fabric)) : null,
-      familia: trim(it.familia).slice(0, 40) || null
+      familia: trim(it.familia).slice(0, 40) || null,
+      // Linha da Tabela Comercial e promoção: é o que o ADM confere (promoção
+      // condicional) e o que mede o desconto por linha.
+      preco_id: inteiroOuNulo(it.preco_id),
+      promocao_pct: it.promocao_pct == null || it.promocao_pct === '' || !Number.isFinite(Number(it.promocao_pct))
+        ? null : n2(it.promocao_pct),
+      promocao_texto: trim(it.promocao_texto).slice(0, 300) || null,
+      promocao_condicional: it.promocao_condicional === true || it.promocao_condicional === 'true'
     }
   };
 }
@@ -89,17 +100,21 @@ async function gravarItens(Pg, tabela, campoFk, id, itens) {
     await Pg.connectAndQuery(
       `INSERT INTO ${tabela}
         (${campoFk}, seq, produto, descricao, modelo, quantidade, preco_tabela, preco,
-         desconto_pct, total, cor_estofamento, voltagem, prazo_fabric, familia)
+         desconto_pct, total, cor_estofamento, voltagem, prazo_fabric, familia,
+         preco_id, promocao_pct, promocao_texto, promocao_condicional)
        VALUES (@id, @seq, @produto, @descricao, @modelo, @quantidade, @preco_tabela, @preco,
-               @desconto_pct, @total, @cor_estofamento, @voltagem, @prazo_fabric, @familia)`,
-      { id, ...it });
+               @desconto_pct, @total, @cor_estofamento, @voltagem, @prazo_fabric, @familia,
+               @preco_id, @promocao_pct, @promocao_texto, @promocao_condicional)`,
+      { id, preco_id: null, promocao_pct: null, promocao_texto: null, ...it,
+        promocao_condicional: !!it.promocao_condicional });
   }
 }
 
 async function lerItens(Pg, tabela, campoFk, id) {
   return Pg.connectAndQuery(
     `SELECT seq, produto, descricao, modelo, quantidade, preco_tabela, preco,
-            desconto_pct, total, cor_estofamento, voltagem, prazo_fabric, familia
+            desconto_pct, total, cor_estofamento, voltagem, prazo_fabric, familia,
+            preco_id, promocao_pct, promocao_texto, promocao_condicional
        FROM ${tabela} WHERE ${campoFk} = @id ORDER BY seq`, { id });
 }
 
