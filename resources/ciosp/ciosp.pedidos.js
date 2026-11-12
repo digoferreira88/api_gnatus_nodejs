@@ -1,6 +1,7 @@
 // GET /ciosp/pedidos?edicao=&situacao=&busca=&meus=1 — lista de pedidos. Perm 19001.
+// Situações: rascunho | enviado | em_analise | devolvido | conferido | finalizado | cancelado.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19004, 19005, 0]);
 const { trim, N } = require('../../services/ciospDocs');
 
 module.exports = (app) => ({
@@ -33,6 +34,7 @@ module.exports = (app) => ({
                 p.vendedor_nome, p.situacao, p.cond_pagto, p.parcelas, p.valor_parcela,
                 p.total, p.total_prazo, p.acrescimo_norte, p.prazo_entrega,
                 p.protheus_pedido, p.criado_em, p.atualizado_em,
+                p.enviado_em, p.devolvido_motivo, p.adm_responsavel,
                 o.numero AS orcamento_numero, o.uuid AS orcamento_uuid,
                 (SELECT COUNT(*) FROM tab_ciosp_pedido_item i WHERE i.pedido_id = p.id) itens
            FROM tab_ciosp_pedido p

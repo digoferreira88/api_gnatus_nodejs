@@ -12,6 +12,7 @@ const Auditoria = require('../../services/auditoria');
 const D = require('../../services/ciospDocs');
 
 const SITUACOES = ['rascunho', 'enviado', 'negociando', 'aprovado', 'convertido', 'perdido', 'expirado'];
+const F = require('../../services/ciospFluxo');
 const EH_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 module.exports = (app) => ({
@@ -66,6 +67,8 @@ module.exports = (app) => ({
       vendedor_id: user?.id ? Number(user.id) : null,
       vendedor_nome: D.trim(b.vendedor_nome || user?.nome).slice(0, 120) || null,
       tabela_preco: D.trim(b.tabela_preco).slice(0, 10) || null,
+      tabela_comissao: F.tabelaComissao(b.tabela_comissao),
+      forma_pagto_id: b.forma_pagto_id == null || b.forma_pagto_id === '' ? null : Number(b.forma_pagto_id),
       validade: D.trim(b.validade) || null,
       situacao,
       motivo_perda: D.trim(b.motivo_perda).slice(0, 200) || null,
@@ -78,6 +81,9 @@ module.exports = (app) => ({
     };
 
     try {
+      const fp = await F.lerForma(app, campos.forma_pagto_id, campos.edicao);
+      if (fp.erro) return res.status(400).json({ message: fp.erro });
+
       const existe = await Pg.connectAndQuery(
         `SELECT id, numero, situacao FROM tab_ciosp_orcamento WHERE uuid = @uuid`, { uuid });
 
@@ -96,7 +102,8 @@ module.exports = (app) => ({
              cliente_fone=@cliente_fone, cliente_celular=@cliente_celular, cliente_cep=@cliente_cep,
              cliente_endereco=@cliente_endereco, cliente_bairro=@cliente_bairro,
              cliente_cidade=@cliente_cidade, cliente_uf=@cliente_uf,
-             tabela_preco=@tabela_preco, validade=@validade, situacao=@situacao,
+             tabela_preco=@tabela_preco, tabela_comissao=@tabela_comissao, forma_pagto_id=@forma_pagto_id,
+             validade=@validade, situacao=@situacao,
              motivo_perda=@motivo_perda, observacao=@observacao,
              total_bruto=@total_bruto, total_desconto=@total_desconto, total=@total,
              atualizado_em=NOW(), atualizado_por=@por
@@ -109,13 +116,15 @@ module.exports = (app) => ({
             (uuid, edicao, numero, cliente_doc, cliente_nome, cliente_cod, cliente_loja,
              cliente_tipo, cliente_cro, cliente_email, cliente_email2, cliente_fone,
              cliente_celular, cliente_cep, cliente_endereco, cliente_bairro, cliente_cidade,
-             cliente_uf, vendedor_id, vendedor_nome, tabela_preco, validade, situacao,
+             cliente_uf, vendedor_id, vendedor_nome, tabela_preco, tabela_comissao, forma_pagto_id,
+             validade, situacao,
              motivo_perda, observacao, total_bruto, total_desconto, total, dispositivo,
              criado_por, atualizado_por)
            VALUES (@uuid,@edicao,@numero,@cliente_doc,@cliente_nome,@cliente_cod,@cliente_loja,
                    @cliente_tipo,@cliente_cro,@cliente_email,@cliente_email2,@cliente_fone,
                    @cliente_celular,@cliente_cep,@cliente_endereco,@cliente_bairro,@cliente_cidade,
-                   @cliente_uf,@vendedor_id,@vendedor_nome,@tabela_preco,@validade,@situacao,
+                   @cliente_uf,@vendedor_id,@vendedor_nome,@tabela_preco,@tabela_comissao,@forma_pagto_id,
+                   @validade,@situacao,
                    @motivo_perda,@observacao,@total_bruto,@total_desconto,@total,@dispositivo,
                    @por,@por)
            RETURNING id`, { ...campos, numero });

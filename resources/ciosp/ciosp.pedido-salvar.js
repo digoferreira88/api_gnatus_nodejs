@@ -11,12 +11,16 @@
 // Os totais são sempre recalculados no servidor a partir dos itens e das regras do
 // contrato (3% da região amazônica, frete por conta do comprador). O que o aparelho
 // manda de total é conferência, não verdade.
+//
+// A situação NÃO vem do corpo: quem muda situação são as ações (enviar ao ADM e o
+// checklist do ADM). Aqui só se edita enquanto o pedido é do vendedor (rascunho,
+// devolvido) ou, em análise, pelo ADM — fora disso, 409.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 19004, 19005, 0]);
 const Auditoria = require('../../services/auditoria');
 const D = require('../../services/ciospDocs');
+const F = require('../../services/ciospFluxo');
 
-const SITUACOES = ['rascunho', 'conferido', 'impresso', 'cancelado', 'integrado'];
 const EH_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 module.exports = (app) => ({
@@ -33,10 +37,6 @@ module.exports = (app) => ({
     if (!EH_UUID.test(uuid)) {
       return res.status(400).json({ message: 'O pedido precisa de um uuid válido gerado no aparelho.' });
     }
-    const situacao = D.trim(b.situacao) || 'rascunho';
-    if (!SITUACOES.includes(situacao)) {
-      return res.status(400).json({ message: `Situação inválida: ${situacao}.` });
-    }
     const doc = D.soDig(b.cliente_doc);
     if (!D.documentoValido(doc)) {
       return res.status(400).json({ message: 'O pedido exige CPF ou CNPJ do cliente.' });
@@ -47,14 +47,23 @@ module.exports = (app) => ({
 
     try {
       const existe = await Pg.connectAndQuery(
-        `SELECT id, numero, situacao, orcamento_id FROM tab_ciosp_pedido WHERE uuid = @uuid`, { uuid });
+        `SELECT id, numero, situacao, orcamento_id, edicao FROM tab_ciosp_pedido WHERE uuid = @uuid`, { uuid });
       const atual = existe[0] || null;
+      const situacao = atual ? atual.situacao : 'rascunho';
 
-      if (atual && ['integrado', 'cancelado'].includes(atual.situacao) && situacao !== atual.situacao) {
-        return res.status(409).json({
-          message: `Pedido ${atual.situacao}: não pode mais ser alterado.`
-        });
+      if (atual) {
+        const ehAdm = atual.situacao === 'em_analise'
+          && await F.temPerm(app, user?.ID ?? user?.id, [19004]);
+        if (!F.podeEditar(atual.situacao, ehAdm)) {
+          return res.status(409).json({
+            message: `Pedido ${F.ROTULO[atual.situacao] || atual.situacao}: só o ADM altera.`
+          });
+        }
       }
+      const edicao = atual ? atual.edicao : (D.trim(b.edicao) || 'CIOSP 2026');
+      const fp = await F.lerForma(app, b.forma_pagto_id, edicao);
+      if (fp.erro) return res.status(400).json({ message: fp.erro });
+      const origem = ['Presencial', 'Online'].includes(D.trim(b.origem)) ? D.trim(b.origem) : 'Presencial';
 
       // Itens: no pedido que veio de orçamento eles já existem; só troca se vierem.
       let itens = null, totais = null;
@@ -83,7 +92,7 @@ module.exports = (app) => ({
 
       const campos = {
         uuid,
-        edicao: D.trim(b.edicao) || 'CIOSP 2026',
+        edicao,
         cliente_doc: doc,
         cliente_nome: D.trim(b.cliente_nome).slice(0, 200),
         cliente_cod: D.trim(b.cliente_cod).slice(0, 10) || null,
@@ -103,7 +112,11 @@ module.exports = (app) => ({
         vendedor_nome: D.trim(b.vendedor_nome || user?.nome).slice(0, 120) || null,
         revenda: D.trim(b.revenda).slice(0, 120) || null,
         tabela_preco: D.trim(b.tabela_preco).slice(0, 10) || null,
-        cond_pagto: D.trim(b.cond_pagto).slice(0, 60) || null,
+        // Com forma escolhida, o contrato imprime o nome dela.
+        cond_pagto: (fp.forma ? fp.forma.nome : D.trim(b.cond_pagto)).slice(0, 60) || null,
+        tabela_comissao: F.tabelaComissao(b.tabela_comissao),
+        forma_pagto_id: fp.forma ? fp.forma.id : null,
+        origem,
         parcelas: parcelas || null,
         valor_parcela: parcelas > 0 ? D.n2(totalPrazo / parcelas) : null,
         frete_tipo: freteTipo, frete_valor: freteValor, acrescimo_norte: acrescimo,
@@ -117,7 +130,6 @@ module.exports = (app) => ({
         // Cláusula 3: sem prazo preenchido, o contrato considera 30 dias.
         prazo_entrega: D.N(b.prazo_entrega) > 0 ? Math.round(D.N(b.prazo_entrega)) : D.PRAZO_EXPEDICAO_PADRAO,
         situacao,
-        motivo_cancel: D.trim(b.motivo_cancel).slice(0, 200) || null,
         observacao: D.trim(b.observacao) || null,
         total_bruto: totais.total_bruto, total_desconto: totais.total_desconto,
         total: totalAVista, total_prazo: totalPrazo,
@@ -136,13 +148,13 @@ module.exports = (app) => ({
              cliente_fone=@cliente_fone, cliente_celular=@cliente_celular, cliente_cep=@cliente_cep,
              cliente_endereco=@cliente_endereco, cliente_bairro=@cliente_bairro,
              cliente_cidade=@cliente_cidade, cliente_uf=@cliente_uf, revenda=@revenda,
-             cond_pagto=@cond_pagto, parcelas=@parcelas, valor_parcela=@valor_parcela,
+             cond_pagto=@cond_pagto, tabela_comissao=@tabela_comissao, forma_pagto_id=@forma_pagto_id,
+             origem=@origem, parcelas=@parcelas, valor_parcela=@valor_parcela,
              frete_tipo=@frete_tipo, frete_valor=@frete_valor, acrescimo_norte=@acrescimo_norte,
              entrega_parcial=@entrega_parcial, entrega_cep=@entrega_cep,
              entrega_endereco=@entrega_endereco, entrega_bairro=@entrega_bairro,
              entrega_cidade=@entrega_cidade, entrega_uf=@entrega_uf, entrega_celular=@entrega_celular,
-             prazo_entrega=@prazo_entrega, situacao=@situacao, motivo_cancel=@motivo_cancel,
-             observacao=@observacao, total_bruto=@total_bruto, total_desconto=@total_desconto,
+             prazo_entrega=@prazo_entrega, observacao=@observacao, total_bruto=@total_bruto, total_desconto=@total_desconto,
              total=@total, total_prazo=@total_prazo, atualizado_em=NOW(), atualizado_por=@por
            WHERE id=@id`, { ...campos, id });
       } else {
@@ -153,18 +165,20 @@ module.exports = (app) => ({
             (uuid, edicao, numero, cliente_doc, cliente_nome, cliente_cod, cliente_loja,
              cliente_rg_ie, cliente_resp, cliente_cro, cliente_email, cliente_email2, cliente_fone,
              cliente_celular, cliente_cep, cliente_endereco, cliente_bairro, cliente_cidade, cliente_uf,
-             vendedor_id, vendedor_nome, revenda, tabela_preco, cond_pagto, parcelas, valor_parcela,
+             vendedor_id, vendedor_nome, revenda, tabela_preco, cond_pagto, tabela_comissao, forma_pagto_id,
+             origem, parcelas, valor_parcela,
              frete_tipo, frete_valor, acrescimo_norte, entrega_parcial, entrega_cep, entrega_endereco,
              entrega_bairro, entrega_cidade, entrega_uf, entrega_celular, prazo_entrega, situacao,
-             motivo_cancel, observacao, total_bruto, total_desconto, total, total_prazo, dispositivo,
+             observacao, total_bruto, total_desconto, total, total_prazo, dispositivo,
              criado_por, atualizado_por)
            VALUES (@uuid,@edicao,@numero,@cliente_doc,@cliente_nome,@cliente_cod,@cliente_loja,
                    @cliente_rg_ie,@cliente_resp,@cliente_cro,@cliente_email,@cliente_email2,@cliente_fone,
                    @cliente_celular,@cliente_cep,@cliente_endereco,@cliente_bairro,@cliente_cidade,@cliente_uf,
-                   @por,@vendedor_nome,@revenda,@tabela_preco,@cond_pagto,@parcelas,@valor_parcela,
+                   @por,@vendedor_nome,@revenda,@tabela_preco,@cond_pagto,@tabela_comissao,@forma_pagto_id,
+                   @origem,@parcelas,@valor_parcela,
                    @frete_tipo,@frete_valor,@acrescimo_norte,@entrega_parcial,@entrega_cep,@entrega_endereco,
                    @entrega_bairro,@entrega_cidade,@entrega_uf,@entrega_celular,@prazo_entrega,@situacao,
-                   @motivo_cancel,@observacao,@total_bruto,@total_desconto,@total,@total_prazo,@dispositivo,
+                   @observacao,@total_bruto,@total_desconto,@total,@total_prazo,@dispositivo,
                    @por,@por)
            RETURNING id`, { ...campos, numero });
         id = ins[0].id;
@@ -172,8 +186,8 @@ module.exports = (app) => ({
 
       if (itens) await D.gravarItens(Pg, 'tab_ciosp_pedido_item', 'pedido_id', id, itens);
       await D.registrar(Pg, 'pedido', id,
-        novo ? 'criou' : (situacao !== atual?.situacao ? situacao : 'alterou'),
-        { de: atual?.situacao, para: `${situacao} · R$ ${totalAVista}`, usuarioId: campos.por });
+        novo ? 'criou' : 'alterou',
+        { para: `${situacao} · R$ ${totalAVista}`, usuarioId: campos.por });
 
       Auditoria.registrar(app, {
         modulo: 'CIOSP', submodulo: 'Pedido', acao: novo ? 'CRIAR' : 'EDITAR', severidade: 'INFO',

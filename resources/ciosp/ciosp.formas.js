@@ -1,6 +1,7 @@
-// GET /ciosp/formas?edicao= — formas de pagamento da edição. Perm 19004/19001.
+// GET /ciosp/formas?edicao= — formas de pagamento da edição. Leitura: quem monta
+// orçamento e pedido também precisa (19001/19002/19005); gravar continua 19004.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19004, 19001, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19004, 19001, 19002, 19005, 0]);
 
 module.exports = (app) => ({
   verb: 'get',

@@ -241,3 +241,23 @@ test('temPerm consulta as permissões do usuário, incluindo admin', async () =>
   assert.match(sql, /tab_intranet_usr_permissoes/);
   assert.match(sql, /IN \(0,/);
 });
+
+// ---------------------------------------------------------------- forma e tabela do documento
+
+const appForma = (linhas) => ({ services: { Pg: { connectAndQuery: async () => linhas } } });
+
+test('lerForma: sem forma, forma da edição, de outra edição, id inválido', async () => {
+  assert.deepEqual(await F.lerForma(appForma([]), null, 'CIOSP 2027'), { forma: null });
+  const f = { id: 4, edicao: 'CIOSP 2027', nome: 'Unicred' };
+  assert.deepEqual(await F.lerForma(appForma([f]), 4, 'CIOSP 2027'), { forma: f });
+  assert.match((await F.lerForma(appForma([f]), 4, 'CIOSP 2026')).erro, /edição/);
+  assert.match((await F.lerForma(appForma([]), 99, 'CIOSP 2027')).erro, /edição/);
+  assert.match((await F.lerForma(appForma([]), 'abc', 'CIOSP 2027')).erro, /inválida/);
+});
+
+test('tabelaComissao só aceita 13 ou 11', () => {
+  assert.equal(F.tabelaComissao('13'), 13);
+  assert.equal(F.tabelaComissao(11), 11);
+  assert.equal(F.tabelaComissao(12), null);
+  assert.equal(F.tabelaComissao(null), null);
+});

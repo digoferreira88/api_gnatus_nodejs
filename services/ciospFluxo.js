@@ -204,6 +204,21 @@ async function temPerm(app, userId, perms) {
   return r.length > 0;
 }
 
+// Forma de pagamento escolhida no documento: tem que existir e ser da mesma edição.
+// Devolve { forma } (null quando não escolhida) ou { erro }.
+async function lerForma(app, id, edicao) {
+  if (id == null || id === '') return { forma: null };
+  const n = Number(id);
+  if (!Number.isInteger(n) || n <= 0) return { erro: 'Forma de pagamento inválida.' };
+  const r = await app.services.Pg.connectAndQuery(
+    `SELECT id, edicao, nome, coluna_base, desconto_pct, parcelas_max, exige_credito, financeira, ativo
+       FROM tab_ciosp_forma_pagto WHERE id = @id`, { id: n });
+  if (!r.length || r[0].edicao !== edicao) return { erro: 'Esta forma de pagamento não é da edição do documento.' };
+  return { forma: r[0] };
+}
+
+const tabelaComissao = (v) => ([13, 11].includes(Number(v)) ? Number(v) : null);
+
 // Confere o nº que o ADM digitou contra o SC5 do Protheus (somente leitura). Nunca
 // bloqueia: o resultado vira aviso no checklist.
 async function conferirNumeroProtheus(app, numero, doc) {
@@ -227,5 +242,5 @@ async function conferirNumeroProtheus(app, numero, doc) {
 module.exports = {
   SITUACOES, ACOES_ADM, ROTULO,
   podeEditar, validarEnvio, pendenciasFinalizar, aplicarAcao,
-  temPerm, conferirNumeroProtheus
+  temPerm, conferirNumeroProtheus, lerForma, tabelaComissao
 };

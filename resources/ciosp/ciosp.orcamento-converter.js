@@ -14,6 +14,7 @@
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 0]);
 const Auditoria = require('../../services/auditoria');
 const D = require('../../services/ciospDocs');
+const F = require('../../services/ciospFluxo');
 
 const EH_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -56,6 +57,12 @@ module.exports = (app) => ({
       const itens = await D.lerItens(Pg, 'tab_ciosp_orcamento_item', 'orcamento_id', o.id);
       if (!itens.length) return res.status(400).json({ message: 'Orçamento sem itens.' });
 
+      // Tabela (comissão) e forma de pagamento escolhidas no orçamento seguem para o
+      // pedido; o corpo da conversão pode trocar.
+      const tabelaComissao = F.tabelaComissao(b.tabela_comissao ?? o.tabela_comissao);
+      const fp = await F.lerForma(app, b.forma_pagto_id ?? o.forma_pagto_id, o.edicao);
+      if (fp.erro) return res.status(400).json({ message: fp.erro });
+
       const ufEntrega = D.trim(b.entrega_uf || o.cliente_uf).toUpperCase() || null;
       const acrescimo = D.acrescimoAmazonia(ufEntrega, o.total);
       const freteValor = D.n2(b.frete_valor);
@@ -79,7 +86,9 @@ module.exports = (app) => ({
         vendedor_id: o.vendedor_id, vendedor_nome: o.vendedor_nome,
         revenda: D.trim(b.revenda).slice(0, 120) || null,
         tabela_preco: o.tabela_preco,
-        cond_pagto: D.trim(b.cond_pagto).slice(0, 60) || null,
+        cond_pagto: (fp.forma ? fp.forma.nome : D.trim(b.cond_pagto)).slice(0, 60) || null,
+        tabela_comissao: tabelaComissao,
+        forma_pagto_id: fp.forma ? fp.forma.id : null,
         parcelas: parcelas || null,
         valor_parcela: parcelas > 0 ? D.n2(totalPrazo / parcelas) : null,
         frete_tipo: freteTipo, frete_valor: freteValor, acrescimo_norte: acrescimo,
@@ -105,14 +114,16 @@ module.exports = (app) => ({
           (uuid, edicao, numero, orcamento_id, cliente_doc, cliente_nome, cliente_cod, cliente_loja,
            cliente_rg_ie, cliente_resp, cliente_cro, cliente_email, cliente_email2, cliente_fone,
            cliente_celular, cliente_cep, cliente_endereco, cliente_bairro, cliente_cidade, cliente_uf,
-           vendedor_id, vendedor_nome, revenda, tabela_preco, cond_pagto, parcelas, valor_parcela,
+           vendedor_id, vendedor_nome, revenda, tabela_preco, cond_pagto, tabela_comissao, forma_pagto_id,
+           parcelas, valor_parcela,
            frete_tipo, frete_valor, acrescimo_norte, entrega_parcial, entrega_cep, entrega_endereco,
            entrega_bairro, entrega_cidade, entrega_uf, entrega_celular, prazo_entrega, observacao,
            total_bruto, total_desconto, total, total_prazo, dispositivo, criado_por, atualizado_por)
          VALUES (@uuid,@edicao,@numero,@orcamento_id,@cliente_doc,@cliente_nome,@cliente_cod,@cliente_loja,
                  @cliente_rg_ie,@cliente_resp,@cliente_cro,@cliente_email,@cliente_email2,@cliente_fone,
                  @cliente_celular,@cliente_cep,@cliente_endereco,@cliente_bairro,@cliente_cidade,@cliente_uf,
-                 @vendedor_id,@vendedor_nome,@revenda,@tabela_preco,@cond_pagto,@parcelas,@valor_parcela,
+                 @vendedor_id,@vendedor_nome,@revenda,@tabela_preco,@cond_pagto,@tabela_comissao,@forma_pagto_id,
+                 @parcelas,@valor_parcela,
                  @frete_tipo,@frete_valor,@acrescimo_norte,@entrega_parcial,@entrega_cep,@entrega_endereco,
                  @entrega_bairro,@entrega_cidade,@entrega_uf,@entrega_celular,@prazo_entrega,@observacao,
                  @total_bruto,@total_desconto,@total,@total_prazo,@dispositivo,@por,@por)
