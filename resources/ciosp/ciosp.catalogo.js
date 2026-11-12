@@ -1,19 +1,21 @@
-// GET /ciosp/catalogo?busca=autoclave&edicao=&tabela=&limite=30 — produtos com preço
-// para montar orçamento e pedido no estande. Perm 19001.
-//
-// O talão de papel tem o produto escrito à mão ("G1 SF + Kit BV"), e é por isso que
-// hoje não existe análise por produto. Aqui o vendedor busca e o preço vem pronto.
+// GET /ciosp/catalogo?busca=autoclave&edicao=&secao=&tabela=&limite=30 — produtos com preço
+// para montar orçamento e pedido no estande. Perm 19001/19002/19004/19005.
 //
 // DUAS FONTES, nesta ordem:
-//   1) a lista de preço do evento (tab_ciosp_preco) — é onde mora o equipamento.
-//      Medido em 09/10: nenhuma tabela do ERP precifica equipamento acabado (a maior
-//      delas para em R$ 19,5 mil e o ticket médio do CIOSP é R$ 20 mil).
-//   2) a tabela de preço do ERP (DA1) — boa para peça de reposição e assistência
-//      técnica, que é a maior parte dela.
+//   1) a Tabela Comercial do evento (tab_ciosp_preco, migration 149) — uma linha por linha
+//      impressa, com os 4 preços (13%/11% × 10x/6x), promoção e foto. O mesmo produto pode
+//      aparecer em várias seções com preços diferentes (avulso × upgrade): cada linha volta.
+//   2) a tabela de preço do ERP (DA1) — boa para peça de reposição e assistência técnica.
 // O resultado vem com `fonte` para a tela deixar isso claro para o vendedor.
+//
+// Compatibilidade com a tela de orçamento atual: `codigo` é o B1_COD (vazio quando a linha
+// não tem produto único no Protheus), `preco` = 13% 10x, `desconto_max` = % da promoção e
+// `familia` = seção. O código como impresso vem em `codigo_impresso`.
 
-const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 0]);
+const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19004, 19005, 0]);
 const { trim, N, n2 } = require('../../services/ciospDocs');
+const Edicao = require('../../services/ciospEdicao');
+const Midia = require('../../services/ciospMidia');
 
 module.exports = (app) => ({
   verb: 'get',
@@ -23,36 +25,42 @@ module.exports = (app) => ({
   handler: async (req, res) => {
     const { Pg, Protheus } = app.services;
     const busca = trim(req.query.busca);
-    const edicao = trim(req.query.edicao) || 'CIOSP 2026';
+    const secao = trim(req.query.secao);
     const tabela = trim(req.query.tabela) || process.env.CIOSP_TABELA_PADRAO || '009';
     const limite = Math.min(Math.max(Number(req.query.limite) || 30, 1), 100);
 
-    if (busca.length < 2) {
+    if (busca.length < 2 && !secao) {
       return res.status(400).json({ message: 'Digite ao menos 2 caracteres para buscar.' });
     }
 
     try {
-      // 1) lista do evento
-      let doEvento = [];
-      try {
-        doEvento = await Pg.connectAndQuery(
-          `SELECT produto, descricao, modelo, familia, preco, preco_prazo, desconto_max, prazo_fabric
+      const edicao = trim(req.query.edicao) || (await Edicao.getConfig(app)).edicao || 'CIOSP 2026';
+
+      // 1) Tabela Comercial do evento
+      const [doEvento, fotos] = await Promise.all([
+        Pg.connectAndQuery(
+          `SELECT id, secao, grupo, tes, codigo, produto, descricao,
+                  preco_13_10x, preco_13_6x, preco_11_10x, preco_11_6x,
+                  promocao_texto, promocao_pct, promocao_condicional, prazo_fabric, foto_id
              FROM tab_ciosp_preco
-            WHERE edicao = @edicao AND ativo = true
-              AND (descricao ILIKE @q OR COALESCE(produto, '') ILIKE @qCod OR COALESCE(modelo, '') ILIKE @q)
-            ORDER BY descricao
-            LIMIT ${limite}`, { edicao, q: `%${busca}%`, qCod: `${busca}%` });
-      } catch (e) {
-        // Antes da migration 129 a tabela não existe — o catálogo segue pelo ERP.
-        console.warn('ciosp/catalogo (lista do evento):', e.message);
-      }
+            WHERE edicao = @edicao AND ativo
+              AND (@secao = '' OR secao = @secao)
+              AND (@busca = '' OR descricao ILIKE @q OR COALESCE(codigo, '') ILIKE @qCod
+                   OR COALESCE(produto, '') ILIKE @qCod OR COALESCE(grupo, '') ILIKE @q)
+            ORDER BY ordem
+            LIMIT ${limite}`, { edicao, secao, busca, q: `%${busca}%`, qCod: `${busca}%` }),
+        Pg.connectAndQuery(
+          `SELECT id, codigo, arquivo FROM tab_ciosp_midia WHERE edicao = @edicao AND ativo AND tipo = 'foto'`, { edicao })
+      ]);
+      const arquivoDaFoto = new Map(fotos.map(f => [f.id, f.arquivo]));
+      const fotosPorCodigo = fotos.filter(f => f.codigo);
 
       const jaTem = new Set(doEvento.map(r => trim(r.produto)).filter(Boolean));
       const resto = Math.max(0, limite - doEvento.length);
 
-      // 2) tabela do ERP
+      // 2) tabela do ERP — só quando há texto de busca (filtrar por seção é só do evento)
       let doErp = [];
-      if (resto > 0) {
+      if (resto > 0 && busca.length >= 2) {
         doErp = await Protheus.connectAndQuery(`
           SELECT TOP ${resto}
                  RTRIM(b1.B1_COD) codigo, RTRIM(b1.B1_DESC) descricao,
@@ -74,14 +82,24 @@ module.exports = (app) => ({
       }
 
       const itens = [
-        ...doEvento.map(r => ({
-          fonte: 'evento',
-          codigo: trim(r.produto), descricao: trim(r.descricao), modelo: trim(r.modelo),
-          familia: trim(r.familia), unidade: '', grupo: '',
-          preco: n2(r.preco), preco_prazo: r.preco_prazo != null ? n2(r.preco_prazo) : null,
-          desconto_max: n2(r.desconto_max), prazo_fabric: r.prazo_fabric,
-          sem_preco: false
-        })),
+        ...doEvento.map(r => {
+          const fotoId = Midia.fotoDaLinha(r, fotosPorCodigo);
+          const arquivo = fotoId ? arquivoDaFoto.get(fotoId) : null;
+          const p = (v) => (v == null ? null : n2(v));
+          return {
+            fonte: 'evento', id: r.id,
+            codigo: trim(r.produto), codigo_impresso: trim(r.codigo), produto: trim(r.produto) || null,
+            descricao: trim(r.descricao), modelo: '', secao: r.secao, grupo: r.grupo, tes: r.tes,
+            familia: trim(r.secao), unidade: '',
+            precos: { '13_10x': p(r.preco_13_10x), '13_6x': p(r.preco_13_6x), '11_10x': p(r.preco_11_10x), '11_6x': p(r.preco_11_6x) },
+            preco: p(r.preco_13_10x), preco_prazo: null,
+            desconto_max: p(r.promocao_pct) || 0,
+            promocao_texto: r.promocao_texto, promocao_pct: p(r.promocao_pct), promocao_condicional: !!r.promocao_condicional,
+            prazo_fabric: r.prazo_fabric,
+            foto_url: arquivo ? `/api/ciosp/midia-arquivo/${arquivo}` : null,
+            sem_preco: false
+          };
+        }),
         ...doErp
           .filter(r => !jaTem.has(trim(r.codigo)))
           .map(r => ({
