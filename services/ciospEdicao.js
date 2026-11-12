@@ -92,8 +92,28 @@ async function getConfig(app, edicao) {
 const COLS_PRECO = [
   'edicao', 'ordem', 'secao', 'grupo', 'tes', 'codigo', 'produto', 'descricao',
   'preco_13_10x', 'preco_13_6x', 'preco_11_10x', 'preco_11_6x',
-  'promocao_texto', 'promocao_pct', 'promocao_condicional', 'prazo_fabric', 'importacao_id'
+  'promocao_texto', 'promocao_pct', 'promocao_condicional', 'prazo_fabric', 'importacao_id', 'foto_id'
 ];
+
+// A foto ligada a uma LINHA (consultórios sem código) mora em tab_ciosp_preco.foto_id.
+// Reimportar cria linhas novas; a foto passa para a linha nova com a mesma seção, código
+// e descrição. As que não acharem par voltam em `perdidas`, para a tela avisar.
+const chaveLinha = (l) => [l.secao, l.codigo, l.descricao]
+  .map(v => String(v == null ? '' : v).trim().replace(/\s+/g, ' ').toUpperCase()).join('|');
+
+function herdarFotos(novas, antigas) {
+  const porChave = new Map((antigas || []).filter(a => a.foto_id).map(a => [chaveLinha(a), a]));
+  const usadas = new Set();
+  const linhas = novas.map(l => {
+    const k = chaveLinha(l);
+    const a = porChave.get(k);
+    if (a) usadas.add(k);
+    return { ...l, foto_id: a ? a.foto_id : null };
+  });
+  const perdidas = [...porChave.entries()].filter(([k]) => !usadas.has(k))
+    .map(([, a]) => `${a.secao || '—'} · ${String(a.descricao).slice(0, 60)}`);
+  return { linhas, mantidas: usadas.size, perdidas };
+}
 
 // Troca a tabela inteira da edição numa transação: quem consulta o catálogo durante a
 // importação vê a tabela velha inteira ou a nova inteira, nunca metade.
@@ -106,15 +126,20 @@ async function importarTabela(app, { edicao, linhas, arquivo, usuarioId, produto
        VALUES ($1, $2, $3, $4, $5) RETURNING id`,
       [edicao, arquivo ? String(arquivo).slice(0, 200) : null, linhas.length, comProduto, usuarioId || null]);
 
+    const antigas = await q(client,
+      `SELECT secao, codigo, descricao, foto_id FROM tab_ciosp_preco
+        WHERE edicao = $1 AND ativo AND foto_id IS NOT NULL`, [edicao]);
+    const fotos = herdarFotos(linhas, antigas);
+
     await q(client, `UPDATE tab_ciosp_preco SET ativo = false WHERE edicao = $1 AND ativo`, [edicao]);
 
-    for (let i = 0; i < linhas.length; i += 200) {
-      const lote = linhas.slice(i, i + 200);
+    for (let i = 0; i < fotos.linhas.length; i += 200) {
+      const lote = fotos.linhas.slice(i, i + 200);
       const valores = [];
       const tuplas = lote.map((l, j) => {
         const v = [edicao, l.ordem, l.secao, l.grupo, l.tes, l.codigo, mapa.get(codigoUnico(l.codigo)) || null,
           l.descricao, l.preco_13_10x, l.preco_13_6x, l.preco_11_10x, l.preco_11_6x,
-          l.promocao_texto, l.promocao_pct, !!l.promocao_condicional, l.prazo_fabric, imp.id];
+          l.promocao_texto, l.promocao_pct, !!l.promocao_condicional, l.prazo_fabric, imp.id, l.foto_id];
         valores.push(...v);
         return `(${v.map((_, k) => `$${j * COLS_PRECO.length + k + 1}`).join(',')})`;
       });
@@ -122,7 +147,7 @@ async function importarTabela(app, { edicao, linhas, arquivo, usuarioId, produto
     }
 
     await tocarVersao(client, edicao);
-    return { importacaoId: imp.id, linhas: linhas.length, comProduto };
+    return { importacaoId: imp.id, linhas: linhas.length, comProduto, fotosMantidas: fotos.mantidas, fotosPerdidas: fotos.perdidas };
   });
 }
 
@@ -162,7 +187,11 @@ function validarForma(b) {
   };
 }
 
+// Só semeia edição SEM nenhuma forma: semear sempre recriaria a forma que o comercial
+// excluiu ou renomeou a cada vez que alguém salva a configuração.
 async function semearFormas(db, edicao) {
+  const [{ n }] = await q(db, `SELECT COUNT(*)::int AS n FROM tab_ciosp_forma_pagto WHERE edicao = $1`, [edicao]);
+  if (Number(n) > 0) return;
   for (const f of FORMAS_PADRAO) {
     await q(db,
       `INSERT INTO tab_ciosp_forma_pagto (edicao, ordem, nome, coluna_base, desconto_pct, parcelas_max)
@@ -200,7 +229,7 @@ function validarMembro(b) {
 }
 
 module.exports = {
-  codigoUnico, candidatosB1, resolverProdutos,
+  codigoUnico, candidatosB1, resolverProdutos, herdarFotos,
   tocarVersao, getConfig, importarTabela,
   FORMAS_PADRAO, validarForma, semearFormas,
   CATEGORIAS, validarMembro,

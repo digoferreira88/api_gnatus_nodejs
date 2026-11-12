@@ -132,3 +132,22 @@ test('linhas idênticas em seções diferentes entram as duas; linha vazia é ig
   assert.equal(r.linhas.length, 2);
   assert.deepEqual(r.linhas.map(l => l.ordem), [2, 4]);
 });
+
+test('"10%" digitado no Excel (0,1 com formato de porcentagem) vira 10', async () => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Tabela');
+  ws.addRow(T.COLUNAS);
+  ws.addRow(T.COLUNAS.map(c => (c in ok ? ok[c] : null)));
+  const col = T.COLUNAS.indexOf('Promoção (%)') + 1;
+  ws.getRow(2).getCell(col).value = 0.1;
+  ws.getRow(2).getCell(col).numFmt = '0%';
+  const r = await T.lerPlanilha(Buffer.from(await wb.xlsx.writeBuffer()));
+  assert.deepEqual(r.erros, []);
+  assert.equal(r.linhas[0].promocao_pct, 10);
+});
+
+test('percentual de promoção entre 0 e 1 sem formato de % gera aviso', async () => {
+  const r = await T.lerPlanilha(await planilha([{ ...ok, 'Promoção (%)': 0.15 }]));
+  assert.equal(r.erros.length, 0);
+  assert.ok(r.avisos.some(a => /Promoção \(%\)/.test(a.msg)));
+});

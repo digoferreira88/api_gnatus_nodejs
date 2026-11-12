@@ -76,3 +76,15 @@ test('hashAprovacao não depende da ordem dos itens e muda com 1 centavo', () =>
   assert.notEqual(P.hashAprovacao(a), P.hashAprovacao({ ...a, tabela: '11' }));
   assert.match(P.hashAprovacao(a), /^[a-f0-9]{64}$/);
 });
+
+test('exigeAprovacao trata preço ausente ou inválido como fora da regra', () => {
+  assert.equal(P.exigeAprovacao([{ linha: filme, preco: null }], '13', cartao10x, semLivre), true);
+  assert.equal(P.exigeAprovacao([{ linha: filme, preco: 'abc' }], '13', cartao10x, semLivre), true);
+});
+
+test('desconto livre nunca passa de 100% (preço mínimo nunca negativo)', () => {
+  const promo100 = { ...filme, promocao_pct: 100 };
+  assert.equal(P.descontoLivrePct(promo100, { desconto_livre_pct: 99 }), 100);
+  assert.equal(P.precoMinimo(promo100, '13', cartao10x, { desconto_livre_pct: 99 }), 0);
+  assert.equal(P.exigeAprovacao([{ linha: promo100, preco: -1 }], '13', cartao10x, { desconto_livre_pct: 99 }), true);
+});

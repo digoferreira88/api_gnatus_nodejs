@@ -86,7 +86,12 @@ async function lerPlanilha(buffer) {
   for (let r = linhaCab + 1; r <= ws.rowCount; r++) {
     const row = ws.getRow(r);
     const bruto = {};
-    for (const [campo, col] of Object.entries(colDe)) bruto[campo] = row.getCell(col).value;
+    const formato = {};
+    for (const [campo, col] of Object.entries(colDe)) {
+      const cell = row.getCell(col);
+      bruto[campo] = cell.value;
+      formato[campo] = cell.numFmt || '';
+    }
     if (Object.values(bruto).every(v => texto(v) === '')) continue;   // linha vazia
 
     const errosAntes = erros.length;
@@ -114,7 +119,12 @@ async function lerPlanilha(buffer) {
     }
 
     l.promocao_texto = opc('promocao_texto');
-    const pct = lerPercentual(bruto.promocao_pct);
+    let pct = lerPercentual(bruto.promocao_pct);
+    // "10%" digitado no Excel vira o número 0,1 com formato de porcentagem.
+    if (pct !== null && !Number.isNaN(pct) && typeof valorCelula(bruto.promocao_pct) === 'number'
+        && formato.promocao_pct.includes('%')) {
+      pct = Math.round(pct * 10000) / 100;
+    }
     if (pct !== null && (Number.isNaN(pct) || pct < 0 || pct > 100)) {
       erro('Promoção (%) deve estar entre 0 e 100.');
       l.promocao_pct = null;
@@ -135,6 +145,9 @@ async function lerPlanilha(buffer) {
     }
     if (l.preco_11_10x > l.preco_13_10x || l.preco_11_6x > l.preco_13_6x) {
       avisos.push({ linha: r, msg: 'Tabela 11% mais cara que a tabela 13%.' });
+    }
+    if (l.promocao_pct > 0 && l.promocao_pct < 1) {
+      avisos.push({ linha: r, msg: `Promoção (%) = ${l.promocao_pct}: menos de 1% de desconto. Se a intenção era ${Math.round(l.promocao_pct * 100)}%, digite ${Math.round(l.promocao_pct * 100)}.` });
     }
     linhas.push(l);
   }

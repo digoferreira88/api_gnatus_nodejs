@@ -104,3 +104,44 @@ test('q usa o pool da aplicação mesmo quando o app (Express) tem .query', asyn
   const client = { query: async () => ({ rows: ['client'] }) };
   assert.deepEqual(await E.q(client, 'SELECT 1'), ['client']);
 });
+
+// Client falso: responde COUNT(*) com `formas` e registra os INSERTs.
+function clienteFalso(formas) {
+  const inserts = [];
+  return {
+    inserts,
+    query: async (sql, p) => {
+      if (/count\(\*\)/i.test(sql)) return { rows: [{ n: formas }] };
+      if (/insert into tab_ciosp_forma_pagto/i.test(sql)) inserts.push(p[2]);
+      return { rows: [] };
+    }
+  };
+}
+
+test('semearFormas cria as 4 formas quando a edição não tem nenhuma', async () => {
+  const c = clienteFalso(0);
+  await E.semearFormas(c, 'CIOSP 2027');
+  assert.deepEqual(c.inserts, ['Cartão até 10x', 'Cartão até 6x', 'Pix — 10%', 'Pix — 6%']);
+});
+
+test('semearFormas não recria forma excluída ou renomeada (edição já tem formas)', async () => {
+  const c = clienteFalso(3);
+  await E.semearFormas(c, 'CIOSP 2027');
+  assert.deepEqual(c.inserts, []);
+});
+
+test('herdarFotos mantém a foto da linha que continua na tabela nova', () => {
+  const antigas = [
+    { secao: 'CONSULTÓRIOS GNATUS G1', codigo: null, descricao: 'CONS GNATUS G1 FIT SF', foto_id: 7 },
+    { secao: 'CADEIRA HOF', codigo: null, descricao: 'CADEIRA CLINICA HOF', foto_id: 8 }
+  ];
+  const novas = [
+    { secao: 'CONSULTÓRIOS GNATUS G1', codigo: '', descricao: ' cons gnatus g1 fit sf ', ordem: 2 },
+    { secao: 'CONSULTÓRIOS GNATUS G2', codigo: '', descricao: 'CONS GNATUS G2 H', ordem: 3 }
+  ];
+  const r = E.herdarFotos(novas, antigas);
+  assert.equal(r.linhas[0].foto_id, 7);
+  assert.equal(r.linhas[1].foto_id, null);
+  assert.equal(r.mantidas, 1);
+  assert.deepEqual(r.perdidas, ['CADEIRA HOF · CADEIRA CLINICA HOF']);
+});

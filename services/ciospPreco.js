@@ -61,8 +61,11 @@ function precoBase(linha, tabela, forma) {
   return reais(centavosBase(linha, tabela, forma));
 }
 
+// Promoção + desconto livre, limitado a 0–100%: acima de 100 o preço mínimo ficaria
+// negativo e nada pediria aprovação.
 function descontoLivrePct(linha, config) {
-  return (Number(linha.promocao_pct) || 0) + (Number(config.desconto_livre_pct) || 0);
+  const soma = (Number(linha.promocao_pct) || 0) + (Number(config.desconto_livre_pct) || 0);
+  return Math.min(100, Math.max(0, soma));
 }
 
 function centavosMinimo(linha, tabela, forma, config) {
@@ -73,9 +76,12 @@ function precoMinimo(linha, tabela, forma, config) {
   return reais(centavosMinimo(linha, tabela, forma, config));
 }
 
+// Preço ausente ou inválido também exige aprovação: na dúvida, o gerente vê.
 function exigeAprovacao(itens, tabela, forma, config) {
-  return (itens || []).some(({ linha, preco }) =>
-    paraCentavos(preco) < centavosMinimo(linha, tabela, forma, config));
+  return (itens || []).some(({ linha, preco }) => {
+    const c = paraCentavos(preco);
+    return Number.isNaN(c) || c < centavosMinimo(linha, tabela, forma, config);
+  });
 }
 
 // A aprovação do gerente vale para estes preços exatos: mudou item, quantidade, preço,
