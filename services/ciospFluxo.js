@@ -7,7 +7,7 @@
 // endpoint, numa transação. Assim cada regra do fluxo tem teste sem banco.
 
 const { documentoValido, soDig, trim } = require('./ciospDocs');
-const { CATEGORIAS } = require('./ciospEdicao');
+const { CATEGORIAS, getConfig } = require('./ciospEdicao');
 
 const SITUACOES = ['rascunho', 'enviado', 'em_analise', 'devolvido', 'conferido', 'finalizado', 'cancelado'];
 const ACOES_ADM = ['assumir', 'devolver', 'conferir', 'credito', 'contrato', 'protheus', 'ajustar', 'finalizar', 'cancelar'];
@@ -215,6 +215,20 @@ async function escopoVendedor(app, userId) {
   return (await temPerm(app, userId, [19001, 19002, 19003, 19004])) ? null : Number(userId);
 }
 
+// Quem só tem o app (19005) precisa estar ATIVO na equipe da edição ativa em toda rota,
+// não só no pacote: revenda desligada no meio do evento perde o acesso na hora (inclusive
+// à busca de clientes do Protheus). Equipe interna passa. Devolve a mensagem de bloqueio
+// ou null.
+async function exigeEquipeAtiva(app, userId) {
+  if (!(await escopoVendedor(app, userId))) return null;
+  const cfg = await getConfig(app);
+  if (!cfg.edicao || !cfg.ativa) return 'Nenhuma edição do CIOSP está ativa.';
+  const r = await app.services.Pg.connectAndQuery(
+    `SELECT 1 FROM tab_ciosp_equipe WHERE edicao = @edicao AND usuario_id = @id AND ativo LIMIT 1`,
+    { edicao: cfg.edicao, id: Number(userId) });
+  return r.length ? null : `Você não está mais na equipe do ${cfg.edicao}. Fale com a gestão do evento.`;
+}
+
 // Forma de pagamento escolhida no documento: tem que existir e ser da mesma edição.
 // Devolve { forma } (null quando não escolhida) ou { erro }.
 async function lerForma(app, id, edicao) {
@@ -253,5 +267,5 @@ async function conferirNumeroProtheus(app, numero, doc) {
 module.exports = {
   SITUACOES, ACOES_ADM, ROTULO,
   podeEditar, validarEnvio, pendenciasFinalizar, aplicarAcao,
-  temPerm, escopoVendedor, conferirNumeroProtheus, lerForma, tabelaComissao
+  temPerm, escopoVendedor, exigeEquipeAtiva, conferirNumeroProtheus, lerForma, tabelaComissao
 };

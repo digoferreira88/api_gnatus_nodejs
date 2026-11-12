@@ -6,6 +6,7 @@
 // cai e precisa ser feito de novo (ver ciospOrcamento.estadoDesconto).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const D = require('../../services/ciospDocs');
 const F = require('../../services/ciospFluxo');
 const P = require('../../services/ciospPreco');
@@ -16,7 +17,7 @@ const EH_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 module.exports = (app) => ({
   verb: 'post',
   route: '/orcamentos/:uuid/aprovacao',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

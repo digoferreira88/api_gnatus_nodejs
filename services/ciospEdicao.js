@@ -233,5 +233,6 @@ module.exports = {
   tocarVersao, getConfig, importarTabela,
   FORMAS_PADRAO, validarForma, semearFormas,
   CATEGORIAS, validarMembro,
+  chaveLinha,
   q
 };

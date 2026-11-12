@@ -86,3 +86,35 @@ test('alemDoLivre: quanto o praticado está abaixo do mínimo', () => {
   assert.equal(O.alemDoLivre({ preco: 855 }, LINHA, 13, ctx.forma, ctx.config), 0);
   assert.equal(O.alemDoLivre({ preco: 900 }, LINHA, 13, ctx.forma, ctx.config), 0);
 });
+
+// ---------------------------------------------------------------- reimportação da tabela (revisão final, C1)
+
+const L = (o) => ({ secao: 'CADEIRAS', codigo: '1116', descricao: 'Cadeira G2', preco_13_10x: 1000, preco_13_6x: 950,
+  preco_11_10x: 900, preco_11_6x: 860, promocao_pct: null, ativo: true, ...o });
+
+test('linhasVigentes: linha reimportada aponta para a linha nova (mesma seção, código e descrição)', () => {
+  const antiga = L({ id: 10, ativo: false });
+  const nova = L({ id: 20, preco_13_10x: 1100 });
+  const outra = L({ id: 21, descricao: 'Refletor' });
+  const ativa = L({ id: 30, codigo: '9442', descricao: 'Mocho' });
+  const m = O.linhasVigentes([antiga, ativa], [nova, outra, ativa]);
+  assert.equal(m.get(10).id, 20);
+  assert.equal(m.get(30).id, 30);
+  const sumiu = O.linhasVigentes([L({ id: 11, ativo: false, descricao: 'Saiu da tabela' })], [nova]);
+  assert.equal(sumiu.has(11), false);
+});
+
+test('recalcularItens: item de linha reimportada vai para o preço e o id novos, com a diferença', () => {
+  const nova = { ...LINHA, id: 20, preco_13_10x: 1100 };
+  const r = O.recalcularItens([item({ preco_id: 10, preco_tabela: 900, preco: 900 })], { ...ctx, linhas: new Map([[10, nova]]) });
+  assert.equal(r.itens[0].preco_id, 20);
+  assert.equal(r.itens[0].preco_tabela, 990);
+  assert.equal(r.itens[0].preco, 990);
+  assert.deepEqual(r.diferencas, [{ seq: 1, descricao: 'Cadeira', de: 900, para: 990 }]);
+});
+
+test('recalcularItens: item cuja linha saiu da tabela é avisado e vai ao gerente', () => {
+  const r = O.recalcularItens([item({ preco_id: 999 })], ctx);
+  assert.equal(r.exige, true);
+  assert.deepEqual(r.diferencas, [{ seq: 1, descricao: 'Cadeira', de: 900, para: null }]);
+});

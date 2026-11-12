@@ -4,15 +4,19 @@
 // aprovação esperam por ele. Perm 19005.
 //
 // `agora` vem do RELÓGIO DO BANCO — o app guarda e manda de volta como `desde`, sem
-// depender do relógio do celular.
+// depender do relógio do celular. Vai 2 minutos para trás: uma gravação que pegou o
+// NOW() antes desta leitura mas confirmou depois (ex.: a aprovação do gerente) não pode
+// ficar de fora para sempre. Repetir o que já veio é inofensivo (o app só mescla).
+// `versao_pacote` deixa o app saber, a cada sincronização, que o catálogo mudou.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const E = require('../../services/ciospEdicao');
 
 module.exports = (app) => ({
   verb: 'get',
   route: '/estande/meus',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const user = req.user && req.user[0];
@@ -26,7 +30,7 @@ module.exports = (app) => ({
       const ed = cfg.edicao;
 
       const [agora, orcamentos, pedidos, papel] = await Promise.all([
-        E.q(app, `SELECT NOW() AS agora`),
+        E.q(app, `SELECT NOW() - INTERVAL '2 minutes' AS agora`),
         E.q(app,
           `SELECT uuid, numero, situacao, desconto_status, desconto_obs, desconto_solicitado_em, total, atualizado_em
              FROM tab_ciosp_orcamento
@@ -54,6 +58,7 @@ module.exports = (app) => ({
       return res.json({
         agora: agora[0].agora,
         edicao: ed,
+        versao_pacote: cfg.versao_pacote || 'v0',
         orcamentos: orcamentos.map(o => ({ ...o, total: Number(o.total) })),
         pedidos: pedidos.map(p => ({ ...p, total: Number(p.total) })),
         aprovacoes_pendentes: aprovacoesPendentes

@@ -7,6 +7,7 @@
 // da versão pedida: a decisão só vale para ela.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19004, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const F = require('../../services/ciospFluxo');
 const P = require('../../services/ciospPreco');
 const O = require('../../services/ciospOrcamento');
@@ -17,7 +18,7 @@ const n2 = (v) => (v == null ? null : Math.round(Number(v) * 100) / 100);
 module.exports = (app) => ({
   verb: 'get',
   route: '/aprovacoes',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

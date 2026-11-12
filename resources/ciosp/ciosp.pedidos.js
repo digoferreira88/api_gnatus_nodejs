@@ -2,13 +2,14 @@
 // Situações: rascunho | enviado | em_analise | devolvido | conferido | finalizado | cancelado.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19004, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const { trim, N } = require('../../services/ciospDocs');
 const F = require('../../services/ciospFluxo');
 
 module.exports = (app) => ({
   verb: 'get',
   route: '/pedidos',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

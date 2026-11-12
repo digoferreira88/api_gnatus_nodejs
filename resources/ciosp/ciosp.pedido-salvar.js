@@ -17,6 +17,7 @@
 // devolvido) ou, em análise, pelo ADM — fora disso, 409.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 19004, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const Auditoria = require('../../services/auditoria');
 const D = require('../../services/ciospDocs');
 const F = require('../../services/ciospFluxo');
@@ -26,7 +27,7 @@ const EH_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 module.exports = (app) => ({
   verb: 'post',
   route: '/pedidos',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;
@@ -47,10 +48,14 @@ module.exports = (app) => ({
 
     try {
       const existe = await Pg.connectAndQuery(
-        `SELECT id, numero, situacao, orcamento_id, edicao, vendedor_id FROM tab_ciosp_pedido WHERE uuid = @uuid`, { uuid });
+        `SELECT id, numero, situacao, orcamento_id, edicao, vendedor_id, tabela_comissao, forma_pagto_id FROM tab_ciosp_pedido WHERE uuid = @uuid`, { uuid });
       const atual = existe[0] || null;
-      const so = atual ? await F.escopoVendedor(app, user?.ID ?? user?.id) : null;
-      if (so && Number(atual.vendedor_id) !== so) return res.status(404).json({ message: 'Pedido não encontrado.' });
+      const so = await F.escopoVendedor(app, user?.ID ?? user?.id);
+      if (atual && so && Number(atual.vendedor_id) !== so) return res.status(404).json({ message: 'Pedido não encontrado.' });
+      // Quem só tem o app não monta pedido à mão: o pedido nasce da conversão do orçamento
+      // (preço do servidor, desconto aprovado) e os itens, a tabela e a forma vêm de lá.
+      if (so && !atual) return res.status(403).json({ message: 'O pedido nasce da conversão de um orçamento.' });
+      if (so && b.itens != null) return res.status(400).json({ message: 'Os itens do pedido vêm do orçamento.' });
       const situacao = atual ? atual.situacao : 'rascunho';
 
       if (atual) {
@@ -63,7 +68,7 @@ module.exports = (app) => ({
         }
       }
       const edicao = atual ? atual.edicao : (D.trim(b.edicao) || 'CIOSP 2026');
-      const fp = await F.lerForma(app, b.forma_pagto_id, edicao);
+      const fp = await F.lerForma(app, so ? atual.forma_pagto_id : b.forma_pagto_id, edicao);
       if (fp.erro) return res.status(400).json({ message: fp.erro });
       const origem = ['Presencial', 'Online'].includes(D.trim(b.origem)) ? D.trim(b.origem) : 'Presencial';
 
@@ -116,7 +121,7 @@ module.exports = (app) => ({
         tabela_preco: D.trim(b.tabela_preco).slice(0, 10) || null,
         // Com forma escolhida, o contrato imprime o nome dela.
         cond_pagto: (fp.forma ? fp.forma.nome : D.trim(b.cond_pagto)).slice(0, 60) || null,
-        tabela_comissao: F.tabelaComissao(b.tabela_comissao),
+        tabela_comissao: F.tabelaComissao(so ? atual.tabela_comissao : b.tabela_comissao),
         forma_pagto_id: fp.forma ? fp.forma.id : null,
         origem,
         parcelas: parcelas || null,

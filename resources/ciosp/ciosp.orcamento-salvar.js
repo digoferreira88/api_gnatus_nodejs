@@ -17,6 +17,7 @@
 // reenvio — não duplicam itens nem número.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const Auditoria = require('../../services/auditoria');
 const D = require('../../services/ciospDocs');
 const F = require('../../services/ciospFluxo');
@@ -40,7 +41,7 @@ const hojeMais = (dias) => {
 module.exports = (app) => ({
   verb: 'post',
   route: '/orcamentos',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;
@@ -104,10 +105,15 @@ module.exports = (app) => ({
         }
 
         const ids = [...new Set(entrada.map(it => Number(it.preco_id)).filter(n => Number.isInteger(n) && n > 0))];
-        const linhas = new Map();
+        // Inclui linhas já desativadas: depois de uma reimportação o aparelho ainda manda o
+        // id antigo, que vira a linha nova equivalente (ciospOrcamento.linhasVigentes).
+        let linhas = new Map();
         if (ids.length) {
-          const ls = await q(db, `SELECT * FROM tab_ciosp_preco WHERE edicao = $1 AND ativo AND id = ANY($2::int[])`, [edicao, ids]);
-          for (const l of ls) linhas.set(Number(l.id), l);
+          const pedidas = await q(db, `SELECT * FROM tab_ciosp_preco WHERE edicao = $1 AND id = ANY($2::int[])`, [edicao, ids]);
+          const ativas = pedidas.every(l => l.ativo)
+            ? pedidas
+            : await q(db, `SELECT * FROM tab_ciosp_preco WHERE edicao = $1 AND ativo`, [edicao]);
+          linhas = O.linhasVigentes(pedidas, ativas);
         }
         const cfg = edicao === cfgAtiva.edicao ? cfgAtiva : await E.getConfig(app, edicao);
         const rec = O.recalcularItens(entrada, { linhas, tabela, forma: fp.forma || {}, config: cfg });

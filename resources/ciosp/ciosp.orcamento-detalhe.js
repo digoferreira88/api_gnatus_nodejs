@@ -1,13 +1,14 @@
 // GET /ciosp/orcamentos/:uuid — abre um orçamento com itens e trilha. Perm 19001.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const F = require('../../services/ciospFluxo');
 const D = require('../../services/ciospDocs');
 
 module.exports = (app) => ({
   verb: 'get',
   route: '/orcamentos/:uuid',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

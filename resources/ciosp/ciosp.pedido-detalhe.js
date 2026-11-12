@@ -10,6 +10,7 @@
 // que falta para finalizar e a linha do painel (a que existe e a que o pedido gera).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19004, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const D = require('../../services/ciospDocs');
 const F = require('../../services/ciospFluxo');
 const Painel = require('../../services/ciospPainel');
@@ -31,7 +32,7 @@ const somarDiasUteis = (data, dias) => {
 module.exports = (app) => ({
   verb: 'get',
   route: '/pedidos/:uuid',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

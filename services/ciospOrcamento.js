@@ -8,12 +8,27 @@
 //   - alemDoLivre: quanto o preço praticado passou do mínimo, para o gerente decidir.
 
 const P = require('./ciospPreco');
+const { chaveLinha } = require('./ciospEdicao');
 
 const reais = (c) => c / 100;
 
-// Item vindo do aparelho → item com o preço da tabela atual. `linhas` são as linhas
-// ATIVAS da edição, por id. Item sem linha (livre, ou de outra edição) fica como veio
-// e exige o gerente: nenhum preço "de cabeça" passa sem alguém ver.
+// Reimportar a Tabela Comercial cria linhas NOVAS (ids novos) e desativa as antigas —
+// mas o aparelho e os rascunhos guardam o id antigo. Cada id pedido vira a linha VIGENTE:
+// ela mesma se ainda ativa, senão a linha ativa com a mesma seção, código e descrição
+// (a mesma chave que leva as fotos na reimportação). Sem par: saiu da tabela.
+function linhasVigentes(pedidas, ativas) {
+  const porChave = new Map((ativas || []).map(l => [chaveLinha(l), l]));
+  const mapa = new Map();
+  for (const l of pedidas || []) {
+    const vigente = l.ativo ? l : porChave.get(chaveLinha(l));
+    if (vigente) mapa.set(Number(l.id), vigente);
+  }
+  return mapa;
+}
+
+// Item vindo do aparelho → item com o preço da tabela atual. `linhas` é o mapa id pedido
+// → linha vigente (linhasVigentes). Item sem linha (livre, de outra edição ou que saiu da
+// tabela) fica como veio e exige o gerente: nenhum preço "de cabeça" passa sem alguém ver.
 function recalcularItens(itens, { linhas, tabela, forma, config }) {
   const diferencas = [];
   let exige = false;
@@ -23,6 +38,10 @@ function recalcularItens(itens, { linhas, tabela, forma, config }) {
     const linha = it.preco_id != null ? linhas.get(Number(it.preco_id)) : null;
     if (!linha) {
       exige = true;
+      // Tinha linha da tabela e ela saiu (ou é de outra edição): o vendedor precisa saber.
+      if (it.preco_id != null && it.preco_id !== '') {
+        diferencas.push({ seq, descricao: it.descricao, de: Number(it.preco_tabela) || 0, para: null });
+      }
       return { ...it, seq, preco_id: null };
     }
 
@@ -72,4 +91,4 @@ function alemDoLivre(item, linha, tabela, forma, config) {
   return Math.round(((minimo - praticado) / minimo) * 10000) / 100;
 }
 
-module.exports = { recalcularItens, estadoDesconto, alemDoLivre };
+module.exports = { linhasVigentes, recalcularItens, estadoDesconto, alemDoLivre };

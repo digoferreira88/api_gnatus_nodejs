@@ -286,3 +286,21 @@ test('escopoVendedor: só quem tem apenas o app (19005) fica restrito aos própr
   assert.equal(await F.escopoVendedor(app(true), 7), null);
   assert.equal(await F.escopoVendedor(app(false), 7), 7);
 });
+
+// ---------------------------------------------------------------- equipe ativa (revisão final da Entrega 3, I10)
+
+const appEquipe = ({ interno, membro, ativa = true }) => ({
+  services: {
+    Pg: {
+      connectAndQuery: async (sql) => (/usr_permissoes/.test(sql) ? (interno ? [{ ok: 1 }] : []) : (membro ? [{ ok: 1 }] : [])),
+      pool: { query: async () => ({ rows: ativa ? [{ edicao: 'CIOSP 2027', ativa: true, desconto_livre_pct: 0, validade_orcamento_dias: 7 }] : [] }) }
+    }
+  }
+});
+
+test('exigeEquipeAtiva: equipe interna passa; só-app precisa estar ativo na equipe da edição ativa', async () => {
+  assert.equal(await F.exigeEquipeAtiva(appEquipe({ interno: true, membro: false }), 7), null);
+  assert.equal(await F.exigeEquipeAtiva(appEquipe({ interno: false, membro: true }), 7), null);
+  assert.match(await F.exigeEquipeAtiva(appEquipe({ interno: false, membro: false }), 7), /não está .*equipe do CIOSP 2027/);
+  assert.match(await F.exigeEquipeAtiva(appEquipe({ interno: false, membro: true, ativa: false }), 7), /Nenhuma edição/);
+});

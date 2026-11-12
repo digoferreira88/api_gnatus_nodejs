@@ -5,13 +5,14 @@
 // lista é do evento inteiro (quem não tiver 19003 só deve usar com meus=1 na tela).
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const F = require('../../services/ciospFluxo');
 const { trim, N } = require('../../services/ciospDocs');
 
 module.exports = (app) => ({
   verb: 'get',
   route: '/orcamentos',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;

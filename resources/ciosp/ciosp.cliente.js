@@ -8,12 +8,13 @@
 // normal (11% dos casos), não exceção.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19001, 19002, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const { trim, soDig, documentoValido } = require('../../services/ciospDocs');
 
 module.exports = (app) => ({
   verb: 'get',
   route: '/cliente',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Protheus } = app.services;

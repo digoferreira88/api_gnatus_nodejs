@@ -6,6 +6,7 @@
 // Reenviar também tira o ADM anterior — o pedido volta para a fila de quem pegar.
 
 const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([19002, 19005, 0]);
+const equipeAtiva = require('../../middlewares/ciospEquipeAtiva');
 const Auditoria = require('../../services/auditoria');
 const D = require('../../services/ciospDocs');
 const F = require('../../services/ciospFluxo');
@@ -15,7 +16,7 @@ const { q } = require('../../services/ciospEdicao');
 module.exports = (app) => ({
   verb: 'post',
   route: '/pedidos/:uuid/enviar',
-  middlewares: [requirePerm(app)],
+  middlewares: [requirePerm(app), equipeAtiva(app)],
 
   handler: async (req, res) => {
     const { Pg } = app.services;
