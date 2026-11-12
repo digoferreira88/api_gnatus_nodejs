@@ -28,7 +28,8 @@ module.exports = (app) => ({
     const params = { id };
     const map = {
       titulo: 'titulo', descricao: 'descricao', notaMinima: 'nota_minima',
-      tentativasMax: 'tentativas_max', embaralhar: 'embaralhar', ativo: 'ativo'
+      tentativasMax: 'tentativas_max', embaralhar: 'embaralhar', ativo: 'ativo',
+      qtdSorteio: 'qtd_sorteio', embaralharAlternativas: 'embaralhar_alternativas'
     };
     for (const [k, col] of Object.entries(map)) {
       if (k in req.body) {
@@ -36,7 +37,8 @@ module.exports = (app) => ({
         const v = req.body[k];
         if (k === 'notaMinima') params[k] = Number(v);
         else if (k === 'tentativasMax') params[k] = Number(v);
-        else if (k === 'embaralhar' || k === 'ativo') params[k] = !!v;
+        else if (k === 'embaralhar' || k === 'ativo' || k === 'embaralharAlternativas') params[k] = !!v;
+        else if (k === 'qtdSorteio') params[k] = Number(v) > 0 ? Math.floor(Number(v)) : null;
         else params[k] = trim(v);
       }
     }

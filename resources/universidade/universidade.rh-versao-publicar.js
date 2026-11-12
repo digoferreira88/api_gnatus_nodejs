@@ -58,7 +58,7 @@ module.exports = (app) => ({
     await audit(app, req, 'PUBLICAR', 'uni_curso_versao', id,
       `Publicou ${info.revisao} (${info.tipo}) do curso ${info.codigo}, vigente desde ${desde}` +
       (info.anterior ? `; ${info.anterior} ficou obsoleta` : '') +
-      (info.exige_retreinamento ? `; exige retreinamento (${d[0].n} pessoa(s) desatualizada(s))` : ''),
+      (info.exige_retreinamento ? `; exige reciclagem (${d[0].n} pessoa(s) desatualizada(s))` : ''),
       { vigenteDesde: desde, exigeRetreinamento: info.exige_retreinamento });
 
     return res.json({ ok: true, vigenteDesde: desde, anterior: info.anterior, desatualizados: d[0].n });

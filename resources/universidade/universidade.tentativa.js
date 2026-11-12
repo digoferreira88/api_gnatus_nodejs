@@ -1,6 +1,8 @@
 // Detalhe da tentativa apos finalizada — mostra correcao (qual foi minha resposta + qual era a correta).
 // GET /universidade/tentativa/:id
 
+const Quiz = require('./_quiz');
+
 module.exports = (app) => ({
   verb: 'get',
   route: '/tentativa/:id',
@@ -24,33 +26,17 @@ module.exports = (app) => ({
       const tent = t[0];
       if (Number(tent.user_id) !== Number(user.ID)) return res.status(403).json({ message: 'Tentativa de outro usuario.' });
 
-      // Questoes + alternativas (TODAS, com flag correta) + minha resposta
-      const questoes = await Pg.connectAndQuery(`
-        SELECT id, ordem, enunciado, tipo, pontuacao
-          FROM tab_uni_questao WHERE quiz_id = @qid ORDER BY ordem, id`,
-        { qid: tent.quiz_id }
-      );
-      const alternativas = questoes.length ? await Pg.connectAndQuery(`
-        SELECT id, questao_id, ordem, texto, correta
-          FROM tab_uni_alternativa
-         WHERE questao_id IN (${questoes.map((_, i) => `@q${i}`).join(',')})
-         ORDER BY questao_id, ordem, id`,
-        questoes.reduce((acc, q, i) => { acc[`q${i}`] = q.id; return acc; }, {})
-      ) : [];
+      // Questões que a tentativa recebeu (sorteio), com o gabarito + minha resposta
+      const questoes = Quiz.montar(await Quiz.banco(Pg, tent.quiz_id), tent.questoes, true);
       const respostas = await Pg.connectAndQuery(`
         SELECT questao_id, alternativa_id, correta, pontos
           FROM tab_uni_resposta WHERE tentativa_id = @tid`, { tid }
       );
 
-      const altsPorQ = new Map();
-      alternativas.forEach(a => {
-        if (!altsPorQ.has(a.questao_id)) altsPorQ.set(a.questao_id, []);
-        altsPorQ.get(a.questao_id).push(a);
-      });
       const respPorQ = new Map(respostas.map(r => [r.questao_id, r]));
 
       const questoesRev = questoes.map(q => {
-        const alts = altsPorQ.get(q.id) || [];
+        const alts = q.alternativas;
         const r = respPorQ.get(q.id);
         return {
           ...q,
@@ -61,8 +47,9 @@ module.exports = (app) => ({
         };
       });
 
+      const { questoes: _sorteio, ...tentSemSorteio } = tent;
       return res.json({
-        tentativa: tent,
+        tentativa: tentSemSorteio,
         questoes: questoesRev
       });
     } catch (err) {

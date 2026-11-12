@@ -31,6 +31,9 @@ module.exports = (app) => ({
       capaUrl: 'capa_url', cargaHorariaH: 'carga_horaria_h',
       publico: 'publico', ativo: 'ativo'
     };
+    if ('descricao' in req.body && trim(req.body.descricao).length < 10) {
+      return res.status(400).json({ message: 'Preencha a descrição (conteúdo programático) do curso — ela vai no verso do certificado.' });
+    }
     for (const [k, col] of Object.entries(map)) {
       if (k in req.body) {
         const v = req.body[k];

@@ -5,6 +5,8 @@
 // POST /universidade/tentativa/:id/finalizar
 // Body: { respostas: [{ questaoId, alternativaId }] }
 
+const Quiz = require('./_quiz');
+
 module.exports = (app) => ({
   verb: 'post',
   route: '/tentativa/:id/finalizar',
@@ -23,7 +25,7 @@ module.exports = (app) => ({
     try {
       // Valida tentativa: pertence ao user e nao foi finalizada
       const t = await Pg.connectAndQuery(`
-        SELECT t.id, t.matricula_id, t.quiz_id, t.finalizada_em, t.nota, t.aprovado,
+        SELECT t.id, t.matricula_id, t.quiz_id, t.finalizada_em, t.nota, t.aprovado, t.questoes AS sorteio,
                m.user_id, m.curso_id, q.nota_minima
           FROM tab_uni_tentativa t
           INNER JOIN tab_uni_matricula m ON m.id = t.matricula_id
@@ -41,9 +43,10 @@ module.exports = (app) => ({
             COUNT(*) FILTER (WHERE correta = true) AS corretas,
             COUNT(*) AS total,
             SUM(pontos) AS obtidos,
-            (SELECT COALESCE(SUM(pontuacao), 0) FROM tab_uni_questao WHERE quiz_id = @qid) AS maximo
+            (SELECT COALESCE(SUM(qq.pontuacao), 0) FROM tab_uni_questao qq
+              WHERE qq.quiz_id = @qid AND (@todas OR qq.id IN (SELECT questao_id FROM tab_uni_resposta WHERE tentativa_id = @tid))) AS maximo
           FROM tab_uni_resposta WHERE tentativa_id = @tid`,
-          { tid, qid: tent.quiz_id }
+          { tid, qid: tent.quiz_id, todas: !Array.isArray(tent.sorteio) || !tent.sorteio.length }
         );
         const c = cnt[0] || {};
         return res.json({
@@ -59,13 +62,10 @@ module.exports = (app) => ({
         });
       }
 
-      // Pega questoes do quiz com alternativa correta + pontuacao
-      const questoes = await Pg.connectAndQuery(`
-        SELECT q.id, q.pontuacao,
-               (SELECT a.id FROM tab_uni_alternativa a WHERE a.questao_id = q.id AND a.correta = true LIMIT 1) AS alt_correta
-          FROM tab_uni_questao q
-         WHERE q.quiz_id = @qid`, { qid: tent.quiz_id }
-      );
+      // Questões que ESTA tentativa recebeu (sorteio) com a alternativa correta + pontuação.
+      const questoes = Quiz.montar(await Quiz.banco(Pg, tent.quiz_id), tent.sorteio, true).map(q => ({
+        id: q.id, pontuacao: q.pontuacao, alt_correta: (q.alternativas.find(a => a.correta) || {}).id || null
+      }));
 
       const respostasMap = new Map();
       respostas.forEach(r => respostasMap.set(Number(r.questaoId), r.alternativaId != null ? Number(r.alternativaId) : null));
@@ -125,7 +125,8 @@ module.exports = (app) => ({
         total = Number(tAll[0].total || 0);
         conc  = Number(tcAll[0].total || 0);
       }
-      const aulasOk = total > 0 && conc >= total;
+      // Curso sem aula (ex.: presencial com avaliação): conclui só pela avaliação.
+      const aulasOk = total === 0 || conc >= total;
       // Se ja existiu aprovacao previa, mantem aprovado
       const jaAprovouAntes = await Pg.connectAndQuery(`
         SELECT 1 FROM tab_uni_tentativa
@@ -144,9 +145,9 @@ module.exports = (app) => ({
 
       await Pg.connectAndQuery(`
         UPDATE tab_uni_matricula
-           SET percent_progresso = @pct,
-               status = CASE WHEN @conc THEN 'concluido' WHEN @pct > 0 THEN 'em_andamento' ELSE 'matriculado' END,
-               data_conclusao = CASE WHEN @conc AND data_conclusao IS NULL THEN NOW() ELSE data_conclusao END
+           SET percent_progresso = @pct::numeric,
+               status = CASE WHEN @conc::boolean THEN 'concluido' WHEN @pct::numeric > 0 THEN 'em_andamento' ELSE 'matriculado' END,
+               data_conclusao = CASE WHEN @conc::boolean AND data_conclusao IS NULL THEN NOW() ELSE data_conclusao END
          WHERE id = @mid`,
         { pct: Number(pct.toFixed(2)), conc: concluiuTudo, mid: tent.matricula_id }
       );

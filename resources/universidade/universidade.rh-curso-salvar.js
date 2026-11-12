@@ -1,6 +1,8 @@
 // POST /universidade/rh/curso — cria/edita um curso do catálogo.
-// Body: { id?, codigo, titulo, descricao, categoriaId, areaId, formato (P|E|H), validadeMeses,
-//         setorResponsavel, cargaHorariaH, ativo, publico, revisaoInicial? }
+// Body: { id?, codigo, titulo, descricao (conteúdo programático — OBRIGATÓRIO, vai no certificado),
+//         categoriaId, areaId, formato (P|E|H), validadeMeses, setorResponsavel, cargaHorariaH, ativo,
+//         publico, responsavelColaboradorId?, responsavelNome?, ministrante?, tipoTreinamento
+//         (interno|externo), empresaExterna? (obrigatória se externo), revisaoInicial? }
 // Na criação já nasce a 1ª versão como RASCUNHO (o RH preenche o plano de ensino e publica).
 // Curso não se exclui: desativa (ativo=false) e ele sai das trilhas no próximo recálculo.
 // Perm 15004/15003.
@@ -28,12 +30,30 @@ module.exports = (app) => ({
       return res.status(400).json({ message: 'Código obrigatório (até 40 caracteres). Ex.: GNT-RHU.P-R2600-C01.' });
     }
     if (!titulo) return res.status(400).json({ message: 'Informe o título do curso.' });
+    const descricao = txt(b.descricao, 8000);
+    if (!descricao || descricao.length < 10) {
+      return res.status(400).json({ message: 'Preencha o conteúdo programático (descrição) do curso — ele vai no verso do certificado.' });
+    }
+    const tipoTreinamento = b.tipoTreinamento === 'externo' ? 'externo' : 'interno';
+    const empresaExterna = tipoTreinamento === 'externo' ? txt(b.empresaExterna, 160) : null;
+    const ministrante = txt(b.ministrante, 160);
+    if (tipoTreinamento === 'externo' && (!empresaExterna || !ministrante)) {
+      return res.status(400).json({ message: 'Treinamento externo: informe o ministrante e a empresa.' });
+    }
+    let respId = int(b.responsavelColaboradorId) || null;
+    let respNome = txt(b.responsavelNome, 160);
+    if (respId) {
+      const rc = await Pg.connectAndQuery(`SELECT nome FROM tab_uni_colaborador WHERE id = @id`, { id: respId });
+      if (!rc.length) return res.status(400).json({ message: 'Responsável não encontrado no cadastro de colaboradores.' });
+      respNome = rc[0].nome;
+    }
     if (formato && !['P', 'E', 'H'].includes(formato)) return res.status(400).json({ message: 'Formato inválido (P, E ou H).' });
     if (validade != null && (validade < 1 || validade > 240)) return res.status(400).json({ message: 'Validade em meses: de 1 a 240 (vazio = não vence).' });
     if (carga != null && (carga < 0 || carga > 9999)) return res.status(400).json({ message: 'Carga horária inválida.' });
 
     const p = {
-      codigo, titulo, descricao: txt(b.descricao, 8000),
+      codigo, titulo, descricao,
+      respId, respNome, ministrante, tipoTreinamento, empresaExterna,
       cat: int(b.categoriaId) || null, area: int(b.areaId) || null, formato, validade,
       setor: txt(b.setorResponsavel, 120), carga: carga == null ? 1 : carga,
       ativo: b.ativo !== false, publico: !!b.publico
@@ -49,7 +69,9 @@ module.exports = (app) => ({
         await Pg.connectAndQuery(`
           UPDATE tab_uni_curso SET codigo = @codigo, titulo = @titulo, descricao = @descricao, categoria_id = @cat,
                  area_id = @area, formato = @formato, validade_meses = @validade, setor_responsavel = @setor,
-                 carga_horaria_h = @carga, ativo = @ativo, publico = @publico, atualizado_em = NOW()
+                 carga_horaria_h = @carga, ativo = @ativo, publico = @publico,
+                 responsavel_colaborador_id = @respId, responsavel_nome = @respNome, ministrante = @ministrante,
+                 tipo_treinamento = @tipoTreinamento, empresa_externa = @empresaExterna, atualizado_em = NOW()
            WHERE id = @id`, { ...p, id });
       } else {
         const revisao = trim(b.revisaoInicial).toUpperCase() || `R${new Date().getFullYear().toString().slice(2)}00`;
@@ -57,9 +79,11 @@ module.exports = (app) => ({
         cursoId = await Pg.withTransaction(async (cli) => {
           const r = await cli.query(`
             INSERT INTO tab_uni_curso (codigo, titulo, descricao, categoria_id, area_id, formato, validade_meses,
-                                       setor_responsavel, carga_horaria_h, ativo, publico)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-            [p.codigo, p.titulo, p.descricao, p.cat, p.area, p.formato, p.validade, p.setor, p.carga, p.ativo, p.publico]);
+                                       setor_responsavel, carga_horaria_h, ativo, publico,
+                                       responsavel_colaborador_id, responsavel_nome, ministrante, tipo_treinamento, empresa_externa)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+            [p.codigo, p.titulo, p.descricao, p.cat, p.area, p.formato, p.validade, p.setor, p.carga, p.ativo, p.publico,
+             p.respId, p.respNome, p.ministrante, p.tipoTreinamento, p.empresaExterna]);
           const cid = r.rows[0].id;
           await cli.query(`
             INSERT INTO tab_uni_curso_versao (curso_id, revisao, tipo, status, resumo_mudanca, criado_por)

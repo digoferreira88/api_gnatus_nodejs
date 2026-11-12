@@ -32,7 +32,8 @@ module.exports = (app) => ({
     const lotes = await Pg.connectAndQuery(`
       SELECT l.id, l.curso_id, cu.codigo AS curso_codigo, cu.titulo AS curso_titulo, v.revisao,
              l.data_realizacao::text AS data_realizacao, l.carga_h, l.modalidade, l.instrutor, l.local,
-             l.verificacao, l.observacao, l.origem, (l.anexo_path IS NOT NULL) AS tem_anexo, l.anexo_nome,
+             l.verificacao, l.observacao, l.origem, (l.anexo_path IS NOT NULL) AS tem_anexo, l.anexo_nome, l.anexo_tamanho,
+             COALESCE(l.tipo_treinamento, cu.tipo_treinamento) AS tipo_treinamento, l.empresa,
              l.criado_em, u.nome AS criado_por
         FROM tab_uni_registro_lote l
         JOIN tab_uni_curso cu ON cu.id = l.curso_id

@@ -3,7 +3,8 @@
 // de algo que já fez. multipart: arquivo (.xlsx).
 // Colunas (cabeçalho em qualquer das 10 primeiras linhas, nome flexível):
 //   CPF | Matrícula | Filial | Nome | Curso (código ou título) | Data | Carga horária |
-//   Instrutor | Modalidade | Resultado | Nota | Observação
+//   Instrutor/Ministrante | Modalidade | Tipo (interno/externo) | Empresa | Local | Resultado | Nota | Observação
+// Curso: código do curso, título exato ou o "código nesta formação" da trilha (ex.: FRL-PRD.P-R2600-C03).
 // Pessoa: por CPF; sem CPF, por matrícula (+ filial se houver duplicidade).
 // Agrupa por curso+data+instrutor+modalidade em lotes origem 'legado'.
 // Idempotente: linha igual a um registro legado já existente (pessoa+curso+data) é pulada.
@@ -54,7 +55,10 @@ const ALIAS = {
   curso: ['curso', 'codigo do curso', 'cod curso', 'treinamento', 'codigo', 'titulo', 'modulo', 'codigo do modulo'],
   data: ['data', 'data de realizacao', 'data realizacao', 'realizado em', 'data do treinamento', 'conclusao', 'data de conclusao'],
   carga: ['carga horaria', 'carga', 'horas', 'ch'],
-  instrutor: ['instrutor', 'professor', 'ministrante', 'responsavel'],
+  instrutor: ['instrutor', 'professor', 'ministrante', 'responsavel', 'instrutor/ministrante'],
+  tipo: ['tipo', 'interno/externo', 'tipo de treinamento', 'interno ou externo'],
+  empresa: ['empresa', 'empresa externa', 'empresa do ministrante', 'fornecedor'],
+  local: ['local', 'local do treinamento'],
   modalidade: ['modalidade', 'formato'],
   resultado: ['resultado', 'status', 'situacao', 'aprovado'],
   nota: ['nota', 'pontuacao'],
@@ -104,15 +108,18 @@ module.exports = (app) => ({
       return res.status(400).json({ message: 'Não achei o cabeçalho. A planilha precisa das colunas Curso, Data e CPF (ou Matrícula).' });
     }
 
-    const [cols, cursos] = await Promise.all([
+    const [cols, cursos, equivs] = await Promise.all([
       Pg.connectAndQuery(`SELECT id, cpf, filial, matricula, nome FROM tab_uni_colaborador`),
-      Pg.connectAndQuery(`SELECT id, codigo, titulo, carga_horaria_h FROM tab_uni_curso`)
+      Pg.connectAndQuery(`SELECT id, codigo, titulo, carga_horaria_h, tipo_treinamento, empresa_externa, ministrante FROM tab_uni_curso`),
+      Pg.connectAndQuery(`SELECT DISTINCT codigo_exibicao, curso_id FROM tab_uni_trilha_item WHERE COALESCE(codigo_exibicao, '') <> ''`)
     ]);
     const porCpf = new Map(cols.filter(c => c.cpf).map(c => [c.cpf, c]));
     const porMat = new Map();
     cols.forEach(c => { const k = String(c.matricula || ''); if (!porMat.has(k)) porMat.set(k, []); porMat.get(k).push(c); });
     const cursoPorCod = new Map(cursos.map(c => [norm(c.codigo), c]));
     const cursoPorTit = new Map(cursos.map(c => [norm(c.titulo), c]));
+    const cursoPorId = new Map(cursos.map(c => [c.id, c]));
+    const cursoPorEquiv = new Map(equivs.map(e => [norm(e.codigo_exibicao), cursoPorId.get(e.curso_id)]).filter(([, c]) => c));
 
     const linhas = [];
     const hoje = UniRh.hojeISO();
@@ -135,8 +142,8 @@ module.exports = (app) => ({
       }
       if (!col && !l.erros.length) l.erros.push('colaborador não encontrado entre os ativos (desligado? CPF/matrícula errado?)');
 
-      const curso = cursoTxt ? (cursoPorCod.get(norm(cursoTxt)) || cursoPorTit.get(norm(cursoTxt))) : null;
-      if (!curso) l.erros.push(cursoTxt ? `curso "${cursoTxt}" não cadastrado (use o código ou o título exato)` : 'curso em branco');
+      const curso = cursoTxt ? (cursoPorCod.get(norm(cursoTxt)) || cursoPorTit.get(norm(cursoTxt)) || cursoPorEquiv.get(norm(cursoTxt))) : null;
+      if (!curso) l.erros.push(cursoTxt ? `curso "${cursoTxt}" não cadastrado (use o código, o título exato ou o código da trilha)` : 'curso em branco');
 
       const data = toISO(g('data'));
       if (!data) l.erros.push('data inválida');
@@ -152,7 +159,9 @@ module.exports = (app) => ({
         colaboradorId: col?.id || null, colaboradorNome: col?.nome || null,
         cursoId: curso?.id || null, cursoCodigo: curso?.codigo || null, data,
         carga: Number.isFinite(carga) ? carga : (curso ? Number(curso.carga_horaria_h) : null),
-        instrutor: T(g('instrutor')), modalidade: modalidadeDe(g('modalidade')),
+        instrutor: T(g('instrutor')) || (curso ? curso.ministrante : null), modalidade: modalidadeDe(g('modalidade')),
+        tipo: /extern/.test(norm(g('tipo'))) ? 'externo' : (/intern/.test(norm(g('tipo'))) ? 'interno' : (curso ? curso.tipo_treinamento || 'interno' : 'interno')),
+        empresa: T(g('empresa')), local: T(g('local')),
         resultado: resultadoDe(g('resultado')), nota: Number.isFinite(nota) ? nota : null,
         observacao: T(g('observacao'))
       });
@@ -179,7 +188,9 @@ module.exports = (app) => ({
     const aGravar = validas.filter(l => !l.duplicada);
     const grupos = new Map();
     aGravar.forEach(l => {
-      const k = [l.cursoId, l.data, l.instrutor || '', l.modalidade, l.carga ?? ''].join('|');
+      if (l.tipo === 'externo' && !l.empresa) l.empresa = (cursoPorId.get(l.cursoId) || {}).empresa_externa || null;
+      if (l.tipo !== 'externo') l.empresa = null;
+      const k = [l.cursoId, l.data, l.instrutor || '', l.modalidade, l.carga ?? '', l.tipo, l.empresa || '', l.local || ''].join('|');
       if (!grupos.has(k)) grupos.set(k, []);
       grupos.get(k).push(l);
     });
@@ -194,7 +205,7 @@ module.exports = (app) => ({
     };
     const previa = linhas.slice(0, 500).map(l => ({
       linha: l.linha, nome: l.colaboradorNome || l.nome, curso: l.cursoCodigo || l.cursoTxt, data: l.data,
-      modalidade: l.modalidade, resultado: l.resultado, erros: l.erros, duplicada: !!l.duplicada
+      modalidade: l.modalidade, tipo: l.tipo, empresa: l.empresa, resultado: l.resultado, erros: l.erros, duplicada: !!l.duplicada
     }));
 
     if (dry) return res.json({ ok: true, dry: true, resumo, previa });
@@ -213,16 +224,18 @@ module.exports = (app) => ({
         const vid = versaoNa(p.cursoId, p.data);
         const lote = await cli.query(`
           INSERT INTO tab_uni_registro_lote (curso_id, versao_id, data_realizacao, carga_h, modalidade, instrutor,
-                 verificacao, observacao, origem, criado_por)
-          VALUES ($1, $2, $3, $4, $5, $6, 'na', $7, 'legado', $8) RETURNING id`,
-          [p.cursoId, vid, p.data, p.carga, p.modalidade, p.instrutor, `Histórico importado de ${nomeArq}`, u.ID || null]);
+                 verificacao, observacao, origem, criado_por, tipo_treinamento, empresa, local)
+          VALUES ($1, $2, $3, $4, $5, $6, 'na', $7, 'legado', $8, $9, $10, $11) RETURNING id`,
+          [p.cursoId, vid, p.data, p.carga, p.modalidade, p.instrutor, `Histórico importado de ${nomeArq}`, u.ID || null,
+           p.tipo, p.empresa, p.local]);
         await cli.query(`
           INSERT INTO tab_uni_registro (colaborador_id, curso_id, versao_id, lote_id, data_realizacao, carga_h, modalidade,
-                 instrutor, origem, verificacao, nota, resultado, observacao, registrado_por)
-          SELECT x.colaborador_id, $1, $2, $3, $4, $5, $6, $7, 'legado', 'na', x.nota, x.resultado, x.observacao, $8
+                 instrutor, origem, verificacao, nota, resultado, observacao, registrado_por, tipo_treinamento, empresa)
+          SELECT x.colaborador_id, $1, $2, $3, $4, $5, $6, $7, 'legado', 'na', x.nota, x.resultado, x.observacao, $8, $10, $11
             FROM jsonb_to_recordset($9::jsonb) AS x(colaborador_id int, nota numeric, resultado text, observacao text)`,
           [p.cursoId, vid, lote.rows[0].id, p.data, p.carga, p.modalidade, p.instrutor, u.ID || null,
-           JSON.stringify(ls.map(l => ({ colaborador_id: l.colaboradorId, nota: l.nota, resultado: l.resultado, observacao: l.observacao })))]);
+           JSON.stringify(ls.map(l => ({ colaborador_id: l.colaboradorId, nota: l.nota, resultado: l.resultado, observacao: l.observacao }))),
+           p.tipo, p.empresa]);
       }
     });
 

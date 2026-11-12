@@ -18,6 +18,7 @@ module.exports = (app) => ({
     const codigo = trim(req.body?.codigo);
     const titulo = trim(req.body?.titulo);
     if (!codigo || !titulo) return res.status(400).json({ message: 'codigo e titulo obrigatorios.' });
+    if (trim(req.body?.descricao).length < 10) return res.status(400).json({ message: 'Preencha a descrição (conteúdo programático) do curso — ela vai no verso do certificado.' });
 
     const params = {
       codigo: codigo.toUpperCase(),

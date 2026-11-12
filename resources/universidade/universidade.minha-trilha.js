@@ -27,7 +27,7 @@ module.exports = (app) => ({
     const cursoIds = [...new Set(ficha.requisitos.map(r => r.cursoId))];
 
     // Onde fazer: turmas publicadas com data futura vinculadas ao curso, e se há EAD.
-    const [turmas, ead] = cursoIds.length ? await Promise.all([
+    const [turmas, ead, aval] = cursoIds.length ? await Promise.all([
       Pg.connectAndQuery(`
         SELECT t.id, t.titulo, t.curso_id, t.modalidades,
                (SELECT min(s.data) FROM tab_treina_sessao s
@@ -39,9 +39,15 @@ module.exports = (app) => ({
       Pg.connectAndQuery(`
         SELECT cu.id FROM tab_uni_curso cu
          WHERE cu.id = ANY(@ids::int[]) AND cu.ativo AND cu.publico
-           AND EXISTS (SELECT 1 FROM tab_uni_aula a WHERE a.curso_id = cu.id)`, { ids: cursoIds })
-    ]) : [[], []];
+           AND EXISTS (SELECT 1 FROM tab_uni_aula a WHERE a.curso_id = cu.id)`, { ids: cursoIds }),
+      // avaliação online (banco de questões) — vale também p/ curso presencial
+      Pg.connectAndQuery(`
+        SELECT q.curso_id FROM tab_uni_quiz q
+         WHERE q.curso_id = ANY(@ids::int[]) AND q.ativo
+           AND EXISTS (SELECT 1 FROM tab_uni_questao qq WHERE qq.quiz_id = q.id)`, { ids: cursoIds })
+    ]) : [[], [], []];
     const eadSet = new Set(ead.map(e => e.id));
+    const avalSet = new Set(aval.map(a => a.curso_id));
 
     // Não expõe CPF nem dados de folha p/ o próprio colaborador além do necessário.
     const { cpf, centroCusto, situacaoFolha, sincronizadoEm, ...colab } = ficha.colaborador;
@@ -52,6 +58,7 @@ module.exports = (app) => ({
       requisitos: ficha.requisitos.map(r => ({
         ...r,
         temEad: eadSet.has(r.cursoId),
+        temAvaliacao: avalSet.has(r.cursoId),
         turmas: turmas.filter(t => t.curso_id === r.cursoId)
           .map(t => ({ id: t.id, titulo: t.titulo, modalidades: t.modalidades, proximaData: t.proxima_data }))
       })),

@@ -2,7 +2,8 @@
 // colaboradores (turma presencial fora do sistema, leitura de procedimento, treinamento
 // externo). É o caminho de quem NÃO tem login na intranet (fábrica).
 // multipart/form-data:
-//   dados  (texto JSON) = { cursoId, versaoId?, dataRealizacao, cargaH, modalidade, instrutor, local,
+//   dados  (texto JSON) = { cursoId, versaoId?, dataRealizacao, cargaH, modalidade, instrutor (ministrante), local,
+//                           tipoTreinamento (interno|externo; padrão = o do curso), empresa (se externo),
 //                           verificacao (avaliacao|observacao|na), observacao,
 //                           participantes: [{ colaboradorId, resultado?, nota? }] }
 //   anexo  (arquivo, opcional) = lista de presença assinada / evidência (PDF, JPG, PNG; até 15 MB)
@@ -70,8 +71,14 @@ module.exports = (app) => ({
     if (!unicos.length) return erro('Inclua pelo menos um participante.');
     if (unicos.some(p => p.nota != null && (p.nota < 0 || p.nota > 100))) return erro('Nota deve ficar entre 0 e 100.');
 
-    const curso = await Pg.connectAndQuery(`SELECT id, codigo, titulo, carga_horaria_h FROM tab_uni_curso WHERE id = @id`, { id: cursoId });
+    const curso = await Pg.connectAndQuery(`
+      SELECT id, codigo, titulo, carga_horaria_h, tipo_treinamento, empresa_externa, ministrante
+        FROM tab_uni_curso WHERE id = @id`, { id: cursoId });
     if (!curso.length) return erro('Curso não encontrado.', 404);
+    const tipoTreinamento = ['interno', 'externo'].includes(d.tipoTreinamento) ? d.tipoTreinamento : (curso[0].tipo_treinamento || 'interno');
+    const empresa = tipoTreinamento === 'externo' ? (txt(d.empresa, 160) || curso[0].empresa_externa || null) : null;
+    const ministrante = txt(d.instrutor, 160) || curso[0].ministrante || null;
+    if (tipoTreinamento === 'externo' && (!empresa || !ministrante)) return erro('Treinamento externo: informe o ministrante e a empresa.');
 
     // Versão: a informada (do mesmo curso) ou a que estava vigente na data do treinamento.
     let versaoId = int(d.versaoId) || null;
@@ -99,19 +106,21 @@ module.exports = (app) => ({
       loteId = await Pg.withTransaction(async (cli) => {
         const l = await cli.query(`
           INSERT INTO tab_uni_registro_lote (curso_id, versao_id, data_realizacao, carga_h, modalidade, instrutor, local,
-                 verificacao, observacao, origem, anexo_path, anexo_nome, anexo_mime, anexo_tamanho, criado_por)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'lote', $10, $11, $12, $13, $14) RETURNING id`,
-          [cursoId, versaoId, data, cargaH, modalidade, txt(d.instrutor, 160), txt(d.local, 160), verificacao,
+                 verificacao, observacao, origem, anexo_path, anexo_nome, anexo_mime, anexo_tamanho, criado_por,
+                 tipo_treinamento, empresa)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'lote', $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+          [cursoId, versaoId, data, cargaH, modalidade, ministrante, txt(d.local, 160), verificacao,
            txt(d.observacao, 4000), relPath, req.file?.originalname || null, req.file?.mimetype || null,
-           req.file?.size || null, u.ID || null]);
+           req.file?.size || null, u.ID || null, tipoTreinamento, empresa]);
         const lid = l.rows[0].id;
         await cli.query(`
           INSERT INTO tab_uni_registro (colaborador_id, curso_id, versao_id, lote_id, data_realizacao, carga_h, modalidade,
-                 instrutor, origem, verificacao, nota, resultado, registrado_por)
-          SELECT x.colaborador_id, $1, $2, $3, $4, $5, $6, $7, 'lote', $8, x.nota, x.resultado, $9
+                 instrutor, origem, verificacao, nota, resultado, registrado_por, tipo_treinamento, empresa)
+          SELECT x.colaborador_id, $1, $2, $3, $4, $5, $6, $7, 'lote', $8, x.nota, x.resultado, $9, $11, $12
             FROM jsonb_to_recordset($10::jsonb) AS x(colaborador_id int, nota numeric, resultado text)`,
-          [cursoId, versaoId, lid, data, cargaH, modalidade, txt(d.instrutor, 160), verificacao, u.ID || null,
-           JSON.stringify(unicos.map(p => ({ colaborador_id: p.colaboradorId, nota: p.nota, resultado: p.resultado })))]);
+          [cursoId, versaoId, lid, data, cargaH, modalidade, ministrante, verificacao, u.ID || null,
+           JSON.stringify(unicos.map(p => ({ colaborador_id: p.colaboradorId, nota: p.nota, resultado: p.resultado }))),
+           tipoTreinamento, empresa]);
         return lid;
       });
     } catch (err) {
@@ -121,7 +130,7 @@ module.exports = (app) => ({
 
     await audit(app, req, 'CRIAR', 'uni_registro_lote', loteId,
       `Lançou ${curso[0].codigo} — ${curso[0].titulo} em ${data} para ${unicos.length} colaborador(es)` +
-      (req.file ? ' (com anexo)' : ''), { cursoId, versaoId, data, modalidade, verificacao, participantes: unicos });
+      (req.file ? ' (com anexo)' : ''), { cursoId, versaoId, data, modalidade, verificacao, tipoTreinamento, empresa, ministrante, participantes: unicos });
 
     return res.json({ ok: true, loteId, registros: unicos.length, versaoId });
   }

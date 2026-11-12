@@ -53,19 +53,42 @@ async function sincronizarCargos(app) {
 
 async function sincronizarDepartamentos(app) {
   const { Pg, Protheus } = app.services;
+  // Responsável (gestor) e 2º responsável do setor + setor superior. O CPF do responsável
+  // é buscado na própria SRA pela filial+matrícula (o espelho guarda 1 matrícula por CPF).
   const rows = await Protheus.connectAndQuery(`
-    SELECT RTRIM(QB_DEPTO) codigo, MAX(LTRIM(RTRIM(QB_DESCRIC))) descricao
-      FROM SQB010 WITH (NOLOCK)
-     WHERE D_E_L_E_T_ <> '*' AND RTRIM(QB_DEPTO) <> ''
-     GROUP BY RTRIM(QB_DEPTO)`);
-  const dados = rows.map(r => ({ codigo: trim(r.codigo), descricao: trim(r.descricao) || null }));
+    SELECT RTRIM(sqb.QB_DEPTO) codigo, MAX(LTRIM(RTRIM(sqb.QB_DESCRIC))) descricao,
+           MAX(RTRIM(sqb.QB_DEPSUP)) depto_sup,
+           MAX(RTRIM(sqb.QB_FILRESP)) resp_filial, MAX(RTRIM(sqb.QB_MATRESP)) resp_matricula,
+           MAX(RTRIM(r1.RA_CIC)) resp_cpf,
+           MAX(RTRIM(sqb.QB_FILRSP2)) resp2_filial, MAX(RTRIM(sqb.QB_MATRSP2)) resp2_matricula,
+           MAX(RTRIM(r2.RA_CIC)) resp2_cpf
+      FROM SQB010 sqb WITH (NOLOCK)
+      LEFT JOIN SRA010 r1 WITH (NOLOCK) ON r1.D_E_L_E_T_ <> '*' AND RTRIM(sqb.QB_MATRESP) <> ''
+           AND RTRIM(r1.RA_MAT) = RTRIM(sqb.QB_MATRESP) AND RTRIM(r1.RA_FILIAL) = RTRIM(sqb.QB_FILRESP)
+      LEFT JOIN SRA010 r2 WITH (NOLOCK) ON r2.D_E_L_E_T_ <> '*' AND RTRIM(sqb.QB_MATRSP2) <> ''
+           AND RTRIM(r2.RA_MAT) = RTRIM(sqb.QB_MATRSP2) AND RTRIM(r2.RA_FILIAL) = RTRIM(sqb.QB_FILRSP2)
+     WHERE sqb.D_E_L_E_T_ <> '*' AND RTRIM(sqb.QB_DEPTO) <> ''
+     GROUP BY RTRIM(sqb.QB_DEPTO)`);
+  const dig = (v) => soDig(v) || null;
+  const dados = rows.map(r => ({
+    codigo: trim(r.codigo), descricao: trim(r.descricao) || null, depto_sup: trim(r.depto_sup) || null,
+    resp_filial: trim(r.resp_filial) || null, resp_matricula: trim(r.resp_matricula) || null, resp_cpf: dig(r.resp_cpf),
+    resp2_filial: trim(r.resp2_filial) || null, resp2_matricula: trim(r.resp2_matricula) || null, resp2_cpf: dig(r.resp2_cpf)
+  }));
   if (!dados.length) return { total: 0, desativados: 0 };
   const r = await Pg.connectAndQuery(`
-    WITH x AS (SELECT * FROM jsonb_to_recordset(@dados::jsonb) AS x(codigo text, descricao text)),
+    WITH x AS (SELECT * FROM jsonb_to_recordset(@dados::jsonb) AS x(
+                 codigo text, descricao text, depto_sup text, resp_filial text, resp_matricula text, resp_cpf text,
+                 resp2_filial text, resp2_matricula text, resp2_cpf text)),
     up AS (
-      INSERT INTO tab_uni_departamento (codigo, descricao, ativo, sincronizado_em)
-      SELECT codigo, descricao, TRUE, NOW() FROM x
-      ON CONFLICT (codigo) DO UPDATE SET descricao = EXCLUDED.descricao, ativo = TRUE, sincronizado_em = NOW()
+      INSERT INTO tab_uni_departamento (codigo, descricao, ativo, sincronizado_em, depto_sup,
+                                        resp_filial, resp_matricula, resp_cpf, resp2_filial, resp2_matricula, resp2_cpf)
+      SELECT codigo, descricao, TRUE, NOW(), depto_sup, resp_filial, resp_matricula, resp_cpf,
+             resp2_filial, resp2_matricula, resp2_cpf FROM x
+      ON CONFLICT (codigo) DO UPDATE SET descricao = EXCLUDED.descricao, ativo = TRUE, sincronizado_em = NOW(),
+             depto_sup = EXCLUDED.depto_sup, resp_filial = EXCLUDED.resp_filial, resp_matricula = EXCLUDED.resp_matricula,
+             resp_cpf = EXCLUDED.resp_cpf, resp2_filial = EXCLUDED.resp2_filial,
+             resp2_matricula = EXCLUDED.resp2_matricula, resp2_cpf = EXCLUDED.resp2_cpf
       RETURNING 1),
     off AS (
       UPDATE tab_uni_departamento d SET ativo = FALSE

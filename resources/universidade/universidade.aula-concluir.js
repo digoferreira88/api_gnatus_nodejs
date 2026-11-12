@@ -98,9 +98,9 @@ module.exports = (app) => ({
 
       await Pg.connectAndQuery(`
         UPDATE tab_uni_matricula
-           SET percent_progresso = @pct,
-               status = CASE WHEN @conc THEN 'concluido' WHEN @pct > 0 THEN 'em_andamento' ELSE 'matriculado' END,
-               data_conclusao = CASE WHEN @conc AND data_conclusao IS NULL THEN NOW() ELSE data_conclusao END
+           SET percent_progresso = @pct::numeric,
+               status = CASE WHEN @conc::boolean THEN 'concluido' WHEN @pct::numeric > 0 THEN 'em_andamento' ELSE 'matriculado' END,
+               data_conclusao = CASE WHEN @conc::boolean AND data_conclusao IS NULL THEN NOW() ELSE data_conclusao END
          WHERE id = @mid`,
         { pct: Number(pct.toFixed(2)), conc: concluiu, mid: matrId }
       );

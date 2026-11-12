@@ -29,15 +29,18 @@ module.exports = (app) => ({
 
     try {
       const ins = await Pg.connectAndQuery(`
-        INSERT INTO tab_uni_quiz (curso_id, titulo, descricao, nota_minima, tentativas_max, embaralhar)
-        VALUES (@cid, @tit, @desc, @nm, @tm, @emb)
+        INSERT INTO tab_uni_quiz (curso_id, titulo, descricao, nota_minima, tentativas_max, embaralhar,
+                                  qtd_sorteio, embaralhar_alternativas)
+        VALUES (@cid, @tit, @desc, @nm, @tm, @emb, @qs, @ea)
         RETURNING id`,
         {
           cid: cursoId, tit: titulo,
           desc: trim(req.body?.descricao),
           nm: req.body?.notaMinima != null ? Number(req.body.notaMinima) : 70,
           tm: req.body?.tentativasMax != null ? Number(req.body.tentativasMax) : 3,
-          emb: !!req.body?.embaralhar
+          emb: !!req.body?.embaralhar,
+          qs: Number(req.body?.qtdSorteio) > 0 ? Math.floor(Number(req.body.qtdSorteio)) : null,
+          ea: req.body?.embaralharAlternativas !== false
         }
       );
       return res.json({ ok: true, id: ins[0].id });

@@ -128,8 +128,162 @@ async function definirTrilhasDaChave(cli, cargo, depto, trilhaIds, userId) {
 
 const VIA = { todos: 'todos', cargo: 'cargo', setor: 'setor', cargo_setor: 'cargo+setor' };
 
+// ---------------------------------------------------------------- colaborador do usuário logado
+// Pelo vínculo da sincronização (user_id) ou pelo e-mail do login.
+async function colaboradorDoUsuario(Pg, u) {
+  const uid = Number(u && (u.ID || u.id)) || 0;
+  const email = String((u && (u.EMAIL || u.email)) || '');
+  if (!uid && !email) return null;
+  const r = await Pg.connectAndQuery(`
+    SELECT c.id, c.cpf, c.nome, c.depto_codigo, c.ativo FROM tab_uni_colaborador c
+     WHERE c.user_id = @uid OR (COALESCE(c.email, '') <> '' AND lower(c.email) = lower(@email))
+     ORDER BY (c.user_id = @uid) DESC NULLS LAST, c.ativo DESC
+     LIMIT 1`, { uid, email });
+  return r[0] || null;
+}
+
+// ---------------------------------------------------------------- gestor = responsável do setor no Protheus
+// Setores em que a pessoa (CPF) é responsável ou 2º responsável (SQB010), mais os setores
+// abaixo deles na hierarquia (QB_DEPSUP). nivel 0 = setor direto.
+async function setoresDoGestor(Pg, cpf) {
+  if (!cpf) return [];
+  return Pg.connectAndQuery(`
+    WITH RECURSIVE base AS (
+      SELECT codigo FROM tab_uni_departamento
+       WHERE ativo AND (resp_cpf = @cpf OR resp2_cpf = @cpf)
+    ), arvore AS (
+      SELECT codigo, 0 AS nivel FROM base
+      UNION
+      SELECT d.codigo, a.nivel + 1
+        FROM tab_uni_departamento d JOIN arvore a ON d.depto_sup = a.codigo
+       WHERE d.ativo AND a.nivel < 8
+    )
+    SELECT d.codigo, d.descricao, MIN(a.nivel)::int AS nivel,
+           (SELECT count(*) FROM tab_uni_colaborador c WHERE c.ativo AND c.depto_codigo = d.codigo)::int AS pessoas
+      FROM arvore a JOIN tab_uni_departamento d ON d.codigo = a.codigo
+     GROUP BY d.codigo, d.descricao
+     ORDER BY MIN(a.nivel), d.descricao`, { cpf });
+}
+
+// ---------------------------------------------------------------- lista de colaboradores c/ placar
+// Usada pelo RH (todos) e pelo gestor (só os setores dele: deptos = [códigos]).
+async function consultaColaboradores(Pg, { q, depto, cargo, inativos, deptos, excluirId } = {}) {
+  const filtros = [];
+  const params = {};
+  if (!inativos) filtros.push('c.ativo');
+  if (q) {
+    const dig = String(q).replace(/\D/g, '');
+    filtros.push(`(c.nome ILIKE @q OR c.email ILIKE @q OR c.cargo_desc ILIKE @q${dig.length >= 3 ? ' OR c.matricula LIKE @dig OR c.cpf LIKE @dig' : ''})`);
+    params.q = `%${q}%`;
+    if (dig.length >= 3) params.dig = `%${dig}%`;
+  }
+  if (depto) { filtros.push('c.depto_desc = @depto'); params.depto = depto; }
+  if (cargo) { filtros.push('c.cargo_codigo = @cargo'); params.cargo = cargo; }
+  if (Array.isArray(deptos)) { filtros.push('c.depto_codigo = ANY(@deptos::text[])'); params.deptos = deptos; }
+  if (excluirId) { filtros.push('c.id <> @excluir'); params.excluir = excluirId; }
+
+  const rows = await Pg.connectAndQuery(`
+    SELECT c.id, c.nome, c.filial, c.matricula, c.email, c.cargo_codigo, c.cargo_desc, c.depto_codigo, c.depto_desc,
+           c.admissao::text AS admissao, c.cargo_desde::text AS cargo_desde, c.ativo, c.situacao AS situacao_folha,
+           (c.user_id IS NOT NULL) AS tem_login,
+           count(s.id)::int AS total,
+           count(*) FILTER (WHERE s.situacao = 'em_dia')::int        AS em_dia,
+           count(*) FILTER (WHERE s.situacao = 'a_vencer')::int      AS a_vencer,
+           count(*) FILTER (WHERE s.situacao = 'pendente')::int      AS pendente,
+           count(*) FILTER (WHERE s.situacao = 'atrasado')::int      AS atrasado,
+           count(*) FILTER (WHERE s.situacao = 'vencido')::int       AS vencido,
+           count(*) FILTER (WHERE s.situacao = 'desatualizado')::int AS desatualizado,
+           count(*) FILTER (WHERE s.situacao = 'dispensado')::int    AS dispensado,
+           MIN(s.prazo) FILTER (WHERE s.situacao IN ('pendente','atrasado'))::text AS proximo_prazo,
+           (SELECT count(*) FROM vw_uni_reprovacao rp WHERE rp.colaborador_id = c.id)::int AS reprovacoes
+      FROM tab_uni_colaborador c
+      LEFT JOIN vw_uni_requisito_situacao s ON s.colaborador_id = c.id AND s.ativo AND s.obrigatorio
+     ${filtros.length ? 'WHERE ' + filtros.join(' AND ') : ''}
+     GROUP BY c.id
+     ORDER BY c.nome`, params);
+  return rows.map(r => ({ ...camel(r), situacaoGeral: situacaoGeral(r) }));
+}
+
+// ---------------------------------------------------------------- reprovações (indicador)
+// Por colaborador e por curso. Denominador da taxa = provas finalizadas + lançamentos válidos.
+async function indicadorReprovacoes(Pg, { de, ate, deptos } = {}) {
+  const fr = ['TRUE'];
+  const params = {};
+  if (de) { fr.push('rp.data >= @de'); params.de = de; }
+  if (ate) { fr.push('rp.data <= @ate'); params.ate = ate; }
+  if (Array.isArray(deptos)) { fr.push('c.depto_codigo = ANY(@deptos::text[])'); params.deptos = deptos; }
+  const ft = ['t.finalizada_em IS NOT NULL'];
+  const fg = ['NOT r.anulado'];
+  if (de) { ft.push('t.finalizada_em::date >= @de'); fg.push('r.data_realizacao >= @de'); }
+  if (ate) { ft.push('t.finalizada_em::date <= @ate'); fg.push('r.data_realizacao <= @ate'); }
+  if (Array.isArray(deptos)) { ft.push('c.depto_codigo = ANY(@deptos::text[])'); fg.push('c.depto_codigo = ANY(@deptos::text[])'); }
+
+  const [lista, porColab, porCurso] = await Promise.all([
+    Pg.connectAndQuery(`
+      SELECT rp.ref, rp.fonte, rp.data::text AS data, rp.nota, rp.nota_minima, rp.lote_id,
+             c.id AS colaborador_id, c.nome, c.matricula, c.depto_desc, c.cargo_desc,
+             cu.id AS curso_id, cu.codigo AS curso_codigo, cu.titulo AS curso_titulo
+        FROM vw_uni_reprovacao rp
+        JOIN tab_uni_colaborador c ON c.id = rp.colaborador_id
+        JOIN tab_uni_curso cu      ON cu.id = rp.curso_id
+       WHERE ${fr.join(' AND ')}
+       ORDER BY rp.data DESC NULLS LAST
+       LIMIT 500`, params),
+    Pg.connectAndQuery(`
+      SELECT c.id AS colaborador_id, c.nome, c.matricula, c.depto_desc, c.cargo_desc,
+             count(*)::int AS reprovacoes, count(DISTINCT rp.curso_id)::int AS cursos, MAX(rp.data)::text AS ultima,
+             string_agg(DISTINCT cu.titulo, ' · ') AS treinamentos
+        FROM vw_uni_reprovacao rp
+        JOIN tab_uni_colaborador c ON c.id = rp.colaborador_id
+        JOIN tab_uni_curso cu      ON cu.id = rp.curso_id
+       WHERE ${fr.join(' AND ')}
+       GROUP BY c.id
+       ORDER BY reprovacoes DESC, c.nome`, params),
+    Pg.connectAndQuery(`
+      WITH av AS (
+        SELECT m.curso_id, count(*)::int AS n
+          FROM tab_uni_tentativa t
+          JOIN tab_uni_matricula m ON m.id = t.matricula_id
+          JOIN tab_uni_colaborador c ON c.user_id = m.user_id
+         WHERE ${ft.join(' AND ')}
+         GROUP BY m.curso_id
+        UNION ALL
+        SELECT r.curso_id, count(*)::int
+          FROM tab_uni_registro r JOIN tab_uni_colaborador c ON c.id = r.colaborador_id
+         WHERE ${fg.join(' AND ')}
+         GROUP BY r.curso_id
+      ), tot AS (SELECT curso_id, SUM(n)::int AS avaliacoes FROM av GROUP BY curso_id),
+      rep AS (
+        SELECT rp.curso_id, count(*)::int AS reprovacoes, count(DISTINCT rp.colaborador_id)::int AS pessoas
+          FROM vw_uni_reprovacao rp JOIN tab_uni_colaborador c ON c.id = rp.colaborador_id
+         WHERE ${fr.join(' AND ')}
+         GROUP BY rp.curso_id)
+      SELECT cu.id AS curso_id, cu.codigo, cu.titulo, COALESCE(tot.avaliacoes, 0) AS avaliacoes,
+             COALESCE(rep.reprovacoes, 0) AS reprovacoes, COALESCE(rep.pessoas, 0) AS pessoas,
+             CASE WHEN COALESCE(tot.avaliacoes, 0) > 0
+                  THEN ROUND(100.0 * COALESCE(rep.reprovacoes, 0) / tot.avaliacoes, 1) END AS taxa
+        FROM tab_uni_curso cu
+        LEFT JOIN tot ON tot.curso_id = cu.id
+        LEFT JOIN rep ON rep.curso_id = cu.id
+       WHERE COALESCE(tot.avaliacoes, 0) > 0 OR COALESCE(rep.reprovacoes, 0) > 0
+       ORDER BY reprovacoes DESC, taxa DESC NULLS LAST, cu.titulo`, params)
+  ]);
+  const totalAval = porCurso.reduce((a, x) => a + Number(x.avaliacoes || 0), 0);
+  const totalRep = porCurso.reduce((a, x) => a + Number(x.reprovacoes || 0), 0);
+  return {
+    resumo: {
+      avaliacoes: totalAval, reprovacoes: totalRep, pessoas: porColab.length,
+      taxa: totalAval ? Math.round((totalRep / totalAval) * 1000) / 10 : null
+    },
+    porColaborador: porColab.map(camel),
+    porCurso: porCurso.map(x => ({ ...camel(x), taxa: x.taxa == null ? null : Number(x.taxa) })),
+    lista: lista.map(camel)
+  };
+}
+
 module.exports = {
   LER, ESCREVER, UPLOAD_ROOT, requirePerm, trim, txt, int, num, dataISO, usuario, audit,
   limpa, camel, SITUACOES, CONFORMES, IRREGULARES, situacaoGeral,
-  normalizarRegras, validarRegras, gravarRegrasTrilha, definirTrilhasDaChave, VIA
+  normalizarRegras, validarRegras, gravarRegrasTrilha, definirTrilhasDaChave, VIA,
+  colaboradorDoUsuario, setoresDoGestor, consultaColaboradores, indicadorReprovacoes
 };

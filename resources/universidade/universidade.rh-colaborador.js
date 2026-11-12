@@ -15,7 +15,7 @@ async function fichaColaborador(Pg, id) {
   if (!col.length) return null;
   const c = col[0];
 
-  const [eventos, trilhas, requisitos, evidencias, anulados] = await Promise.all([
+  const [eventos, trilhas, requisitos, evidencias, anulados, reprovacoes] = await Promise.all([
     Pg.connectAndQuery(`
       SELECT id, tipo, de, para, data::text AS data, registrado_em
         FROM tab_uni_colaborador_evento WHERE colaborador_id = @id ORDER BY registrado_em DESC, id DESC`, { id }),
@@ -58,7 +58,13 @@ async function fichaColaborador(Pg, id) {
         JOIN tab_uni_curso cu ON cu.id = r.curso_id
         LEFT JOIN tab_intranet_usr u ON u.id = r.anulado_por
        WHERE r.colaborador_id = @id AND r.anulado
-       ORDER BY r.anulado_em DESC`, { id })
+       ORDER BY r.anulado_em DESC`, { id }),
+    Pg.connectAndQuery(`
+      SELECT rp.ref, rp.fonte, rp.data::text AS data, rp.nota, rp.nota_minima,
+             cu.id AS curso_id, cu.codigo AS curso_codigo, cu.titulo AS curso_titulo
+        FROM vw_uni_reprovacao rp JOIN tab_uni_curso cu ON cu.id = rp.curso_id
+       WHERE rp.colaborador_id = @id
+       ORDER BY rp.data DESC NULLS LAST`, { id })
   ]);
 
   return {
@@ -67,7 +73,8 @@ async function fichaColaborador(Pg, id) {
     trilhas: trilhas.map(camel),
     requisitos: requisitos.map(camel),
     evidencias: evidencias.map(camel),
-    anulados: anulados.map(camel)
+    anulados: anulados.map(camel),
+    reprovacoes: reprovacoes.map(camel)
   };
 }
 

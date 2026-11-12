@@ -19,8 +19,11 @@ module.exports = (app) => ({
                cu.area_id, a.codigo AS area, a.nome AS area_nome, cu.formato, cu.validade_meses,
                cu.setor_responsavel, cu.carga_horaria_h, cu.ativo, cu.publico, cu.instrutor_nome,
                cu.versao_atual_id, cu.criado_em,
+               cu.responsavel_colaborador_id, cu.responsavel_nome, cu.ministrante, cu.tipo_treinamento, cu.empresa_externa,
+               qz.id AS quiz_id, qz.qtd_sorteio, qz.nota_minima AS quiz_nota_minima,
+               (SELECT count(*) FROM tab_uni_questao qq WHERE qq.quiz_id = qz.id)::int AS quiz_questoes,
                (SELECT count(*) FROM tab_uni_aula au WHERE au.curso_id = cu.id)::int AS qtd_aulas,
-               EXISTS (SELECT 1 FROM tab_uni_quiz q WHERE q.curso_id = cu.id AND q.ativo) AS tem_quiz,
+               (qz.id IS NOT NULL AND qz.ativo) AS tem_quiz,
                (SELECT count(*) FROM tab_uni_requisito r
                   JOIN tab_uni_colaborador c ON c.id = r.colaborador_id AND c.ativo
                  WHERE r.curso_id = cu.id AND r.ativo)::int AS requisitos,
@@ -30,6 +33,7 @@ module.exports = (app) => ({
           FROM tab_uni_curso cu
           LEFT JOIN tab_uni_area a        ON a.id = cu.area_id
           LEFT JOIN tab_uni_categoria cat ON cat.id = cu.categoria_id
+          LEFT JOIN tab_uni_quiz qz        ON qz.curso_id = cu.id
          ORDER BY cu.ativo DESC, cu.titulo`),
       Pg.connectAndQuery(`
         SELECT v.id, v.curso_id, v.revisao, v.tipo, v.status, v.vigente_desde::text AS vigente_desde,
