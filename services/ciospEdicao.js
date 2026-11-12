@@ -7,10 +7,11 @@
 
 const VALIDADE_PADRAO = 7;
 
-// Executa SQL com placeholders $1..$n num client de transação (tem .query) ou no pool
-// da aplicação (app.services.Pg.pool).
+// Executa SQL com placeholders $1..$n no pool da aplicação (app.services.Pg.pool) ou
+// num client de transação. O app é reconhecido por ter .services — NÃO por não ter
+// .query: o Express também tem app.query.
 async function q(db, sql, params = []) {
-  const runner = typeof db.query === 'function' ? db : db.services.Pg.pool;
+  const runner = db.services ? db.services.Pg.pool : db;
   const r = await runner.query(sql, params);
   return r.rows;
 }
@@ -125,8 +126,83 @@ async function importarTabela(app, { edicao, linhas, arquivo, usuarioId, produto
   });
 }
 
+// ---------------------------------------------------------------- formas de pagamento
+
+// As 4 condições impressas na Tabela Comercial. As demais (financeiras, Gnatus Cred,
+// boleto, débito) o comercial cadastra por edição.
+const FORMAS_PADRAO = [
+  { ordem: 1, nome: 'Cartão até 10x', coluna_base: '10x', desconto_pct: 0, parcelas_max: 10 },
+  { ordem: 2, nome: 'Cartão até 6x', coluna_base: '6x', desconto_pct: 0, parcelas_max: 6 },
+  { ordem: 3, nome: 'Pix — 10%', coluna_base: '10x', desconto_pct: 10, parcelas_max: 1 },
+  { ordem: 4, nome: 'Pix — 6%', coluna_base: '6x', desconto_pct: 6, parcelas_max: 1 }
+];
+
+const bool = (v) => v === true || ['1', 'true', 'sim', 's'].includes(String(v).toLowerCase());
+
+function validarForma(b) {
+  const nome = String(b?.nome || '').trim();
+  if (!nome) return { erro: 'Informe o nome da forma de pagamento.' };
+  if (nome.length > 60) return { erro: 'O nome passa de 60 caracteres.' };
+  const coluna = String(b.coluna_base || '').trim().toLowerCase();
+  if (!['10x', '6x'].includes(coluna)) return { erro: 'Coluna-base deve ser 10x ou 6x.' };
+  const desconto = Number(b.desconto_pct ?? 0);
+  if (!Number.isFinite(desconto) || desconto < 0 || desconto >= 100) {
+    return { erro: 'O desconto deve ficar entre 0 e 99,99%.' };
+  }
+  const parcelas = Number(b.parcelas_max ?? 1);
+  if (!Number.isInteger(parcelas) || parcelas < 1 || parcelas > 24) {
+    return { erro: 'Parcelas deve ser um número inteiro de 1 a 24.' };
+  }
+  return {
+    forma: {
+      nome, coluna_base: coluna, desconto_pct: Math.round(desconto * 100) / 100, parcelas_max: parcelas,
+      exige_credito: bool(b.exige_credito), financeira: bool(b.financeira),
+      ativo: b.ativo === undefined ? true : bool(b.ativo), ordem: Number.isInteger(Number(b.ordem)) ? Number(b.ordem) : 0
+    }
+  };
+}
+
+async function semearFormas(db, edicao) {
+  for (const f of FORMAS_PADRAO) {
+    await q(db,
+      `INSERT INTO tab_ciosp_forma_pagto (edicao, ordem, nome, coluna_base, desconto_pct, parcelas_max)
+       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (edicao, nome) DO NOTHING`,
+      [edicao, f.ordem, f.nome, f.coluna_base, f.desconto_pct, f.parcelas_max]);
+  }
+}
+
+// ---------------------------------------------------------------- equipe do evento
+
+const CATEGORIAS = ['EQUIPAMENTOS', 'DIGITAL', 'AT'];
+
+function validarMembro(b) {
+  const usuarioId = Number(b?.usuario_id);
+  if (!Number.isInteger(usuarioId) || usuarioId <= 0) return { erro: 'Escolha o usuário da intranet.' };
+  const nome = String(b.nome_exibicao || '').trim();
+  if (!nome) return { erro: 'Informe o nome que aparece no painel.' };
+  if (nome.length > 120) return { erro: 'O nome passa de 120 caracteres.' };
+  const papel = String(b.papel || '').trim().toLowerCase();
+  if (!['vendedor', 'gerente'].includes(papel)) return { erro: 'O papel deve ser vendedor ou gerente.' };
+  const categoria = String(b.categoria || '').trim().toUpperCase() || null;
+  if (categoria && !CATEGORIAS.includes(categoria)) return { erro: 'A categoria deve ser EQUIPAMENTOS, DIGITAL ou AT.' };
+  if (papel === 'vendedor' && !categoria) return { erro: 'O vendedor precisa de uma categoria.' };
+  const gerenteId = b.gerente_id == null || b.gerente_id === '' ? null : Number(b.gerente_id);
+  if (papel === 'vendedor' && !gerenteId) return { erro: 'O vendedor precisa de gerente.' };
+  if (gerenteId && gerenteId === usuarioId) return { erro: 'Ninguém é gerente de si mesmo.' };
+  const equipe = String(b.equipe || '').trim() || null;
+  if (equipe && equipe.length > 120) return { erro: 'A equipe passa de 120 caracteres.' };
+  return {
+    membro: {
+      usuario_id: usuarioId, nome_exibicao: nome, papel, gerente_id: gerenteId,
+      categoria, equipe, ativo: b.ativo === undefined ? true : bool(b.ativo)
+    }
+  };
+}
+
 module.exports = {
   codigoUnico, candidatosB1, resolverProdutos,
   tocarVersao, getConfig, importarTabela,
+  FORMAS_PADRAO, validarForma, semearFormas,
+  CATEGORIAS, validarMembro,
   q
 };
