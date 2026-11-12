@@ -42,6 +42,16 @@ test('assumir pedido de outro ADM exige tomar', () => {
   assert.equal(comTomar.log.acao, 'tomou');
 });
 
+test('tomar pedido conferido de outro ADM mantém a situação', () => {
+  const semTomar = F.aplicarAcao(pronto({ adm_responsavel: 9 }), 'assumir', {}, ctx());
+  assert.equal(semTomar.status, 409);
+  const r = F.aplicarAcao(pronto({ adm_responsavel: 9 }), 'assumir', { tomar: true }, ctx());
+  assert.equal(r.situacao, 'conferido');
+  assert.equal(r.campos.adm_responsavel, 7);
+  assert.equal(r.log.acao, 'tomou');
+  assert.deepEqual(F.aplicarAcao(pronto(), 'assumir', {}, ctx()).campos, {});
+});
+
 test('quem não é o responsável não age no pedido, mas pode cancelar', () => {
   const r = F.aplicarAcao(ped({ adm_responsavel: 9 }), 'conferir', {}, ctx());
   assert.equal(r.status, 409);

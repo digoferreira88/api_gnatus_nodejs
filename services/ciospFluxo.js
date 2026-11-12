@@ -23,7 +23,8 @@ const VERBO = {
 };
 // Em que situação cada ação do ADM vale.
 const DE = {
-  assumir: ['enviado', 'em_analise'],
+  // Em conferido, assumir só serve para TOMAR de outro ADM (a situação não muda).
+  assumir: ['enviado', 'em_analise', 'conferido'],
   devolver: ['em_analise', 'conferido'],
   conferir: ['em_analise'],
   credito: ['conferido'],
@@ -93,11 +94,11 @@ function aplicarAcao(pedido, acao, dados = {}, ctx = {}) {
 
   switch (acao) {
     case 'assumir': {
-      if (sit === 'em_analise' && !comOutro) return ok(sit, {}, { acao: 'assumiu' });
+      if (sit !== 'enviado' && !comOutro) return ok(sit, {}, { acao: 'assumiu' });
       if (comOutro && !dados.tomar) {
         return erro(409, `Pedido com ${ctx.nomeResponsavel || 'outro ADM'}. Use Tomar para assumir.`);
       }
-      return ok('em_analise', { adm_responsavel: uid, adm_assumiu_em: agora },
+      return ok(sit === 'conferido' ? 'conferido' : 'em_analise', { adm_responsavel: uid, adm_assumiu_em: agora },
         { acao: comOutro ? 'tomou' : 'assumiu', para: ctx.nomeUsuario || null });
     }
 
