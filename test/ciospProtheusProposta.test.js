@@ -122,7 +122,7 @@ test('cliente novo PF pede gênero e data de nascimento; preenchidos, passa', ()
   assert.equal(p.escolhas.cod_mun, '41000');
   const f = P.faltasParaEnviar(p, pronto(p));
   assert.ok(f.includes('gênero do cliente')); assert.ok(f.includes('data de nascimento'));
-  assert.deepEqual(P.faltasParaEnviar(p, pronto(p, { genero: 'F', nascimento: '1990-05-17' })), []);
+  assert.deepEqual(P.faltasParaEnviar(p, pronto(p, { genero: 'F', nascimento: '1990-05-17', rg: '12.345.678-9' })), []);
 });
 
 test('cliente novo sem telefone nem celular cai em falta', () => {
@@ -204,4 +204,25 @@ test('pedido misto força faturamento parcial S mesmo com a última tentativa em
     itens: [{ seq: 1, produto: '005796', descricao: 'G2', quantidade: '1', preco: '10' }, { seq: 2, produto: '009001', descricao: 'Garantia', quantidade: '1', preco: '5' }],
     ultima: { escolhas: { fat_parcial: 'N' } } }));
   assert.equal(p.escolhas.fat_parcial, 'S');
+});
+
+// ---------------------------------------------------------------- RG (MA030TOK barra PF nova sem RG)
+
+test('cliente novo PF sem RG cai em falta; o RG do pedido pré-preenche e libera', () => {
+  const semRg = P.montarProposta(base({ pedido: { cliente_rg_ie: '' }, cliente: { lojas: [] } }));
+  assert.equal(semRg.escolhas.rg, '');
+  assert.ok(P.faltasParaEnviar(semRg, pronto(semRg, { genero: 'F', nascimento: '1990-05-17' })).includes('RG do cliente'));
+  assert.deepEqual(P.faltasParaEnviar(semRg, pronto(semRg, { genero: 'F', nascimento: '1990-05-17', rg: '12.345.678-9' })), []);
+
+  const comRg = P.montarProposta(base({ pedido: { cliente_rg_ie: '12.345.678-9' }, cliente: { lojas: [] } }));
+  assert.equal(comRg.escolhas.rg, '12.345.678-9');
+  assert.deepEqual(P.faltasParaEnviar(comRg, pronto(comRg, { genero: 'F', nascimento: '1990-05-17' })), []);
+});
+
+test('RG não é pedido de PJ nem de cliente que já existe', () => {
+  const pj = P.montarProposta(base({ pedido: { cliente_doc: '12345678000199', cliente_rg_ie: '123456789110' }, cliente: { lojas: [] } }));
+  assert.equal(pj.escolhas.rg, '');
+  assert.ok(!P.faltasParaEnviar(pj, pronto(pj, { nascimento: '2010-01-01' })).includes('RG do cliente'));
+  const existe = P.montarProposta(base({ pedido: { cliente_rg_ie: '' } }));
+  assert.ok(!P.faltasParaEnviar(existe, pronto(existe)).includes('RG do cliente'));
 });

@@ -207,3 +207,10 @@ test('faixa do ambiente: CIOSP_PROTHEUS_FAIXA inteira positiva, senão 700.000',
   assert.equal(E.faixaDe({ CIOSP_PROTHEUS_FAIXA: 'abc' }), 700000);
   assert.equal(E.faixaDe({ CIOSP_PROTHEUS_FAIXA: '-5' }), 700000);
 });
+
+test('RG digitado no painel vale sobre o do pedido; PJ nunca manda RG', () => {
+  assert.equal(E.montarEnvio({ pedido: { ...P, cliente_rg_ie: '' }, itens: IT, escolhas: { ...ESC, rg: '98.765.432-1' } }).cliente.rg, '98.765.432-1');
+  assert.equal(E.montarEnvio({ pedido: P, itens: IT, escolhas: { ...ESC, rg: '' } }).cliente.rg, '12.345.678-9');
+  const pj = { ...P, cliente_doc: '12345678000199', cliente_rg_ie: '123.456.789.110' };
+  assert.equal(E.montarEnvio({ pedido: pj, itens: IT, escolhas: { ...ESC, rg: '1' } }).cliente.rg, '');
+});

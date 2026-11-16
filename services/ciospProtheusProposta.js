@@ -84,6 +84,7 @@ function montarProposta({ pedido, itens, membro, forma, cliente, municipios, pro
   const padrao = {
     cliente_codigo: cli.codigo || '', cliente_loja: cli.loja || '',
     genero: trim(p.cliente_genero), nascimento: dataIso(p.cliente_nascimento),
+    rg: pj ? '' : trim(p.cliente_rg_ie),
     cod_mun: (cli.municipio_sugerido && cli.municipio_sugerido.cod_mun) || '',
     bu: trim(membro && membro.protheus_bu), vendedor: trim(membro && membro.protheus_vendedor),
     condicao: cond && !temErro(listas) && naLista(listas.condicoes, cond) ? cond : '',
@@ -161,6 +162,8 @@ function faltasParaEnviar(proposta, escolhas) {
   if (cli.situacao === 'novo') {
     const pj = cli.pessoa === 'J';
     if (!pj && !normalizarGenero(e.genero)) f.push('gênero do cliente');
+    // O MA030TOK de produção barra pessoa física nova sem RG (A1_PFISICA).
+    if (!pj && !trim(e.rg)) f.push('RG do cliente');
     if (!normalizarData(e.nascimento)) f.push(pj ? 'data de abertura' : 'data de nascimento');
     if (!/^\d{5}$/.test(trim(e.cod_mun))) f.push('município do cliente');
     if (!trim(p.cliente_email)) f.push('e-mail do cliente');

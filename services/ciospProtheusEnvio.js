@@ -111,7 +111,7 @@ function montarEnvio({ pedido, itens, escolhas = {}, simular = false, usuario = 
       nome_reduzido: nomeReduzido(p.cliente_nome),
       genero: pj ? 'E' : trim(esc.genero || p.cliente_genero).toUpperCase(),
       data_nascimento: dataIso(esc.nascimento || p.cliente_nascimento),
-      rg: pj ? '' : trim(p.cliente_rg_ie),
+      rg: pj ? '' : trim(esc.rg || p.cliente_rg_ie),
       ie: pj ? soDig(p.cliente_rg_ie) : '',
       email: trim(p.cliente_email),
       ddd: telefone.ddd, telefone: telefone.numero,

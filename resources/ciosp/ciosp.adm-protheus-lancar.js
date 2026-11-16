@@ -32,7 +32,7 @@ const reais = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDig
 
 // Só os campos do painel, aparados. TES só dos itens do pedido.
 const CAMPOS = {
-  cliente_codigo: 6, cliente_loja: 4, genero: 1, nascimento: 10, cod_mun: 5, bu: 3, vendedor: 6, condicao: 3,
+  cliente_codigo: 6, cliente_loja: 4, genero: 1, nascimento: 10, rg: 30, cod_mun: 5, bu: 3, vendedor: 6, condicao: 3,
   forma_pagto: 1, cartao_autenticacao: 40, transportadora: 6, tipo_frete: 1, fat_parcial: 1, mensagem: 300
 };
 function lerEscolhas(corpo, proposta) {
