@@ -1,3 +1,4 @@
+-- Aplicar como postgres (GRANTs no fim) ANTES de recarregar a API com este código.
 -- 153 — CIOSP: inserir o pedido no Protheus pela fila do ADM — 16/11/2026
 --
 -- O ADM deixa de digitar o pedido no Protheus e informar o número: um botão
@@ -67,3 +68,7 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS ix_ciosp_pv_envio ON tab_ciosp_protheus_envio (pedido_id, tentativa DESC);
+
+-- ---------------------------------------------------------------- GRANTs (migration roda como postgres)
+GRANT SELECT, INSERT, UPDATE ON tab_ciosp_protheus_envio TO intranet;
+GRANT USAGE, SELECT ON SEQUENCE tab_ciosp_protheus_envio_id_seq TO intranet;
