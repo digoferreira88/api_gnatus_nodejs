@@ -45,6 +45,8 @@ module.exports = (app) => ({
     if (!D.trim(b.cliente_nome)) {
       return res.status(400).json({ message: 'Informe o nome do cliente.' });
     }
+    const pessoais = D.lerGeneroNascimento(b);
+    if (pessoais.erro) return res.status(400).json({ message: pessoais.erro });
 
     try {
       const existe = await Pg.connectAndQuery(
@@ -105,6 +107,8 @@ module.exports = (app) => ({
         cliente_cod: D.trim(b.cliente_cod).slice(0, 10) || null,
         cliente_loja: D.trim(b.cliente_loja).slice(0, 4) || null,
         cliente_rg_ie: D.trim(b.cliente_rg_ie).slice(0, 30) || null,
+        cliente_genero: pessoais.cliente_genero,
+        cliente_nascimento: pessoais.cliente_nascimento,
         cliente_resp: D.trim(b.cliente_resp).slice(0, 120) || null,
         cliente_cro: D.trim(b.cliente_cro).slice(0, 20) || null,
         cliente_email: D.trim(b.cliente_email).slice(0, 120) || null,
@@ -151,6 +155,7 @@ module.exports = (app) => ({
           `UPDATE tab_ciosp_pedido SET
              cliente_doc=@cliente_doc, cliente_nome=@cliente_nome, cliente_cod=@cliente_cod,
              cliente_loja=@cliente_loja, cliente_rg_ie=@cliente_rg_ie, cliente_resp=@cliente_resp,
+             cliente_genero=@cliente_genero, cliente_nascimento=@cliente_nascimento,
              cliente_cro=@cliente_cro, cliente_email=@cliente_email, cliente_email2=@cliente_email2,
              cliente_fone=@cliente_fone, cliente_celular=@cliente_celular, cliente_cep=@cliente_cep,
              cliente_endereco=@cliente_endereco, cliente_bairro=@cliente_bairro,
@@ -170,7 +175,7 @@ module.exports = (app) => ({
         const ins = await Pg.connectAndQuery(
           `INSERT INTO tab_ciosp_pedido
             (uuid, edicao, numero, cliente_doc, cliente_nome, cliente_cod, cliente_loja,
-             cliente_rg_ie, cliente_resp, cliente_cro, cliente_email, cliente_email2, cliente_fone,
+             cliente_rg_ie, cliente_genero, cliente_nascimento, cliente_resp, cliente_cro, cliente_email, cliente_email2, cliente_fone,
              cliente_celular, cliente_cep, cliente_endereco, cliente_bairro, cliente_cidade, cliente_uf,
              vendedor_id, vendedor_nome, revenda, tabela_preco, cond_pagto, tabela_comissao, forma_pagto_id,
              origem, parcelas, valor_parcela,
@@ -179,7 +184,7 @@ module.exports = (app) => ({
              observacao, total_bruto, total_desconto, total, total_prazo, dispositivo,
              criado_por, atualizado_por)
            VALUES (@uuid,@edicao,@numero,@cliente_doc,@cliente_nome,@cliente_cod,@cliente_loja,
-                   @cliente_rg_ie,@cliente_resp,@cliente_cro,@cliente_email,@cliente_email2,@cliente_fone,
+                   @cliente_rg_ie,@cliente_genero,@cliente_nascimento,@cliente_resp,@cliente_cro,@cliente_email,@cliente_email2,@cliente_fone,
                    @cliente_celular,@cliente_cep,@cliente_endereco,@cliente_bairro,@cliente_cidade,@cliente_uf,
                    @por,@vendedor_nome,@revenda,@tabela_preco,@cond_pagto,@tabela_comissao,@forma_pagto_id,
                    @origem,@parcelas,@valor_parcela,

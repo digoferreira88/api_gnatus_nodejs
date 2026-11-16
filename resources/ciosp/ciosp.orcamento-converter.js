@@ -48,6 +48,8 @@ module.exports = (app) => ({
     if (!EH_UUID.test(uuidPedido)) {
       return res.status(400).json({ message: 'O pedido precisa de um uuid válido gerado no aparelho.' });
     }
+    const pessoais = D.lerGeneroNascimento(b);
+    if (pessoais.erro) return res.status(400).json({ message: pessoais.erro });
 
     try {
       const so = await F.escopoVendedor(app, uid);
@@ -103,6 +105,8 @@ module.exports = (app) => ({
           cliente_doc: o.cliente_doc, cliente_nome: o.cliente_nome,
           cliente_cod: o.cliente_cod, cliente_loja: o.cliente_loja,
           cliente_rg_ie: D.trim(b.cliente_rg_ie).slice(0, 30) || null,
+          cliente_genero: pessoais.cliente_genero,
+          cliente_nascimento: pessoais.cliente_nascimento,
           cliente_resp: D.trim(b.cliente_resp).slice(0, 120) || null,
           cliente_cro: o.cliente_cro || D.trim(b.cliente_cro).slice(0, 20) || null,
           cliente_email: o.cliente_email, cliente_email2: o.cliente_email2,

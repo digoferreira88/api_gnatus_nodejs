@@ -28,6 +28,46 @@ const acrescimoAmazonia = (uf, total) => (ehAmazonia(uf) ? n2(N(total) * 0.03) :
 // para a tela; aqui a regra é só "tem documento utilizável".
 const documentoValido = (doc) => [11, 14].includes(soDig(doc).length);
 
+// Gênero e data de nascimento/abertura: o cadastro do cliente no Protheus exige os
+// dois (A1_ZGENERO e A1_DTNASC). Pessoa jurídica vai com 'E' — isso é decidido no
+// envio, não aqui: o pedido só guarda F ou M.
+function normalizarGenero(v) {
+  const s = trim(v).toLowerCase();
+  if (s === 'f' || s === 'feminino') return 'F';
+  if (s === 'm' || s === 'masculino') return 'M';
+  return null;
+}
+
+// Aceita AAAA-MM-DD (também com hora, como volta do GET) ou DD/MM/AAAA. A data tem de
+// existir no calendário e ficar entre 1900 e hoje.
+function normalizarData(v, hoje = new Date()) {
+  const s = trim(v);
+  let a, m, d;
+  let r = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T)/);
+  if (r) { [, a, m, d] = r; } else {
+    r = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!r) return null;
+    [, d, m, a] = r;
+  }
+  const ano = Number(a), mes = Number(m), dia = Number(d);
+  const dt = new Date(Date.UTC(ano, mes - 1, dia));
+  if (dt.getUTCFullYear() !== ano || dt.getUTCMonth() !== mes - 1 || dt.getUTCDate() !== dia) return null;
+  const iso = `${a}-${m}-${d}`;
+  const hojeIso = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`;
+  if (iso < '1900-01-01' || iso > hojeIso) return null;
+  return iso;
+}
+
+// Os dois campos como o pedido grava: vazio = nulo; preenchido e inválido = erro.
+function lerGeneroNascimento(b) {
+  const g = trim(b && b.cliente_genero), n = trim(b && b.cliente_nascimento);
+  const cliente_genero = g ? normalizarGenero(g) : null;
+  if (g && !cliente_genero) return { erro: 'Gênero: feminino ou masculino.' };
+  const cliente_nascimento = n ? normalizarData(n) : null;
+  if (n && !cliente_nascimento) return { erro: 'Data de nascimento ou de abertura inválida.' };
+  return { cliente_genero, cliente_nascimento };
+}
+
 // Um item pode vir sem produto do ERP (o talão tem linhas livres em "Peças de mão" e
 // "Demais itens"), mas nunca sem descrição e quantidade.
 function normalizarItem(it, i) {
@@ -133,5 +173,6 @@ async function registrar(Pg, documento, documentoId, acao, { de, para, usuarioId
 module.exports = {
   trim, soDig, N, n2,
   UF_AMAZONIA, PRAZO_EXPEDICAO_PADRAO, ehAmazonia, acrescimoAmazonia,
-  documentoValido, montarItens, proximoNumero, gravarItens, lerItens, registrar
+  documentoValido, montarItens, proximoNumero, gravarItens, lerItens, registrar,
+  normalizarGenero, normalizarData, lerGeneroNascimento
 };
