@@ -63,13 +63,24 @@ function validarEnvio(pedido, { forma, qtdItens }) {
   return {};
 }
 
-function pendenciasFinalizar(pedido) {
+// O que precisa estar resolvido antes do botão "Inserir no Protheus e finalizar":
+// tudo do finalizar, menos o nº (que é o botão quem traz).
+function pendenciasAntesDoProtheus(pedido) {
   const falta = [];
   if (!['aprovado', 'nao_exige'].includes(pedido.credito_status)) falta.push('crédito aprovado');
   if (!pedido.contrato_assinado_em) falta.push('contrato assinado');
+  return falta;
+}
+
+function pendenciasFinalizar(pedido) {
+  const falta = pendenciasAntesDoProtheus(pedido);
   if (!trim(pedido.protheus_pedido)) falta.push('nº do pedido no Protheus');
   return falta;
 }
+
+// O botão já mandou (ou está mandando) o pedido ao Protheus: o nº não se digita mais e
+// o pedido não volta ao vendedor.
+const lancadoPeloBotao = (pedido) => ['enviando', 'criado'].includes(pedido.protheus_envio);
 
 const motivoValido = (m) => { const t = trim(m); return t.length >= 5 && t.length <= 300 ? t : null; };
 const texto = (v, max) => trim(v).slice(0, max) || null;
@@ -103,6 +114,9 @@ function aplicarAcao(pedido, acao, dados = {}, ctx = {}) {
     }
 
     case 'devolver': {
+      if (lancadoPeloBotao(pedido)) {
+        return erro(409, 'O pedido está no Protheus: não dá para devolver. Cancele e exclua o pedido no Protheus.');
+      }
       const motivo = motivoValido(dados.motivo);
       if (!motivo) return erro(400, 'Explique ao vendedor o que corrigir (de 5 a 300 caracteres).');
       // A devolução reabre o pedido: crédito e contrato dependem da forma de
@@ -149,6 +163,7 @@ function aplicarAcao(pedido, acao, dados = {}, ctx = {}) {
     }
 
     case 'protheus': {
+      if (lancadoPeloBotao(pedido)) return erro(409, 'Este pedido foi lançado pelo botão: o nº veio do Protheus.');
       const bruto = trim(dados.numero);
       if (!bruto) {
         return ok(sit, { protheus_pedido: null, protheus_conferido: null, protheus_conferido_em: null },
@@ -266,6 +281,6 @@ async function conferirNumeroProtheus(app, numero, doc) {
 
 module.exports = {
   SITUACOES, ACOES_ADM, ROTULO,
-  podeEditar, validarEnvio, pendenciasFinalizar, aplicarAcao,
+  podeEditar, validarEnvio, pendenciasFinalizar, pendenciasAntesDoProtheus, aplicarAcao,
   temPerm, escopoVendedor, exigeEquipeAtiva, conferirNumeroProtheus, lerForma, tabelaComissao
 };

@@ -119,8 +119,13 @@ module.exports = (app) => ({
       }
 
       const numero = resultado.campos.protheus_pedido;
-      const aviso = acao === 'protheus' && numero && AVISO_PROTHEUS[resultado.campos.protheus_conferido]
+      let aviso = acao === 'protheus' && numero && AVISO_PROTHEUS[resultado.campos.protheus_conferido]
         ? AVISO_PROTHEUS[resultado.campos.protheus_conferido](numero) : null;
+      // A intranet não exclui no ERP: quem cancela um pedido que já está no Protheus
+      // precisa saber que lá ele continua.
+      if (resultado.situacao === 'cancelado' && D.trim(pedido.protheus_pedido)) {
+        aviso = `Exclua o pedido ${D.trim(pedido.protheus_pedido)} no Protheus: a intranet não exclui lá.`;
+      }
 
       return res.json({
         ok: true,

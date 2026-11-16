@@ -304,3 +304,28 @@ test('exigeEquipeAtiva: equipe interna passa; só-app precisa estar ativo na equ
   assert.match(await F.exigeEquipeAtiva(appEquipe({ interno: false, membro: false }), 7), /não está .*equipe do CIOSP 2027/);
   assert.match(await F.exigeEquipeAtiva(appEquipe({ interno: false, membro: true, ativa: false }), 7), /Nenhuma edição/);
 });
+
+// ---------------------------------------------------------------- botão do Protheus × plano B
+
+test('informar nº à mão é recusado depois do botão', () => {
+  for (const estado of ['enviando', 'criado']) {
+    const r = F.aplicarAcao(pronto({ protheus_pedido: null, protheus_envio: estado }), 'protheus', { numero: '1' }, ctx());
+    assert.equal(r.status, 409);
+    assert.equal(r.erro, 'Este pedido foi lançado pelo botão: o nº veio do Protheus.');
+  }
+  assert.equal(F.aplicarAcao(pronto({ protheus_pedido: null, protheus_envio: 'recusado' }), 'protheus', { numero: '1' }, ctx()).campos.protheus_pedido, '000001');
+});
+
+test('devolver é recusado quando já há pedido no Protheus pelo botão', () => {
+  const r = F.aplicarAcao(pronto({ protheus_envio: 'criado' }), 'devolver', { motivo: 'corrigir CPF' }, ctx());
+  assert.equal(r.status, 409);
+  assert.equal(r.erro, 'O pedido está no Protheus: não dá para devolver. Cancele e exclua o pedido no Protheus.');
+  assert.equal(F.aplicarAcao(pronto({ protheus_envio: 'enviando' }), 'devolver', { motivo: 'corrigir CPF' }, ctx()).status, 409);
+  assert.equal(F.aplicarAcao(pronto({ protheus_envio: 'recusado' }), 'devolver', { motivo: 'corrigir CPF' }, ctx()).situacao, 'devolvido');
+});
+
+test('pendências antes do Protheus não incluem o nº', () => {
+  assert.deepEqual(F.pendenciasAntesDoProtheus(pronto({ protheus_pedido: null })), []);
+  assert.deepEqual(F.pendenciasAntesDoProtheus(pronto({ contrato_assinado_em: null })), ['contrato assinado']);
+  assert.deepEqual(F.pendenciasAntesDoProtheus(pronto({ credito_status: 'pendente', contrato_assinado_em: null })), ['crédito aprovado', 'contrato assinado']);
+});
