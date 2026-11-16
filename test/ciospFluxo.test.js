@@ -329,3 +329,37 @@ test('pendências antes do Protheus não incluem o nº', () => {
   assert.deepEqual(F.pendenciasAntesDoProtheus(pronto({ contrato_assinado_em: null })), ['contrato assinado']);
   assert.deepEqual(F.pendenciasAntesDoProtheus(pronto({ credito_status: 'pendente', contrato_assinado_em: null })), ['crédito aprovado', 'contrato assinado']);
 });
+
+// ---------------------------------------------------------------- envio incerto (revisão final)
+
+test('envio incerto: nº à mão e devolver só depois de conferir que o Protheus não tem o pedido', () => {
+  const p = pronto({ protheus_pedido: null, protheus_envio: 'incerto' });
+  let r = F.aplicarAcao(p, 'protheus', { numero: '1' }, ctx());
+  assert.equal(r.status, 409);
+  assert.equal(r.erro, 'O último envio ao Protheus ficou sem confirmação e não deu para conferir se o pedido existe lá. Use "Tentar de novo" no painel.');
+  r = F.aplicarAcao(p, 'devolver', { motivo: 'corrigir CPF' }, ctx({ noProtheus: { situacao: 'existe', numero: '098765' } }));
+  assert.equal(r.status, 409);
+  assert.equal(r.erro, 'O Protheus já tem o pedido 098765 deste pedido: use "Tentar de novo" no painel para adotar o nº.');
+  r = F.aplicarAcao(p, 'protheus', { numero: '1' }, ctx({ noProtheus: { situacao: 'nao_existe' } }));
+  assert.equal(r.campos.protheus_pedido, '000001');
+  assert.equal(F.aplicarAcao(p, 'devolver', { motivo: 'corrigir CPF' }, ctx({ noProtheus: { situacao: 'nao_existe' } })).situacao, 'devolvido');
+});
+
+test('aviso do cancelamento: nº conhecido, ou envio sem confirmação', () => {
+  assert.equal(F.avisoCancelamento({ protheus_pedido: '012345' }, 700012), 'Exclua o pedido 012345 no Protheus: a intranet não exclui lá.');
+  const pode = 'Pode haver pedido no Protheus para este (C5_IDPORTA 700012): confira e, se houver, exclua lá.';
+  assert.equal(F.avisoCancelamento({ protheus_pedido: null, protheus_envio: 'incerto' }, 700012), pode);
+  assert.equal(F.avisoCancelamento({ protheus_pedido: null, protheus_envio: 'enviando' }, 700012), pode);
+  assert.equal(F.avisoCancelamento({ protheus_pedido: null, protheus_envio: 'recusado' }, 700012), null);
+});
+
+test('pedidoNoProtheusPorId consulta o SC5 pelo C5_IDPORTA (só leitura)', async () => {
+  const app = (linhas, falha) => ({ services: { Protheus: { connectAndQuery: async (sql, params) => {
+    if (falha) throw new Error('Failed to connect');
+    assert.match(sql, /C5_IDPORTA = @id/); assert.equal(params.id, 700012);
+    return linhas;
+  } } } });
+  assert.deepEqual(await F.pedidoNoProtheusPorId(app([{ num: '098765 ' }]), 700012), { situacao: 'existe', numero: '098765' });
+  assert.deepEqual(await F.pedidoNoProtheusPorId(app([]), 700012), { situacao: 'nao_existe' });
+  assert.deepEqual(await F.pedidoNoProtheusPorId(app([], true), 700012), { situacao: 'indisponivel' });
+});

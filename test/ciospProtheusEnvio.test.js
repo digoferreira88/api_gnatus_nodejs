@@ -50,7 +50,7 @@ test('montarEnvio: PF, celular cobre o telefone vazio, preço e TES do item', ()
   assert.equal(env.simular, false);
   assert.equal(env.id_externo, 700123);
   assert.equal(env.usuario, 'joana.silva');
-  assert.equal(env.origem, 'CIOSP 2027 · pedido 45');
+  assert.equal(env.origem, 'CIOSP 2027 - pedido 45');
   assert.equal(env.cliente.cgc, '45282860848');
   assert.equal(env.cliente.codigo, ''); assert.equal(env.cliente.loja, '');
   assert.equal(env.cliente.pessoa, 'F'); assert.equal(env.cliente.genero, 'F');
@@ -66,14 +66,14 @@ test('montarEnvio: PF, celular cobre o telefone vazio, preço e TES do item', ()
   assert.equal(env.pedido.transportadora, '000001'); assert.equal(env.pedido.tipo_frete, 'C');
   assert.equal(env.pedido.frete, 0); assert.equal(env.pedido.despesa, 0); assert.equal(env.pedido.fat_parcial, 'N');
   assert.deepEqual(env.pedido.itens, [{ item: '01', produto: '005796', quantidade: 1, preco: 2427.86, tes: '530' }]);
-  assert.equal(env.pedido.mensagem_nota, 'CIOSP 2027 · pedido 45');
+  assert.equal(env.pedido.mensagem_nota, 'CIOSP 2027 - pedido 45');
 });
 
 test('montarEnvio: cliente já resolvido vai com código e loja; mensagem do ADM vem depois', () => {
   const env = E.montarEnvio({ pedido: { ...P, cliente_cod: '015000', cliente_loja: '01' }, itens: IT,
-    escolhas: { ...ESC, mensagem: 'entregar na clínica' } });
+    escolhas: { ...ESC, cliente_codigo: '015000', cliente_loja: '01', mensagem: 'entregar na clínica' } });
   assert.equal(env.cliente.codigo, '015000'); assert.equal(env.cliente.loja, '01');
-  assert.equal(env.pedido.mensagem_nota, 'CIOSP 2027 · pedido 45 · entregar na clínica');
+  assert.equal(env.pedido.mensagem_nota, 'CIOSP 2027 - pedido 45 - entregar na clinica');
   const outra = E.montarEnvio({ pedido: { ...P, cliente_cod: '015000', cliente_loja: '01' }, itens: IT,
     escolhas: { ...ESC, cliente_codigo: '015000', cliente_loja: '02' } });
   assert.equal(outra.cliente.loja, '02');
@@ -121,7 +121,7 @@ test('interpretarResposta: cada linha da tabela', () => {
   assert.equal(E.interpretarResposta({ http: 0, corpo: null, erro: 'TIMEOUT' }).resultado, 'incerto');
   assert.equal(E.interpretarResposta({ http: 0, corpo: null, erro: 'REDE' }).resultado, 'incerto');
   assert.equal(E.interpretarResposta({ http: 200, corpo: { status: 'CRIADO' } }).resultado, 'incerto');
-  const sim = E.interpretarResposta({ http: 200, corpo: { status: 'CRIADO', simulado: true, total: 10 } });
+  const sim = E.interpretarResposta({ http: 200, corpo: { status: 'CRIADO', simulado: true, total: 10 }, simular: true });
   assert.equal(sim.resultado, 'criado'); assert.equal(sim.simulado, true); assert.equal(sim.pedido, null);
   const cfg = E.interpretarResposta({ http: 0, corpo: null, erro: 'CONFIG' });
   assert.equal(cfg.resultado, 'recusado'); assert.equal(cfg.mensagem, 'API do Protheus não configurada no servidor.');
@@ -149,4 +149,61 @@ test('envio travado só com enviando há menos de 4 minutos', () => {
   assert.equal(E.envioTravado({ protheus_envio: 'enviando', protheus_envio_em: new Date('2027-01-28T11:57:00Z') }, agora), true);
   assert.equal(E.envioTravado({ protheus_envio: 'enviando', protheus_envio_em: new Date('2027-01-28T11:55:59Z') }, agora), false);
   assert.equal(E.envioTravado({ protheus_envio: 'incerto', protheus_envio_em: agora }, agora), false);
+});
+
+// ---------------------------------------------------------------- correções da revisão final
+
+test('montarEnvio: código e loja só das escolhas (cliente novo não herda o código antigo do pedido)', () => {
+  const env = E.montarEnvio({ pedido: { ...P, cliente_cod: '015000', cliente_loja: '01' }, itens: IT, escolhas: { ...ESC, cliente_codigo: '', cliente_loja: '' } });
+  assert.equal(env.cliente.codigo, ''); assert.equal(env.cliente.loja, '');
+});
+
+test('mensagem da nota e origem vão em ASCII (o Protheus quebra UTF-8)', () => {
+  const env = E.montarEnvio({ pedido: P, itens: IT, escolhas: { ...ESC, mensagem: 'Entregar após às 14h · portão 2' } });
+  assert.equal(env.pedido.mensagem_nota, 'CIOSP 2027 - pedido 45 - Entregar apos as 14h - portao 2');
+  assert.ok(/^[ -~]*$/.test(env.origem));
+});
+
+test('faixa do id_externo pode ser outra (teste no REST do Diego)', () => {
+  assert.equal(E.idExterno(123, 790000), 790123);
+  assert.equal(E.montarEnvio({ pedido: P, itens: IT, escolhas: ESC, faixa: 790000 }).id_externo, 790123);
+  assert.equal(E.montarEnvio({ pedido: P, itens: IT, escolhas: ESC }).id_externo, 700123);
+});
+
+test('resposta com simulado diferente do pedido vira incerto (envio real × resposta simulada)', () => {
+  const r = E.interpretarResposta({ http: 200, corpo: { status: 'CRIADO', simulado: true, pedido: '' }, simular: false });
+  assert.equal(r.resultado, 'incerto');
+  assert.match(r.mensagem, /simulado=sim para simular=não/);
+});
+
+test('simulação que volta com pedido real vira incerto com o nº', () => {
+  const r = E.interpretarResposta({ http: 200, corpo: { status: 'CRIADO', simulado: false, pedido: '98765' }, simular: true });
+  assert.equal(r.resultado, 'incerto');
+  assert.equal(r.pedido, '098765');
+  assert.match(r.mensagem, /098765/);
+});
+
+test('4xx do endpoint é recusa (nada criado) com a mensagem do corpo', () => {
+  const r = E.interpretarResposta({ http: 400, corpo: { INCONSISTENCIAS: [{ mensagem: 'Condicao invalida' }] } });
+  assert.equal(r.resultado, 'recusado'); assert.equal(r.mensagem, 'Condicao invalida');
+  const n = E.interpretarResposta({ http: 404, corpo: null });
+  assert.equal(n.resultado, 'recusado'); assert.match(n.mensagem, /HTTP 404/);
+  assert.equal(E.interpretarResposta({ http: 401, corpo: { message: 'unauthorized' } }).resultado, 'recusado');
+  assert.equal(E.interpretarResposta({ http: 409, corpo: { status: 'EM_ANDAMENTO' } }).resultado, 'incerto');
+});
+
+test('pedido do Protheus de outro CPF/CNPJ não é adotado; já existia avisa', () => {
+  assert.deepEqual(E.decidirAdocao({ resultado: 'criado', pedido: '098765', conferido: 'ok' }), { adotar: true, aviso: null });
+  assert.deepEqual(E.decidirAdocao({ resultado: 'ja_existia', pedido: '098765', conferido: 'ok' }), { adotar: true,
+    aviso: 'O Protheus já tinha este pedido (tentativa anterior): as escolhas desta tentativa podem não ter sido aplicadas. Confira o pedido 098765 no Protheus.' });
+  const d = E.decidirAdocao({ resultado: 'ja_existia', pedido: '098765', conferido: 'divergente' });
+  assert.equal(d.adotar, false);
+  assert.equal(d.mensagem, 'O pedido 098765 do Protheus é de outro CPF/CNPJ: peça para excluí-lo no Protheus e tente de novo.');
+});
+
+test('faixa do ambiente: CIOSP_PROTHEUS_FAIXA inteira positiva, senão 700.000', () => {
+  assert.equal(E.faixaDe({}), 700000);
+  assert.equal(E.faixaDe({ CIOSP_PROTHEUS_FAIXA: '790000' }), 790000);
+  assert.equal(E.faixaDe({ CIOSP_PROTHEUS_FAIXA: 'abc' }), 700000);
+  assert.equal(E.faixaDe({ CIOSP_PROTHEUS_FAIXA: '-5' }), 700000);
 });

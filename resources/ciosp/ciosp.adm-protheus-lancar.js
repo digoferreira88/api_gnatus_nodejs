@@ -69,9 +69,12 @@ module.exports = (app) => ({
       const escolhas = lerEscolhas(req.body, proposta);
       const faltas = P.faltasParaEnviar(proposta, escolhas);
       if (faltas.length) return res.status(400).json({ message: `Falta: ${faltas.join(', ')}.`, faltas });
+      // Código e loja decididos pela proposta (cliente novo vai vazio), nunca pelo corpo.
+      Object.assign(escolhas, P.clienteDoEnvio(proposta, escolhas));
 
       const usuario = D.trim(user?.EMAIL ?? user?.email).split('@')[0];
-      const payload = E.montarEnvio({ pedido: r0[0], itens: proposta.itens, escolhas, simular, usuario });
+      const faixa = E.faixaDe();
+      const payload = E.montarEnvio({ pedido: r0[0], itens: proposta.itens, escolhas, simular, usuario, faixa });
 
       // ------------------------------------------------ 2. transação curta
       const t1 = await Pg.withTransaction(async (db) => {
@@ -87,7 +90,7 @@ module.exports = (app) => ({
         if (ped.protheus_envio === 'criado') return { status: 409, erro: `Pedido já está no Protheus: nº ${D.trim(ped.protheus_pedido)}.` };
         if (E.envioTravado(ped, new Date())) return { status: 409, erro: E.MENSAGEM.em_andamento };
         if (D.trim(ped.protheus_pedido)) {
-          return { status: 409, erro: 'O pedido já tem nº do Protheus informado à mão: remova o nº para usar o botão.' };
+          return { status: 409, erro: 'O pedido já tem nº do Protheus informado à mão: se esse pedido existe no Protheus, finalize pelo passo 4 — o botão criaria outro.' };
         }
 
         if (!simular) {
@@ -111,20 +114,27 @@ module.exports = (app) => ({
 
       // ------------------------------------------------ 3. chamada (sem trava)
       const resp = await PV.incluirPedido(payload);
-      const lido = E.interpretarResposta(resp);
-      const criou = !simular && ['criado', 'ja_existia'].includes(lido.resultado);
+      const lido = E.interpretarResposta({ ...resp, simular });
+      const devolveuNumero = !simular && ['criado', 'ja_existia'].includes(lido.resultado) && !!lido.pedido;
       if (lido.resultado === 'incerto' || lido.resultado === 'sem_licenca') {
         console.warn(`ciosp/adm-protheus-lancar: pedido ${pedido.id} ${lido.resultado} (http ${resp.http}, ${resp.erro || '-'}, ${resp.duracao_ms} ms)`);
       }
-      const conferido = criou ? await F.conferirNumeroProtheus(app, lido.pedido, pedido.cliente_doc) : null;
+      const conferido = devolveuNumero ? await F.conferirNumeroProtheus(app, lido.pedido, pedido.cliente_doc) : null;
+      // Pedido do Protheus de outro CPF/CNPJ não é adotado (tentativa antiga com outro cliente).
+      const adocao = devolveuNumero ? E.decidirAdocao({ resultado: lido.resultado, pedido: lido.pedido, conferido }) : null;
+      const criou = devolveuNumero && adocao.adotar;
+      if (adocao && !adocao.adotar) { lido.resultado = 'recusado'; lido.mensagem = adocao.mensagem; lido.inconsistencias = []; }
 
       // ------------------------------------------------ 4. fechamento
       const t2 = await Pg.withTransaction(async (db) => {
         await trava(db, uuid);
         await q(db, `SELECT id FROM tab_ciosp_pedido WHERE id = $1 FOR UPDATE`, [pedido.id]);
+        // A linha da tentativa guarda o que o Protheus respondeu (ja_existia continua
+        // ja_existia mesmo quando a intranet não adota o nº).
+        const resultadoEnvio = adocao && !adocao.adotar ? E.interpretarResposta({ ...resp, simular }).resultado : lido.resultado;
         await q(db,
           `UPDATE tab_ciosp_protheus_envio SET http = $2, resposta = $3, resultado = $4, duracao_ms = $5 WHERE id = $1`,
-          [t1.envioId, resp.http || null, resp.corpo ? JSON.stringify(resp.corpo) : null, lido.resultado, resp.duracao_ms]);
+          [t1.envioId, resp.http || null, resp.corpo ? JSON.stringify(resp.corpo) : null, resultadoEnvio, resp.duracao_ms]);
         if (simular) return {};
 
         if (!criou) {
@@ -162,7 +172,7 @@ module.exports = (app) => ({
 
       // ------------------------------------------------ trilha e auditoria
       const num = lido.pedido;
-      let aviso = null;
+      let aviso = criou ? adocao.aviso : null;
       if (criou) {
         await D.registrar(Pg, 'pedido', pedido.id, 'protheus', {
           de: pedido.situacao,
@@ -171,16 +181,19 @@ module.exports = (app) => ({
         });
         if (t2.finalizou) await D.registrar(Pg, 'pedido', pedido.id, 'finalizou', { de: 'conferido', para: 'finalizado', usuarioId: uid });
         if (lido.total != null && Math.abs(lido.total - proposta.totais.itens) > 0.05) {
-          aviso = `Total divergente: Protheus R$ ${reais(lido.total)} × pedido R$ ${reais(proposta.totais.itens)}.`;
+          aviso = [aviso, `Total divergente: Protheus R$ ${reais(lido.total)} × pedido R$ ${reais(proposta.totais.itens)}.`].filter(Boolean).join(' ');
           await D.registrar(Pg, 'pedido', pedido.id, 'protheus',
             { para: `total divergente: Protheus R$ ${reais(lido.total)} × pedido R$ ${reais(proposta.totais.itens)}`, usuarioId: uid });
         }
         if (t2.erroFinalizar) aviso = [`Pedido ${num} criado no Protheus, mas não deu para finalizar: ${t2.erroFinalizar}`, aviso].filter(Boolean).join(' ');
       } else if (!simular) {
         await D.registrar(Pg, 'pedido', pedido.id, 'protheus', {
-          para: lido.resultado === 'recusado' ? `recusado: ${lido.mensagem}`.slice(0, 300) : `${lido.resultado}: sem confirmação do Protheus`,
+          para: lido.resultado === 'recusado' ? `recusado: ${lido.mensagem}`.slice(0, 300) : `${lido.resultado}: ${lido.mensagem || 'sem confirmação do Protheus'}`.slice(0, 300),
           usuarioId: uid
         });
+      } else if (lido.resultado === 'incerto') {
+        // Simulação que voltou como pedido real (ou sem confirmação): fica na trilha.
+        await D.registrar(Pg, 'pedido', pedido.id, 'protheus', { para: `simulação: ${lido.mensagem}`.slice(0, 300), usuarioId: uid });
       }
       Auditoria.registrar(app, {
         modulo: 'CIOSP', submodulo: 'Fila do ADM', acao: simular ? 'PROTHEUS_SIMULAR' : 'PROTHEUS_LANCAR',

@@ -13,6 +13,7 @@ const requirePerm = (app) => require('../../middlewares/requirePerm')(app)([1900
 const Auditoria = require('../../services/auditoria');
 const D = require('../../services/ciospDocs');
 const F = require('../../services/ciospFluxo');
+const E = require('../../services/ciospProtheusEnvio');
 const Painel = require('../../services/ciospPainel');
 const { q } = require('../../services/ciospEdicao');
 
@@ -48,13 +49,16 @@ module.exports = (app) => ({
     if (!F.ACOES_ADM.includes(acao)) return res.status(404).json({ message: 'Ação desconhecida.' });
 
     try {
-      let protheusConferido = null;
+      let protheusConferido = null, noProtheus = null;
       const numeroProtheus = D.trim(dados.numero);
-      if (acao === 'protheus' && /^\d{1,6}$/.test(numeroProtheus)) {
-        const p0 = await Pg.connectAndQuery(`SELECT cliente_doc FROM tab_ciosp_pedido WHERE uuid = @uuid`, { uuid });
-        if (p0.length) {
-          protheusConferido = await F.conferirNumeroProtheus(app, numeroProtheus.padStart(6, '0'), p0[0].cliente_doc);
-        }
+      const [p0] = await Pg.connectAndQuery(`SELECT id, cliente_doc, protheus_envio FROM tab_ciosp_pedido WHERE uuid = @uuid`, { uuid });
+      if (p0 && acao === 'protheus' && /^\d{1,6}$/.test(numeroProtheus)) {
+        protheusConferido = await F.conferirNumeroProtheus(app, numeroProtheus.padStart(6, '0'), p0.cliente_doc);
+      }
+      // Envio pelo botão sem confirmação: o pedido pode existir no Protheus. Nº à mão e
+      // devolver só depois de conferir no SC5 (leitura) — ver F.bloqueioIncerto.
+      if (p0 && ['protheus', 'devolver'].includes(acao) && p0.protheus_envio === 'incerto') {
+        noProtheus = await F.pedidoNoProtheusPorId(app, E.idExterno(p0.id, E.faixaDe()));
       }
 
       const r = await Pg.withTransaction(async (db) => {
@@ -72,6 +76,7 @@ module.exports = (app) => ({
           forma: ctxPainel.forma || {},
           erroPainel: acao === 'conferir' ? Painel.linhaPainel(pedido, ctxPainel).erro : undefined,
           protheusConferido,
+          noProtheus,
           nomeResponsavel: resp[0] ? resp[0].nome : null,
           nomeUsuario: user?.nome || null
         });
@@ -121,10 +126,10 @@ module.exports = (app) => ({
       const numero = resultado.campos.protheus_pedido;
       let aviso = acao === 'protheus' && numero && AVISO_PROTHEUS[resultado.campos.protheus_conferido]
         ? AVISO_PROTHEUS[resultado.campos.protheus_conferido](numero) : null;
-      // A intranet não exclui no ERP: quem cancela um pedido que já está no Protheus
-      // precisa saber que lá ele continua.
-      if (resultado.situacao === 'cancelado' && D.trim(pedido.protheus_pedido)) {
-        aviso = `Exclua o pedido ${D.trim(pedido.protheus_pedido)} no Protheus: a intranet não exclui lá.`;
+      // A intranet não exclui no ERP: quem cancela um pedido que está (ou pode estar) no
+      // Protheus precisa saber que lá ele continua.
+      if (resultado.situacao === 'cancelado') {
+        aviso = F.avisoCancelamento(pedido, E.idExterno(pedido.id, E.faixaDe())) || aviso;
       }
 
       return res.json({

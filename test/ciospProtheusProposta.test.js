@@ -176,3 +176,32 @@ test('gênero e data do pedido entram nas escolhas; data do node-pg não volta u
   const p = P.montarProposta(base({ pedido: { cliente_genero: 'M', cliente_nascimento: new Date(1985, 0, 31) }, cliente: { lojas: [] } }));
   assert.equal(p.escolhas.genero, 'M'); assert.equal(p.escolhas.nascimento, '1985-01-31');
 });
+
+// ---------------------------------------------------------------- correções da revisão final
+
+test('clienteDoEnvio: novo vai vazio; loja única ignora o corpo; várias lojas só aceita loja do cliente', () => {
+  const novo = P.montarProposta(base({ cliente: { lojas: [] } }));
+  assert.deepEqual(P.clienteDoEnvio(novo, { cliente_codigo: '015000', cliente_loja: '01' }), { cliente_codigo: '', cliente_loja: '' });
+  const uma = P.montarProposta(base());
+  assert.deepEqual(P.clienteDoEnvio(uma, { cliente_codigo: '999999', cliente_loja: '09' }), { cliente_codigo: '015000', cliente_loja: '01' });
+  const lojas = [{ codigo: '015000', loja: '01', nome: 'C', bloqueado: false, condicao: null },
+    { codigo: '015000', loja: '02', nome: 'C', bloqueado: false, condicao: null }];
+  const v = P.montarProposta(base({ pedido: { cliente_cod: null, cliente_loja: null }, cliente: { lojas } }));
+  assert.deepEqual(P.clienteDoEnvio(v, { cliente_codigo: '015000', cliente_loja: '02' }), { cliente_codigo: '015000', cliente_loja: '02' });
+  assert.deepEqual(P.clienteDoEnvio(v, { cliente_codigo: '999999', cliente_loja: '09' }), { cliente_codigo: '', cliente_loja: '' });
+});
+
+test('última tentativa anterior à conferência atual não pré-preenche', () => {
+  const velha = { enviado_em: new Date('2027-01-28T11:00:00Z'), escolhas: { transportadora: '000012' } };
+  const p = P.montarProposta(base({ pedido: { conferido_em: new Date('2027-01-28T12:00:00Z') }, ultima: velha }));
+  assert.equal(p.escolhas.transportadora, '');
+  const q = P.montarProposta(base({ pedido: { conferido_em: new Date('2027-01-28T10:00:00Z') }, ultima: velha }));
+  assert.equal(q.escolhas.transportadora, '000012');
+});
+
+test('pedido misto força faturamento parcial S mesmo com a última tentativa em N', () => {
+  const p = P.montarProposta(base({ produtos: { '005796': { tipo: 'PA' }, '009001': { tipo: 'SV' } },
+    itens: [{ seq: 1, produto: '005796', descricao: 'G2', quantidade: '1', preco: '10' }, { seq: 2, produto: '009001', descricao: 'Garantia', quantidade: '1', preco: '5' }],
+    ultima: { escolhas: { fat_parcial: 'N' } } }));
+  assert.equal(p.escolhas.fat_parcial, 'S');
+});

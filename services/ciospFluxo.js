@@ -82,6 +82,26 @@ function pendenciasFinalizar(pedido) {
 // o pedido não volta ao vendedor.
 const lancadoPeloBotao = (pedido) => ['enviando', 'criado'].includes(pedido.protheus_envio);
 
+// Envio "incerto" (timeout, 500…): o pedido PODE ter sido criado. Nº à mão e devolver
+// só depois de a rota conferir no SC5 (C5_IDPORTA) que ele não existe — senão o plano B
+// duplicaria o pedido no ERP. Devolve a mensagem de bloqueio ou null.
+function bloqueioIncerto(pedido, noProtheus) {
+  if (pedido.protheus_envio !== 'incerto') return null;
+  const s = noProtheus && noProtheus.situacao;
+  if (s === 'nao_existe') return null;
+  if (s === 'existe') return `O Protheus já tem o pedido ${noProtheus.numero} deste pedido: use "Tentar de novo" no painel para adotar o nº.`;
+  return 'O último envio ao Protheus ficou sem confirmação e não deu para conferir se o pedido existe lá. Use "Tentar de novo" no painel.';
+}
+
+// Quem cancela precisa saber se ficou pedido no Protheus (a intranet não exclui lá).
+function avisoCancelamento(pedido, idExterno) {
+  if (trim(pedido.protheus_pedido)) return `Exclua o pedido ${trim(pedido.protheus_pedido)} no Protheus: a intranet não exclui lá.`;
+  if (['enviando', 'incerto'].includes(pedido.protheus_envio)) {
+    return `Pode haver pedido no Protheus para este (C5_IDPORTA ${idExterno}): confira e, se houver, exclua lá.`;
+  }
+  return null;
+}
+
 const motivoValido = (m) => { const t = trim(m); return t.length >= 5 && t.length <= 300 ? t : null; };
 const texto = (v, max) => trim(v).slice(0, max) || null;
 
@@ -117,6 +137,8 @@ function aplicarAcao(pedido, acao, dados = {}, ctx = {}) {
       if (lancadoPeloBotao(pedido)) {
         return erro(409, 'O pedido está no Protheus: não dá para devolver. Cancele e exclua o pedido no Protheus.');
       }
+      const incertoDev = bloqueioIncerto(pedido, ctx.noProtheus);
+      if (incertoDev) return erro(409, incertoDev);
       const motivo = motivoValido(dados.motivo);
       if (!motivo) return erro(400, 'Explique ao vendedor o que corrigir (de 5 a 300 caracteres).');
       // A devolução reabre o pedido: crédito e contrato dependem da forma de
@@ -164,6 +186,8 @@ function aplicarAcao(pedido, acao, dados = {}, ctx = {}) {
 
     case 'protheus': {
       if (lancadoPeloBotao(pedido)) return erro(409, 'Este pedido foi lançado pelo botão: o nº veio do Protheus.');
+      const incertoNum = bloqueioIncerto(pedido, ctx.noProtheus);
+      if (incertoNum) return erro(409, incertoNum);
       const bruto = trim(dados.numero);
       if (!bruto) {
         return ok(sit, { protheus_pedido: null, protheus_conferido: null, protheus_conferido_em: null },
@@ -279,7 +303,22 @@ async function conferirNumeroProtheus(app, numero, doc) {
   }
 }
 
+// Existe pedido no SC5 com este C5_IDPORTA? (somente leitura) Para decidir o que fazer
+// depois de um envio sem confirmação.
+async function pedidoNoProtheusPorId(app, idExterno) {
+  try {
+    const linhas = await app.services.Protheus.connectAndQuery(`
+      SELECT TOP 1 RTRIM(C5_NUM) num FROM SC5010 WITH (NOLOCK)
+       WHERE C5_IDPORTA = @id AND D_E_L_E_T_ <> '*'`, { id: Number(idExterno) });
+    return linhas && linhas.length ? { situacao: 'existe', numero: trim(linhas[0].num) } : { situacao: 'nao_existe' };
+  } catch (e) {
+    console.warn('ciospFluxo/pedidoNoProtheusPorId:', e.message);
+    return { situacao: 'indisponivel' };
+  }
+}
+
 module.exports = {
+  bloqueioIncerto, avisoCancelamento, pedidoNoProtheusPorId,
   SITUACOES, ACOES_ADM, ROTULO,
   podeEditar, validarEnvio, pendenciasFinalizar, pendenciasAntesDoProtheus, aplicarAcao,
   temPerm, escopoVendedor, exigeEquipeAtiva, conferirNumeroProtheus, lerForma, tabelaComissao

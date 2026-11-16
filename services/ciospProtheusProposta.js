@@ -92,7 +92,13 @@ function montarProposta({ pedido, itens, membro, forma, cliente, municipios, pro
     fat_parcial: misto || p.entrega_parcial ? 'S' : 'N', mensagem: '',
     tes: Object.fromEntries(lidos.map(i => [i.seq, '']))
   };
-  const escolhas = { ...padrao, ...((ultima && ultima.escolhas) || {}) };
+  // A última tentativa só pré-preenche se é desta conferência: depois de uma devolução
+  // (forma, itens ou cliente trocados) as escolhas antigas não valem. Pedido misto é
+  // sempre faturamento parcial S (regra do MT410TOK) — o campo fica travado na tela.
+  const valeUltima = ultima && ultima.escolhas &&
+    !(p.conferido_em && ultima.enviado_em && new Date(ultima.enviado_em) < new Date(p.conferido_em));
+  const escolhas = { ...padrao, ...(valeUltima ? ultima.escolhas : {}) };
+  if (misto) escolhas.fat_parcial = 'S';
 
   // ------------------------------------------------ o que o ADM não resolve no painel
   const fixas = [];
@@ -119,6 +125,20 @@ function montarProposta({ pedido, itens, membro, forma, cliente, municipios, pro
     faltas_fixas: [...new Set(fixas)],
     _pedido: p
   };
+}
+
+// Código e loja que vão ao Protheus, decididos pela proposta — nunca o que veio no
+// corpo sem conferência, nem o cliente_cod antigo do pedido: cliente novo vai vazio;
+// loja única vai com ela; várias lojas, só uma loja deste cliente.
+function clienteDoEnvio(proposta, escolhas) {
+  const e = escolhas || {};
+  const cli = proposta.cliente || {};
+  const vazio = { cliente_codigo: '', cliente_loja: '' };
+  if (cli.situacao !== 'encontrado' && cli.situacao !== 'varias_lojas') return vazio;
+  const lojas = cli.lojas || [];
+  const loja = lojas.length === 1 ? lojas[0]
+    : lojas.find(l => trim(l.codigo) === trim(e.cliente_codigo) && trim(l.loja) === trim(e.cliente_loja));
+  return loja ? { cliente_codigo: trim(loja.codigo), cliente_loja: trim(loja.loja) } : vazio;
 }
 
 // Tudo o que impede o envio com as escolhas do ADM. Vazio = pode enviar.
@@ -178,4 +198,4 @@ function faltasParaEnviar(proposta, escolhas) {
   return [...new Set(f)];
 }
 
-module.exports = { TES_CIOSP_2026, ordenarTes, acharMunicipio, montarProposta, faltasParaEnviar };
+module.exports = { TES_CIOSP_2026, ordenarTes, acharMunicipio, montarProposta, faltasParaEnviar, clienteDoEnvio };

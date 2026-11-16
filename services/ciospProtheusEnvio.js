@@ -8,8 +8,14 @@
 const { trim, soDig, n2 } = require('./ciospDocs');
 
 // C5_IDPORTA: portal B2B usa de 1.223 a 104.539, Shopify 500.000+. O CIOSP é 700.000+.
+// A faixa muda só em teste (CIOSP_PROTHEUS_FAIXA), para um teste no REST do Diego
+// nunca ocupar o id_externo de um pedido real.
 const FAIXA_CIOSP = 700000;
-const idExterno = (pedidoId) => FAIXA_CIOSP + Number(pedidoId);
+const idExterno = (pedidoId, faixa = FAIXA_CIOSP) => Number(faixa || FAIXA_CIOSP) + Number(pedidoId);
+const faixaDe = (env = process.env) => {
+  const n = Number(env.CIOSP_PROTHEUS_FAIXA);
+  return Number.isInteger(n) && n > 0 ? n : FAIXA_CIOSP;
+};
 
 const TRAVA_MS = 4 * 60 * 1000;   // "enviando" mais novo que isso barra novo envio
 
@@ -44,6 +50,11 @@ function separarFone(v) {
 const semAcento = (v) => trim(v).normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toUpperCase().replace(/\s+/g, ' ');
 
+// Texto livre que vai para a nota: só ASCII (a ida ao Protheus já quebrou UTF-8 no
+// SolicCompra, que é o molde do endpoint). "·" vira "-"; acento sai; caixa fica.
+const ascii = (v) => trim(v).normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/·/g, '-').replace(/[^\x20-\x7E]/g, '').replace(/\s+/g, ' ').trim();
+
 // A1_NREDUZ: até 20 caracteres sem partir palavra.
 function nomeReduzido(nome) {
   const palavras = semAcento(nome).split(' ').filter(Boolean);
@@ -70,7 +81,9 @@ function dataIso(v) {
 }
 
 // O JSON do contrato (seção 5.1 da spec).
-function montarEnvio({ pedido, itens, escolhas = {}, simular = false, usuario = '' }) {
+// Código e loja do cliente vêm SÓ das escolhas: a rota já resolveu pela proposta
+// (vazios para cliente novo). O cliente_cod do pedido pode ser de outro documento.
+function montarEnvio({ pedido, itens, escolhas = {}, simular = false, usuario = '', faixa = FAIXA_CIOSP }) {
   const p = pedido || {};
   const esc = escolhas || {};
   const doc = soDig(p.cliente_doc);
@@ -79,20 +92,20 @@ function montarEnvio({ pedido, itens, escolhas = {}, simular = false, usuario = 
   const cel = separarFone(p.cliente_celular);
   const telefone = fone.numero ? fone : cel;
   const celular = cel.numero ? cel : fone;
-  const origem = `${trim(p.edicao)} · pedido ${p.numero}`;
-  const mensagem = [origem, trim(esc.mensagem)].filter(Boolean).join(' · ').slice(0, 500);
+  const origem = ascii(`${trim(p.edicao)} - pedido ${p.numero}`);
+  const mensagem = [origem, ascii(esc.mensagem)].filter(Boolean).join(' - ').slice(0, 500);
   const tes = esc.tes || {};
 
   return {
     filial: '01',
     simular: !!simular,
-    id_externo: idExterno(p.id),
+    id_externo: idExterno(p.id, faixa),
     origem,
     usuario: trim(usuario),
     cliente: {
       cgc: doc,
-      codigo: trim(esc.cliente_codigo || p.cliente_cod),
-      loja: trim(esc.cliente_loja || p.cliente_loja),
+      codigo: trim(esc.cliente_codigo),
+      loja: trim(esc.cliente_loja),
       pessoa: pj ? 'J' : 'F',
       nome: semAcento(p.cliente_nome),
       nome_reduzido: nomeReduzido(p.cliente_nome),
@@ -146,8 +159,9 @@ function inconsistenciasDe(corpo) {
   }));
 }
 
-// A resposta do endpoint (seção 5.3) → o que a intranet faz com ela.
-function interpretarResposta({ http, corpo, erro } = {}) {
+// A resposta do endpoint (seção 5.3) → o que a intranet faz com ela. `simular` é o que
+// a intranet pediu: resposta com outro "simulado" não é confiável (incerto).
+function interpretarResposta({ http, corpo, erro, simular = false } = {}) {
   const base = { pedido: null, cliente: null, total: null, total_mercadoria: null, simulado: false, inconsistencias: [], mensagem: null };
   if (erro === 'CONFIG') return { ...base, resultado: 'recusado', mensagem: 'API do Protheus não configurada no servidor.' };
   if (erro) return { ...base, resultado: 'incerto', mensagem: MENSAGEM.incerto };
@@ -167,6 +181,14 @@ function interpretarResposta({ http, corpo, erro } = {}) {
 
   if (Number(http) === 200 && (status === 'CRIADO' || status === 'JA_EXISTIA')) {
     const num = trim(corpo.pedido);
+    if (lido.simulado !== !!simular) {
+      const n = /^\d{1,6}$/.test(num) ? num.padStart(6, '0') : null;
+      return {
+        ...lido, resultado: 'incerto', pedido: n,
+        mensagem: `O Protheus respondeu simulado=${lido.simulado ? 'sim' : 'não'} para simular=${simular ? 'sim' : 'não'}.` +
+          (n ? ` Confira o pedido ${n} no Protheus antes de tentar de novo.` : ' Confira no Protheus antes de tentar de novo.')
+      };
+    }
     if (/^\d{1,6}$/.test(num)) {
       return { ...lido, resultado: status === 'CRIADO' ? 'criado' : 'ja_existia', pedido: num.padStart(6, '0') };
     }
@@ -180,11 +202,34 @@ function interpretarResposta({ http, corpo, erro } = {}) {
     return { ...lido, resultado: 'recusado', mensagem };
   }
 
-  if (Number(http) === 409 && status === 'EM_ANDAMENTO') {
+  if (Number(http) === 409) {
     return { ...lido, resultado: 'incerto', mensagem: 'O Protheus ainda está gravando a primeira tentativa. ' + MENSAGEM.incerto };
   }
 
+  // Outro 4xx (400 de validação, 401, 404…): o endpoint recusou antes de gravar.
+  if (Number(http) >= 400 && Number(http) < 500) {
+    const mensagem = (lido.inconsistencias[0] && lido.inconsistencias[0].mensagem)
+      || trim(corpo && (corpo.mensagem || corpo.message))
+      || `O Protheus recusou o pedido (HTTP ${http}).`;
+    return { ...lido, resultado: 'recusado', mensagem };
+  }
+
   return { ...lido, resultado: 'incerto', mensagem: MENSAGEM.incerto };
+}
+
+// O Protheus devolveu um nº: adotar? Só se o pedido de lá é do mesmo CPF/CNPJ
+// (conferirNumeroProtheus). Um JA_EXISTIA é de uma tentativa anterior: as escolhas
+// desta podem não ter sido aplicadas.
+function decidirAdocao({ resultado, pedido, conferido }) {
+  if (conferido === 'divergente') {
+    return { adotar: false, mensagem: `O pedido ${pedido} do Protheus é de outro CPF/CNPJ: peça para excluí-lo no Protheus e tente de novo.` };
+  }
+  return {
+    adotar: true,
+    aviso: resultado === 'ja_existia'
+      ? `O Protheus já tinha este pedido (tentativa anterior): as escolhas desta tentativa podem não ter sido aplicadas. Confira o pedido ${pedido} no Protheus.`
+      : null
+  };
 }
 
 const estadoEnvio = (resultado) => (
@@ -198,6 +243,6 @@ function envioTravado(pedido, agora = new Date()) {
 
 module.exports = {
   FAIXA_CIOSP, TRAVA_MS, MENSAGEM,
-  idExterno, condicaoProposta, separarFone, semAcento, nomeReduzido, dataIso,
-  montarEnvio, interpretarResposta, estadoEnvio, envioTravado
+  idExterno, faixaDe, condicaoProposta, separarFone, semAcento, ascii, nomeReduzido, dataIso,
+  montarEnvio, interpretarResposta, decidirAdocao, estadoEnvio, envioTravado
 };
