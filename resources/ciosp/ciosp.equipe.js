@@ -13,6 +13,7 @@ module.exports = (app) => ({
     try {
       const rows = await app.services.Pg.connectAndQuery(
         `SELECT e.id, e.usuario_id, e.nome_exibicao, e.papel, e.gerente_id, e.categoria, e.equipe, e.ativo,
+                e.protheus_vendedor, e.protheus_bu,
                 u.email, u.nome usuario_nome, g.nome_exibicao gerente_nome
            FROM tab_ciosp_equipe e
            LEFT JOIN tab_intranet_usr u ON u.id = e.usuario_id
@@ -22,7 +23,8 @@ module.exports = (app) => ({
       return res.json(rows.map(r => ({
         id: r.id, usuario_id: r.usuario_id, nome_exibicao: r.nome_exibicao, papel: r.papel,
         gerente_id: r.gerente_id, gerente_nome: r.gerente_nome, categoria: r.categoria, equipe: r.equipe,
-        ativo: !!r.ativo, email: r.email, usuario_nome: r.usuario_nome
+        ativo: !!r.ativo, email: r.email, usuario_nome: r.usuario_nome,
+        protheus_vendedor: r.protheus_vendedor || '', protheus_bu: r.protheus_bu || ''
       })));
     } catch (err) {
       console.error('ciosp/equipe:', err.message);

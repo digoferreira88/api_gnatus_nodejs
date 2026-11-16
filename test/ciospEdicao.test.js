@@ -29,7 +29,8 @@ const formaOk = { nome: 'Unicred', coluna_base: '10x', desconto_pct: 0, parcelas
 test('validarForma aceita uma forma completa', () => {
   const r = E.validarForma(formaOk);
   assert.equal(r.erro, undefined);
-  assert.deepEqual(r.forma, { nome: 'Unicred', coluna_base: '10x', desconto_pct: 0, parcelas_max: 12, exige_credito: false, financeira: true, ativo: true, ordem: 0 });
+  assert.deepEqual(r.forma, { nome: 'Unicred', coluna_base: '10x', desconto_pct: 0, parcelas_max: 12, exige_credito: false, financeira: true, ativo: true, ordem: 0,
+    protheus_condicao: null, protheus_condicao_parcelada: false, protheus_forma: null });
 });
 
 test('validarForma exige nome de até 60 caracteres', () => {
@@ -144,4 +145,30 @@ test('herdarFotos mantém a foto da linha que continua na tabela nova', () => {
   assert.equal(r.linhas[1].foto_id, null);
   assert.equal(r.mantidas, 1);
   assert.deepEqual(r.perdidas, ['CADEIRA HOF · CADEIRA CLINICA HOF']);
+});
+
+// ---------------------------------------------------------------- campos do Protheus
+
+test('validarMembro normaliza vendedor e BU do Protheus; vazio vira nulo', () => {
+  const base = { usuario_id: 5, nome_exibicao: 'Joana', papel: 'vendedor', gerente_id: 3, categoria: 'EQUIPAMENTOS' };
+  const r = E.validarMembro({ ...base, protheus_vendedor: '000091', protheus_bu: ' cov ' });
+  assert.equal(r.membro.protheus_vendedor, '000091');
+  assert.equal(r.membro.protheus_bu, 'COV');
+  const v = E.validarMembro(base);
+  assert.equal(v.membro.protheus_vendedor, null); assert.equal(v.membro.protheus_bu, null);
+  assert.equal(E.validarMembro({ ...base, protheus_vendedor: '1234567' }).erro, 'Código do vendedor no Protheus: até 6 letras ou números.');
+  assert.equal(E.validarMembro({ ...base, protheus_bu: 'CO-V' }).erro, 'BU no Protheus: até 3 letras ou números.');
+});
+
+test('validarForma lê condição, parcelada e forma do Protheus', () => {
+  const ok = { nome: 'Cartão até 10x', coluna_base: '10x', desconto_pct: 0, parcelas_max: 10 };
+  const r = E.validarForma({ ...ok, protheus_condicao: '400', protheus_condicao_parcelada: true, protheus_forma: '3' });
+  assert.equal(r.forma.protheus_condicao, '400');
+  assert.equal(r.forma.protheus_condicao_parcelada, true);
+  assert.equal(r.forma.protheus_forma, '3');
+  const v = E.validarForma(ok);
+  assert.equal(v.forma.protheus_condicao, null); assert.equal(v.forma.protheus_condicao_parcelada, false); assert.equal(v.forma.protheus_forma, null);
+  assert.equal(E.validarForma({ ...ok, protheus_condicao: '40' }).erro, 'Condição no Protheus: 3 dígitos.');
+  assert.equal(E.validarForma({ ...ok, protheus_condicao_parcelada: true }).erro, 'Informe a condição-base para variar pelas parcelas.');
+  assert.equal(E.validarForma({ ...ok, protheus_forma: '33' }).erro, 'Forma no Protheus: 1 letra ou número.');
 });

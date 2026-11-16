@@ -178,11 +178,20 @@ function validarForma(b) {
   if (!Number.isInteger(parcelas) || parcelas < 1 || parcelas > 24) {
     return { erro: 'Parcelas deve ser um número inteiro de 1 a 24.' };
   }
+  // Protheus: condição (E4_CODIGO), "varia pelas parcelas" (cartão 400 → 10x = 409) e
+  // forma (C5_FORMAPG, SX5 Z2). Opcionais: sem eles, o ADM escolhe no painel.
+  const condicao = String(b.protheus_condicao ?? '').trim() || null;
+  if (condicao && !/^\d{3}$/.test(condicao)) return { erro: 'Condição no Protheus: 3 dígitos.' };
+  const parcelada = bool(b.protheus_condicao_parcelada);
+  if (parcelada && !condicao) return { erro: 'Informe a condição-base para variar pelas parcelas.' };
+  const formaProtheus = String(b.protheus_forma ?? '').trim().toUpperCase() || null;
+  if (formaProtheus && !/^[0-9A-Z]$/.test(formaProtheus)) return { erro: 'Forma no Protheus: 1 letra ou número.' };
   return {
     forma: {
       nome, coluna_base: coluna, desconto_pct: Math.round(desconto * 100) / 100, parcelas_max: parcelas,
       exige_credito: bool(b.exige_credito), financeira: bool(b.financeira),
-      ativo: b.ativo === undefined ? true : bool(b.ativo), ordem: Number.isInteger(Number(b.ordem)) ? Number(b.ordem) : 0
+      ativo: b.ativo === undefined ? true : bool(b.ativo), ordem: Number.isInteger(Number(b.ordem)) ? Number(b.ordem) : 0,
+      protheus_condicao: condicao, protheus_condicao_parcelada: parcelada, protheus_forma: formaProtheus
     }
   };
 }
@@ -220,10 +229,16 @@ function validarMembro(b) {
   if (gerenteId && gerenteId === usuarioId) return { erro: 'Ninguém é gerente de si mesmo.' };
   const equipe = String(b.equipe || '').trim() || null;
   if (equipe && equipe.length > 120) return { erro: 'A equipe passa de 120 caracteres.' };
+  // Protheus: vendedor (A3_COD → C5_VEND1) e BU (SX5 Z1 → C5_ZTIPO) do pedido desta pessoa.
+  const vendedor = String(b.protheus_vendedor ?? '').trim().toUpperCase() || null;
+  if (vendedor && !/^[0-9A-Z]{1,6}$/.test(vendedor)) return { erro: 'Código do vendedor no Protheus: até 6 letras ou números.' };
+  const bu = String(b.protheus_bu ?? '').trim().toUpperCase() || null;
+  if (bu && !/^[0-9A-Z]{1,3}$/.test(bu)) return { erro: 'BU no Protheus: até 3 letras ou números.' };
   return {
     membro: {
       usuario_id: usuarioId, nome_exibicao: nome, papel, gerente_id: gerenteId,
-      categoria, equipe, ativo: b.ativo === undefined ? true : bool(b.ativo)
+      categoria, equipe, ativo: b.ativo === undefined ? true : bool(b.ativo),
+      protheus_vendedor: vendedor, protheus_bu: bu
     }
   };
 }

@@ -13,11 +13,14 @@ module.exports = (app) => ({
     if (!edicao) return res.status(400).json({ message: 'Informe a edição.' });
     try {
       const rows = await app.services.Pg.connectAndQuery(
-        `SELECT id, ordem, nome, coluna_base, desconto_pct, parcelas_max, exige_credito, financeira, ativo
+        `SELECT id, ordem, nome, coluna_base, desconto_pct, parcelas_max, exige_credito, financeira, ativo,
+                protheus_condicao, protheus_condicao_parcelada, protheus_forma
            FROM tab_ciosp_forma_pagto WHERE edicao = @edicao ORDER BY ordem, nome`, { edicao });
       return res.json(rows.map(f => ({
         id: f.id, ordem: f.ordem, nome: f.nome, coluna_base: f.coluna_base, desconto_pct: Number(f.desconto_pct),
-        parcelas_max: f.parcelas_max, exige_credito: !!f.exige_credito, financeira: !!f.financeira, ativo: !!f.ativo
+        parcelas_max: f.parcelas_max, exige_credito: !!f.exige_credito, financeira: !!f.financeira, ativo: !!f.ativo,
+        protheus_condicao: f.protheus_condicao || '', protheus_condicao_parcelada: !!f.protheus_condicao_parcelada,
+        protheus_forma: f.protheus_forma || ''
       })));
     } catch (err) {
       console.error('ciosp/formas:', err.message);

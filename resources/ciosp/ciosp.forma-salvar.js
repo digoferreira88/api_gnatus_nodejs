@@ -18,21 +18,23 @@ module.exports = (app) => ({
     if (erro) return res.status(400).json({ message: erro });
     const id = b.id ? Number(b.id) : null;
     const v = [forma.ordem, forma.nome, forma.coluna_base, forma.desconto_pct, forma.parcelas_max,
-      forma.exige_credito, forma.financeira, forma.ativo];
+      forma.exige_credito, forma.financeira, forma.ativo,
+      forma.protheus_condicao, forma.protheus_condicao_parcelada, forma.protheus_forma];
 
     try {
       let rows;
       if (id) {
         rows = await Edicao.q(app,
           `UPDATE tab_ciosp_forma_pagto SET ordem=$1, nome=$2, coluna_base=$3, desconto_pct=$4, parcelas_max=$5,
-                  exige_credito=$6, financeira=$7, ativo=$8, atualizado_em=NOW()
-            WHERE id = $9 AND edicao = $10 RETURNING id`, [...v, id, edicao]);
+                  exige_credito=$6, financeira=$7, ativo=$8, protheus_condicao=$9, protheus_condicao_parcelada=$10,
+                  protheus_forma=$11, atualizado_em=NOW()
+            WHERE id = $12 AND edicao = $13 RETURNING id`, [...v, id, edicao]);
         if (!rows.length) return res.status(404).json({ message: 'Forma de pagamento não encontrada.' });
       } else {
         rows = await Edicao.q(app,
           `INSERT INTO tab_ciosp_forma_pagto (ordem, nome, coluna_base, desconto_pct, parcelas_max,
-                  exige_credito, financeira, ativo, edicao)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, [...v, edicao]);
+                  exige_credito, financeira, ativo, protheus_condicao, protheus_condicao_parcelada, protheus_forma, edicao)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [...v, edicao]);
       }
       await Edicao.tocarVersao(app, edicao);
       Auditoria.registrar(app, {
