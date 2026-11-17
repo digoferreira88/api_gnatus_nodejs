@@ -53,6 +53,9 @@ const ROBOS = [
     faseDestino: '329478338',            // CONCLUÍDO
     campoNf: { rotulo: 'NÚMERO DA NF' }, // preenchido na fase FATURAMENTO (329668254)
     etiquetas: { remover: 'EM TRANSPORTE', adicionar: 'ENTREGUE' },
+    // Campo "STATUS:" da fase de acompanhamento (label_select): recebe a mesma
+    // etiqueta ENTREGUE. O valor aceito é o ID da etiqueta, não o nome.
+    campoEtiqueta: 'status_1',
     envAtivo: 'ENTREGA_PIPE_304879138_ATIVO',
     envSimular: 'ENTREGA_PIPE_304879138_SIMULAR',
     metrica: 'entrega-304879138',
@@ -156,7 +159,7 @@ async function novasEtiquetas(robo, card, cache) {
     .filter(l => norm(l.name) !== norm(robo.etiquetas.remover))
     .map(l => String(l.id));
   if (!ids.includes(String(alvo.id))) ids.push(String(alvo.id));
-  return ids;
+  return { ids, alvoId: String(alvo.id) };
 }
 
 // Marca o card como entregue e move pra fase de destino.
@@ -164,7 +167,7 @@ async function novasEtiquetas(robo, card, cache) {
 //   label_select SEM options configuradas na API → o updateFieldsValues rejeita
 //   ("Dado fornecido inválido") e NÃO pode bloquear o MOVE, que é a ação que
 //   realmente importa (concluir o card destrava a fase dependente do G-Care).
-// - etiquetas: OBRIGATÓRIO e ANTES do move. Se falhar, o card fica na fase e o
+// - etiquetas (do card e do campo `campoEtiqueta`): OBRIGATÓRIO e ANTES do move. Se falhar, o card fica na fase e o
 //   próximo ciclo tenta de novo — depois de movido o robô não o enxerga mais, e
 //   ele ficaria em CONCLUÍDO com a etiqueta errada para sempre.
 async function marcarEntregue(robo, card, cache) {
@@ -176,10 +179,15 @@ async function marcarEntregue(robo, card, cache) {
     } catch (e) { console.warn(`[entrega:${robo.chave}] set status falhou (segue p/ o move):`, e.message); }
   }
   if (robo.etiquetas) {
-    const ids = await novasEtiquetas(robo, card, cache);
+    const { ids, alvoId } = await novasEtiquetas(robo, card, cache);
     await gql(robo, `mutation($card: ID!, $ids: [ID]) {
       updateCard(input: { id: $card, label_ids: $ids }) { card { id } }
     }`, { card: card.id, ids });
+    if (robo.campoEtiqueta) {
+      await gql(robo, `mutation($card: ID!, $campo: ID!, $valor: [UndefinedInput]) {
+        updateCardField(input: { card_id: $card, field_id: $campo, new_value: $valor }) { success }
+      }`, { card: card.id, campo: robo.campoEtiqueta, valor: [alvoId] });
+    }
   }
   await gql(robo, `mutation($card: ID!, $fase: ID!) {
     moveCardToPhase(input: { card_id: $card, destination_phase_id: $fase }) { card { id } }
@@ -188,7 +196,7 @@ async function marcarEntregue(robo, card, cache) {
 
 const descreverAcao = (robo) => [
   robo.campoStatus ? 'status=ENTREGUE' : null,
-  robo.etiquetas ? `etiqueta ${robo.etiquetas.remover} -> ${robo.etiquetas.adicionar}` : null,
+  robo.etiquetas ? `etiqueta ${robo.campoEtiqueta ? 'e campo STATUS ' : ''}${robo.etiquetas.remover} -> ${robo.etiquetas.adicionar}` : null,
   'movido p/ CONCLUÍDO'
 ].filter(Boolean).join(' + ');
 
