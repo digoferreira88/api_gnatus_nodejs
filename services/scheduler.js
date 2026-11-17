@@ -266,10 +266,11 @@ const CRON_PIPEFY_CLIENTES = process.env.CRON_PIPEFY_CLIENTES || '0 8,13 * * 1-5
 // não muda mais rápido que isso, e cada ciclo é limitado por SHOPIFY_TETO_CICLO/_DIA.
 const CRON_SHOPIFY_PRODUTOS = '25 7-20 * * 1-5';  // :25, 07h-20h, seg-sex
 
-// Garantia × Datafrete: entrega confirmada -> card p/ CONCLUÍDO. Dormente sem
-// GARANTIA_ENTREGA_ATIVO=1 (+ PIPEFY_TOKEN e DATAFRETE_SERVICES_KEY). Meia em
-// meia hora em horário comercial — entrega não muda mais rápido que isso.
-const CRON_GARANTIA_ENTREGA = '10,40 7-20 * * 1-5';
+// Entrega × Datafrete (Garantia + pipe 304879138): entrega confirmada -> card p/
+// CONCLUÍDO. Cada pipe tem seu gate no .env (ver services/pipefyGarantia.js);
+// dormente sem ele (+ PIPEFY_TOKEN e DATAFRETE_SERVICES_KEY). De hora em hora
+// em horário comercial (17/11/2026, a pedido do usuário; antes era de 30 em 30 min).
+const CRON_GARANTIA_ENTREGA = '10 7-20 * * 1-5';
 
 // RHP: reconcilia o link do PDF que o Zap externo deixou como "Erro no upload"
 // (corrida de tempo — PDF chegou no OneDrive depois, sem retry). Dormente sem
