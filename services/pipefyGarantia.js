@@ -6,7 +6,7 @@
 // Ciclo (por pipe ativo): lista os cards da fase de origem -> lê a NF do card ->
 // resolve série/chave na SF2 (Protheus) -> procura a NF nas ocorrências do
 // Datafrete (UMA consulta por execução, serve todos os pipes) -> ENTREGUE? marca
-// o card (status ou etiquetas, conforme o pipe) e move pra fase de destino.
+// o card (etiquetas, nos pipes que usam) e move pra fase de destino.
 // Tudo logado em tab_garantia_entrega_log (migrations 94 + 154) + Auditoria no
 // movimento real.
 //
@@ -29,8 +29,8 @@ const trim = (v) => String(v == null ? '' : v).trim();
 const norm = (v) => trim(v).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 
 // Cada pipe acompanhado. campoNf: `id` (slug do campo) OU `rotulo` (texto do campo
-// na tela — usado quando o slug não é conhecido). `campoStatus` e `etiquetas` são
-// opcionais e dizem o que marcar no card além de mover.
+// na tela — usado quando o slug não é conhecido). `etiquetas` e `campoEtiqueta`
+// são opcionais e dizem o que marcar no card além de mover.
 const ROBOS = [
   {
     chave: 'garantia',
@@ -39,7 +39,8 @@ const ROBOS = [
     faseOrigem: '341438230',             // ACOMPANHAMENTO DA ENTREGA
     faseDestino: '341436415',            // CONCLUÍDO
     campoNf: { id: 'n_mero_da_nota_fiscal' },
-    campoStatus: 'status_do_transporte', // best-effort (ver marcarEntregue)
+    // Sem marca no card: o campo status_do_transporte foi removido do pipe (a fase
+    // não tem mais campo nenhum, conferido 17/11/2026) e os cards não usam etiqueta.
     envAtivo: 'GARANTIA_ENTREGA_ATIVO',
     envSimular: 'GARANTIA_ENTREGA_SIMULAR',
     metrica: 'garantia',
@@ -163,21 +164,11 @@ async function novasEtiquetas(robo, card, cache) {
 }
 
 // Marca o card como entregue e move pra fase de destino.
-// - campoStatus (Garantia): BEST-EFFORT. ⚠️ O `status_do_transporte` é um
-//   label_select SEM options configuradas na API → o updateFieldsValues rejeita
-//   ("Dado fornecido inválido") e NÃO pode bloquear o MOVE, que é a ação que
-//   realmente importa (concluir o card destrava a fase dependente do G-Care).
-// - etiquetas (do card e do campo `campoEtiqueta`): OBRIGATÓRIO e ANTES do move. Se falhar, o card fica na fase e o
-//   próximo ciclo tenta de novo — depois de movido o robô não o enxerga mais, e
-//   ele ficaria em CONCLUÍDO com a etiqueta errada para sempre.
+// Etiquetas (do card e do campo `campoEtiqueta`): OBRIGATÓRIO e ANTES do move.
+// Se falhar, o card fica na fase e o próximo ciclo tenta de novo — depois de
+// movido o robô não o enxerga mais, e ele ficaria em CONCLUÍDO com a marca
+// errada para sempre. Campo label_select recebe o ID da etiqueta, não o nome.
 async function marcarEntregue(robo, card, cache) {
-  if (robo.campoStatus) {
-    try {
-      await gql(robo, `mutation($card: ID!, $campo: ID!, $valor: [UndefinedInput]) {
-        updateFieldsValues(input: { nodeId: $card, values: [{ fieldId: $campo, value: $valor }] }) { success }
-      }`, { card: card.id, campo: robo.campoStatus, valor: ['ENTREGUE'] });
-    } catch (e) { console.warn(`[entrega:${robo.chave}] set status falhou (segue p/ o move):`, e.message); }
-  }
   if (robo.etiquetas) {
     const { ids, alvoId } = await novasEtiquetas(robo, card, cache);
     await gql(robo, `mutation($card: ID!, $ids: [ID]) {
@@ -195,7 +186,6 @@ async function marcarEntregue(robo, card, cache) {
 }
 
 const descreverAcao = (robo) => [
-  robo.campoStatus ? 'status=ENTREGUE' : null,
   robo.etiquetas ? `etiqueta ${robo.campoEtiqueta ? 'e campo STATUS ' : ''}${robo.etiquetas.remover} -> ${robo.etiquetas.adicionar}` : null,
   'movido p/ CONCLUÍDO'
 ].filter(Boolean).join(' + ');
