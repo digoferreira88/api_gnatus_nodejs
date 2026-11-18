@@ -218,26 +218,54 @@ module.exports = (app) => ({
           r.forEach(x => scInfo.set(trim(x.numero), x));
 
           // Itens detalhados (inclui C1_OBS — observacao por item da SC)
+          //
+          // ⚠️ VALOR DO ITEM DA SC (18/11/2026): a SC não tem preço — C1_TOTAL vem 0 em
+          // 100% das SCs (e C1_VUNIT só quando o solicitante digita). O valor que o
+          // Protheus grava no SCR010.CR_TOTAL (e que a alçada e o cabeçalho do card usam)
+          // é uma ESTIMATIVA: qtd × (C1_VUNIT → B1_UPRC último preço de compra →
+          // B1_CUSTD custo standard → B2_CM1 custo médio do armazém do item). Conferido
+          // em 18/11: bate o CR_TOTAL em 38 de 42 SCs pendentes; as 4 restantes são
+          // antigas e o custo mudou depois (o CR_TOTAL fica congelado na inclusão).
+          // Sem isto o card mostrava R$ 0,00 em cada item e o total (ex. SC 176981:
+          // 5×248,16 + 10×8,84 = 1.329,20) parecia não ter de onde vir.
           const it = await Protheus.connectAndQuery(
-            `SELECT RTRIM(C1_NUM) numero, RTRIM(C1_ITEM) item,
-                    RTRIM(C1_PRODUTO) produto, RTRIM(C1_DESCRI) descricao,
-                    RTRIM(C1_UM) unidade, C1_QUANT quantidade, C1_TOTAL valorTotal,
-                    RTRIM(C1_OBS) obs
-               FROM SC1010 WITH (NOLOCK)
-              WHERE D_E_L_E_T_ <> '*' AND C1_FILIAL = '01' AND C1_NUM IN (${inSc})
-              ORDER BY C1_NUM, C1_ITEM`,
+            `SELECT RTRIM(c1.C1_NUM) numero, RTRIM(c1.C1_ITEM) item,
+                    RTRIM(c1.C1_PRODUTO) produto, RTRIM(c1.C1_DESCRI) descricao,
+                    RTRIM(c1.C1_UM) unidade, c1.C1_QUANT quantidade, c1.C1_TOTAL valorTotal,
+                    c1.C1_VUNIT vunit,
+                    ISNULL(b1.B1_UPRC, 0)  uprc,
+                    ISNULL(b1.B1_CUSTD, 0) custd,
+                    ISNULL((SELECT TOP 1 b2.B2_CM1 FROM SB2010 b2 WITH (NOLOCK)
+                             WHERE b2.D_E_L_E_T_ <> '*' AND b2.B2_FILIAL = c1.C1_FILIAL
+                               AND b2.B2_COD = c1.C1_PRODUTO AND b2.B2_LOCAL = c1.C1_LOCAL), 0) cm1,
+                    RTRIM(c1.C1_OBS) obs
+               FROM SC1010 c1 WITH (NOLOCK)
+               LEFT JOIN SB1010 b1 WITH (NOLOCK)
+                 ON b1.D_E_L_E_T_ <> '*' AND b1.B1_COD = c1.C1_PRODUTO
+              WHERE c1.D_E_L_E_T_ <> '*' AND c1.C1_FILIAL = '01' AND c1.C1_NUM IN (${inSc})
+              ORDER BY c1.C1_NUM, c1.C1_ITEM`,
             p
           );
           it.forEach(x => {
             const num = trim(x.numero);
             if (!scItens.has(num)) scItens.set(num, []);
+            const [preco, origemPreco] =
+                toN(x.vunit) > 0 ? [toN(x.vunit), 'INFORMADO']
+              : toN(x.uprc)  > 0 ? [toN(x.uprc),  'ULTIMA_COMPRA']
+              : toN(x.custd) > 0 ? [toN(x.custd), 'CUSTO_STANDARD']
+              : toN(x.cm1)   > 0 ? [toN(x.cm1),   'CUSTO_MEDIO']
+              : [0, null];
+            const valorTotal = toN(x.valorTotal);
             scItens.get(num).push({
               item: trim(x.item),
               produto: trim(x.produto),
               descricao: trim(x.descricao),
               unidade: trim(x.unidade),
               quantidade: toN(x.quantidade),
-              valorTotal: toN(x.valorTotal),
+              preco,
+              // C1_TOTAL preenchido (raro) prevalece; senão, a estimativa do Protheus.
+              valorTotal: valorTotal > 0 ? valorTotal : +(toN(x.quantidade) * preco).toFixed(2),
+              origemPreco: valorTotal > 0 ? 'INFORMADO' : origemPreco,
               obs: trim(x.obs) || null
             });
           });
@@ -382,6 +410,8 @@ module.exports = (app) => ({
             fornecedor: tipo === 'PC' && info ? trim(info.fornecedor) : '',
             qtdItens: info ? toN(info.qtdItens) : itens.length,
             totalDoc: (info && toN(info.total)) ? toN(info.total) : toN(s.valor),
+            // SC sem preço digitado: o total é a estimativa do Protheus (ver itens da SC acima).
+            valorEstimado: tipo === 'SC' && itens.some(i => i.origemPreco !== 'INFORMADO'),
             // Moeda do documento: 1=Real, 2=Dolar (C7_MOEDA/C1_MOEDA). taxa =
             // C7_TXMOEDA (so PC) pra exibir o equivalente em R$. Sem isso a tela
             // mostrava valor em dolar como se fosse real (ex.: PC 024795).
