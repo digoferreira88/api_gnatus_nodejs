@@ -85,6 +85,7 @@ module.exports = (app) => ({
         RTRIM(SC5.C5_VEND1) AS C5_VEND1,
         RTRIM(SC5.C5_VEND2) AS C5_VEND2,
         RTRIM(SC5.C5_VEND3) AS C5_VEND3,
+        RTRIM(SC5.C5_VEND4) AS C5_VEND4,
         TP6.total AS TOTAL_PEDIDO,
         TP2.total AS FATURADO,
         CAST(ISNULL(PR.PAGO, 0)  AS DECIMAL(15,2)) AS PAGO,
@@ -267,7 +268,9 @@ module.exports = (app) => ({
           ddd: trim(r.A1_DDD),
           telefone: trim(r.A1_TEL),
           dddCel: trim(r.A1_DDDCEL),
-          fax: trim(r.A1_FAX)
+          fax: trim(r.A1_FAX),
+          // Vendedor 4 do pedido (C5_VEND4) — só o código.
+          codVendedor4: trim(r.C5_VEND4)
         };
       });
 
