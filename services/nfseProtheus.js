@@ -109,9 +109,10 @@ async function buscarNotaServico(Protheus, { serie = 'C', doc, cliente, loja }) 
 }
 
 // Séries de NF de serviço que a Fila lê. Desde 05/11/2026 o fiscal emite na SV; a C
-// segue com as notas antigas. NFSE_SERIES="C,SV" sobrepõe.
+// segue com as notas antigas. Em 19/11/2026 o Protheus trocou a SV pela série 4 (a
+// numeração continuou: SV parou na 000060, a 4 começou na 000061). NFSE_SERIES sobrepõe.
 function seriesServico() {
-  const s = String(process.env.NFSE_SERIES || 'C,SV').split(/[;,]/).map((x) => trim(x).toUpperCase()).filter(Boolean);
+  const s = String(process.env.NFSE_SERIES || 'C,SV,4').split(/[;,]/).map((x) => trim(x).toUpperCase()).filter(Boolean);
   return s.length ? [...new Set(s)] : ['C'];
 }
 

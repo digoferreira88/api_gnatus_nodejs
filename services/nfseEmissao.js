@@ -99,9 +99,14 @@ function config() {
 //   C  → NFSE_SERIE_DPS ou 1 (a de sempre: não mudar, senão a recuperação das antigas quebra)
 //   SV → 2 (conferido em 06/11/2026 no Sefin: série 2 nunca usada; a 3 tem notas feitas
 //        à mão no portal, 01.08.01, então NÃO usar a 3)
-// NFSE_SERIE_DPS_MAP="C=1;SV=2" sobrepõe. Série sem mapa, ou duas séries com a mesma série
+//   4  → 4 (19/11/2026: o Protheus trocou a SV pela série 4). Conferido no Sefin: série de
+//        DPS 4 só tem o nº 4 (teste de R$ 0,01 de 16/11, enviado por outro canal, o
+//        "notagateway_v2.03"); nº 1–3 e 5–200 livres. Mesma série do Protheus de propósito:
+//        se outro canal transmitir a mesma nota (série 4 + F2_DOC), o Id do DPS é igual e o
+//        Sefin recusa a segunda, então não sai NFS-e em dobro.
+// NFSE_SERIE_DPS_MAP="C=1;SV=2;4=4" sobrepõe. Série sem mapa, ou duas séries com a mesma série
 // de DPS, não emitem (devolve o motivo em vez de cair num padrão).
-const SERIE_DPS_PADRAO = { C: '1', SV: '2' };
+const SERIE_DPS_PADRAO = { C: '1', SV: '2', 4: '4' };
 function seriesDps() {
   const m = { ...SERIE_DPS_PADRAO, C: soDig(process.env.NFSE_SERIE_DPS) || SERIE_DPS_PADRAO.C };
   for (const par of String(process.env.NFSE_SERIE_DPS_MAP || '').split(/[;,]/)) {
