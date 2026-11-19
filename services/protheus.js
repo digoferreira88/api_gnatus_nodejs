@@ -11,11 +11,18 @@
 //      publicam 1433; 170 não) pra fugir do round-robin.
 //   2) AUTO-RECONEXÃO: em erro transitório de conexão, zera o pool e refaz — a
 //      próxima query reconecta sozinha (self-heal), com 1 retry imediato.
+//
+// 19/11/2026: volta a usar o HOSTNAME `ddns.gnatus.com.br` (round-robin dos 3 links:
+// 170.233.167.157, 179.108.181.12, 200.15.18.119 — todos o MESMO DELL-SERVER). Com
+// `multiSubnetFailover` o tedious conecta EM PARALELO em todos os IPs que o DNS devolve
+// e fica com o 1º que responder. Sem isso ele tentava só o 1º IP e gastava os 15s de
+// timeout quando aquele link estava fora (medido na VPS: 2/8 sequencial × 8/8 paralelo).
+// Para IP literal a opção não muda nada (um endereço só).
 
 const sql = require('mssql');
 
-// IPs/hosts candidatos, em ordem de preferência. 179.108.181.12 é o principal
-// (publica 1433 e 8081); 200.15.18.119 é backup (publica 1433).
+// Hosts candidatos, em ordem de preferência: PROTHEUS_SERVER (o hostname ddns) e,
+// se ele não conectar (ex.: falha de DNS), cada IP de PROTHEUS_SERVERS.
 function candidatos() {
   const lista = [];
   const push = (v) => { v = String(v || '').trim(); if (v && !lista.includes(v)) lista.push(v); };
@@ -31,7 +38,7 @@ function baseConfig(server) {
     server,
     database: process.env.PROTHEUS_DATABASE || 'protheus',
     pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
-    options: { encrypt: false, trustServerCertificate: true },
+    options: { encrypt: false, trustServerCertificate: true, multiSubnetFailover: true },
     connectionTimeout: 15000,
     requestTimeout: 60000
   };
