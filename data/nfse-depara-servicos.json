@@ -675,6 +675,8 @@
     "cTribNac": "03.02.01",
     "nbs": "1.1104.20.00",
     "cIndOp": "100501",
+    "tribIssqn": "2",
+    "tpImunidade": "1",
     "mensagem": "Royalties mensais referentes à cessão de uso da marca, sem prestação de serviço, conforme contrato de franquia. REF. PEDIDO ...."
   },
   {
@@ -705,7 +707,9 @@
     "cTribNac": "03.02.01",
     "nbs": "1.1104.20.00",
     "cIndOp": "100501",
-    "mensagem": "Royalties de produtos referentes à cessão de uso da marca, sem prestação de serviço, conforme contrato de franquia. REF. PEDIDO ..../2"
+    "tribIssqn": "2",
+    "tpImunidade": "1",
+    "mensagem": "Royalties de produtos referentes à cessão de uso da marca, sem prestação de serviço, conforme contrato de franquia. REF. PEDIDO ...."
   },
   {
     "codigo": "011589",

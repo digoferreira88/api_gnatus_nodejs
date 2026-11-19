@@ -161,12 +161,22 @@ function blocoServValores(nota, cfg) {
       ((cfg.ibsCbs && cNBS) ? `<cNBS>${esc(cNBS)}</cNBS>` : '') +
     `</cServ>` +
   `</serv>`;
-  // tribISSQN: 1=Operação tributável · 4=Não Incidência. Serviço com alíquota de ISS = 0
-  // no de-para = NÃO INCIDÊNCIA (ex.: cessão de uso de marca / royalties 03.02.01,
-  // reconhecida por decisão judicial p/ a Gnatus — MS 1004813-25.2018.8.26.0066/Barretos:
-  // obrigação de dar, não serviço). Confirmado 201 na Produção Restrita. Só dispara com
-  // alíquota EXPLICITAMENTE 0 no de-para; produto sem alíquota (undefined) = tributável (1).
-  const tribISSQN = Number(cfg.aliqIss) === 0 ? '4' : '1';
+  // tribISSQN: 1=Operação tributável · 2=Imunidade · 4=Não Incidência.
+  // 1) cfg.tribIssqn (campo `tribIssqn` do de-para) vence. Royalties 010675/010773 = 2
+  //    (Imunidade) com tpImunidade 1 = "Patrimônio, renda ou serviços, uns dos outros
+  //    (CF/88, art. 150, VI, a)", definido pelo fiscal em 19/11/2026 (MS
+  //    1004813-25.2018.8.26.0066/Barretos). A Não Incidência (4) que ia antes é recusada
+  //    no Emissor Nacional (E0539, 06/11): Barretos parametrizou 03.02.01.302 como incidente.
+  // 2) sem o campo: alíquota EXPLICITAMENTE 0 no de-para = 4 (Não Incidência); senão 1.
+  const tribISSQN = ['1', '2', '3', '4'].includes(soDig(cfg.tribIssqn)) ? soDig(cfg.tribIssqn)
+    : (Number(cfg.aliqIss) === 0 ? '4' : '1');
+  // tpImunidade (0–5) só existe com tribISSQN = 2 e é obrigatório nesse caso: sem ele a
+  // nota não sai (melhor parar aqui do que mandar um tipo de imunidade chutado).
+  const tpImunidade = soDig(cfg.tpImunidade);
+  if (tribISSQN === '2' && !/^[0-5]$/.test(tpImunidade)) {
+    throw new Error('Imunidade de ISS sem o tipo de imunidade (tpImunidade 0–5) no de-para do serviço.');
+  }
+  const semIss = tribISSQN === '2' || tribISSQN === '4';
   // Total aproximado dos tributos (Lei 12.741/2012). A Gnatus NÃO é optante do Simples:
   // o Sistema Nacional recusa indTotTrib e pTotTribSN para não optante (E0713, 06/11/2026 —
   // o RLZ aceitava indTotTrib=0). Vai em PERCENTUAIS, como o Emissor Web monta (NFS-e 16,
@@ -174,7 +184,7 @@ function blocoServValores(nota, cfg) {
   // do de-para (fração 0.03 → 3,00; não incidência → 0).
   const pct = (v) => (Math.round((Number(v) || 0) * 100) / 100).toFixed(2);
   const aliq = Number(cfg.aliqIss);
-  const pMun = tribISSQN === '4' ? 0 : (Number.isFinite(aliq) && cfg.aliqIss !== undefined ? (aliq < 1 ? aliq * 100 : aliq) : (cfg.pTotTribMun ?? 3));
+  const pMun = semIss ? 0 : (Number.isFinite(aliq) && cfg.aliqIss !== undefined ? (aliq < 1 ? aliq * 100 : aliq) : (cfg.pTotTribMun ?? 3));
   const totTrib = `<totTrib><pTotTrib>` +
       `<pTotTribFed>${pct(cfg.pTotTribFed ?? 4.65)}</pTotTribFed>` +
       `<pTotTribEst>${pct(cfg.pTotTribEst ?? 0)}</pTotTribEst>` +
@@ -184,7 +194,8 @@ function blocoServValores(nota, cfg) {
     `<vServPrest><vServ>${money(nota.valorServicos)}</vServ></vServPrest>` +
     `<trib>` +
       `<tribMun>` +
-        `<tribISSQN>${tribISSQN}</tribISSQN>` +                // 1=Tributável · 4=Não Incidência
+        `<tribISSQN>${tribISSQN}</tribISSQN>` +                // 1=Tributável · 2=Imunidade · 4=Não Incidência
+        (tribISSQN === '2' ? `<tpImunidade>${tpImunidade}</tpImunidade>` : '') +   // XSD: depois do tribISSQN (e do cPaisResult, que não mandamos), antes do tpRetISSQN
         `<tpRetISSQN>${nota.issRetido ? 2 : 1}</tpRetISSQN>` + // 1=Não retido, 2=Retido tomador
       `</tribMun>` +                                           // alíquota NÃO vai no DPS — a prefeitura calcula
       totTrib +                                                // aprox. Lei 12.741, em percentuais
