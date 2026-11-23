@@ -416,7 +416,7 @@ function start(app) {
       const PipefyClientes = require('./pipefyClientes');
       if (!PipefyClientes.disponivel()) return;   // sem gate/token: silêncio
       const r = await PipefyClientes.sincronizar(app.services, 'CRON');
-      if (r.criados > 0 || r.atualizados > 0 || r.erros > 0) console.log('[scheduler] pipefy-clientes:', JSON.stringify({ criados: r.criados, atualizados: r.atualizados, erros: r.erros, faltando: r.faltandoAntes }));
+      if (r.criados > 0 || r.adotados > 0 || r.atualizados > 0 || r.erros > 0) console.log('[scheduler] pipefy-clientes:', JSON.stringify({ criados: r.criados, adotados: r.adotados, atualizados: r.atualizados, erros: r.erros, faltando: r.faltandoAntes }));
     } catch (err) {
       console.error('[scheduler] erro no pipefy-clientes:', err.message);
     }

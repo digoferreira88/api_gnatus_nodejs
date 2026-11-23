@@ -165,6 +165,43 @@ async function criarRegistro(n) {
   return trim(d.createTableRecord?.table_record?.id);
 }
 
+// ---------- Anti-duplicata: o cliente já está no Pipefy? ----------
+// O estado (tab_pipefy_clientes_sync) só conhece o que o SEED de 22/09 achou e o que
+// o próprio robô criou. Registro feito À MÃO na database depois disso (o cadastro
+// cria o cliente direto no Pipefy) era invisível -> o robô criava outro igual.
+// Agora, antes de criar, pergunta ao Pipefy pelo título (= CPF/CNPJ; o robô e o
+// cadastro manual gravam igual). 1 requisição com 2 buscas (formatado e só dígitos).
+//
+// Adota o registro achado quando:
+//   - o CÓDIGO dele é o mesmo do SA1; ou
+//   - ele está SEM código e só UM código do SA1 tem esse CPF/CNPJ (sem ambiguidade).
+// Código diferente = outro cliente do Protheus com o mesmo documento -> cria normal.
+function codigoDoRegistro(node) {
+  const f = (node.record_fields || []).find(x => x.field && x.field.id === F.codigo);
+  return trim(f && f.value);
+}
+function escolherExistente(nodes, n, codigosComMesmoDoc) {
+  const unicos = [];
+  const vistos = new Set();
+  for (const nd of nodes) { const id = trim(nd.id); if (id && !vistos.has(id)) { vistos.add(id); unicos.push(nd); } }
+  const mesmoCodigo = unicos.find(nd => codigoDoRegistro(nd) === n.codigo);
+  if (mesmoCodigo) return { id: trim(mesmoCodigo.id), motivo: 'codigo' };
+  const semCodigo = unicos.filter(nd => !codigoDoRegistro(nd));
+  if (semCodigo.length && codigosComMesmoDoc === 1) return { id: trim(semCodigo[0].id), motivo: 'doc-sem-codigo' };
+  return null;
+}
+async function buscarExistente(n, codigosComMesmoDoc) {
+  const doc = trim(n.cgc);
+  if (!doc) return null;
+  const dig = soDig(doc);
+  const q = `query($t: ID!, $a: String!, $b: String!) {
+    a: table_records(table_id: $t, first: 20, search: { title: $a }) { edges { node { id record_fields { value field { id } } } } }
+    b: table_records(table_id: $t, first: 20, search: { title: $b }) { edges { node { id record_fields { value field { id } } } } } }`;
+  const d = await gql(q, { t: TABLE_ID(), a: doc, b: dig && dig !== doc ? dig : doc });
+  const nodes = [...(d.a?.edges || []), ...(d.b?.edges || [])].map(e => e.node).filter(Boolean);
+  return escolherExistente(nodes, n, codigosComMesmoDoc);
+}
+
 async function atualizarRegistro(recordId, n) {
   // 1 chamada (batch) p/ todos os campos — nodeId genérico serve p/ table_record.
   const values = montarCampos(n).map(f => ({ fieldId: f.field_id, value: f.field_value }));
@@ -267,7 +304,7 @@ async function seed({ Pg, Protheus }) {
 
 // ---------- Sincronização (delta, represada pelo teto) ----------
 async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
-  const resumo = { origem, sa1: 0, criados: 0, atualizados: 0, semMudanca: 0, erros: 0,
+  const resumo = { origem, sa1: 0, criados: 0, adotados: 0, atualizados: 0, semMudanca: 0, erros: 0,
     faltandoAntes: 0, aAtualizar: 0, incompletos: 0, puladosCap: 0, teto: TETO_DIA(), usoHoje: 0, detalhes: [] };
 
   if (!disponivel()) {
@@ -323,10 +360,26 @@ async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
   resumo.faltandoAntes = toCreate.length;
   resumo.aAtualizar = toUpdate.length;
 
+  // quantos códigos do SA1 dividem o mesmo CPF/CNPJ (p/ adotar registro sem código só sem ambiguidade)
+  const codigosPorDoc = new Map();
+  for (const n of norm) {
+    const d = soDig(n.cgc);
+    if (d) codigosPorDoc.set(d, (codigosPorDoc.get(d) || 0) + 1);
+  }
+
   let gravou = 0;
   for (const n of toCreate) {
     if (gravou >= orcamento) { resumo.puladosCap++; continue; }
     try {
+      // já existe no Pipefy (criado à mão)? adota e alinha com o Protheus em vez de duplicar
+      const existente = await buscarExistente(n, codigosPorDoc.get(soDig(n.cgc)) || 0);
+      if (existente) {
+        await atualizarRegistro(existente.id, n);
+        await gravarEstado(Pg, n.codigo, existente.id, hashCli(n), 'ok');
+        resumo.adotados++; gravou++;
+        resumo.detalhes.push(`adota ${n.codigo}: já existia no Pipefy (registro ${existente.id}, por ${existente.motivo})`);
+        continue;
+      }
       const recId = await criarRegistro(n);
       await gravarEstado(Pg, n.codigo, recId, hashCli(n), 'ok');
       resumo.criados++; gravou++;
@@ -349,7 +402,7 @@ async function sincronizar({ Pg, Protheus }, origem = 'CRON') {
 
   await somarUso(Pg, gravou);
   await logar(Pg, resumo);
-  console.log(`[pipefy-clientes] ${origem}: sa1=${resumo.sa1} faltavam=${resumo.faltandoAntes} criados=${resumo.criados} atualizados=${resumo.atualizados} incompletos=${resumo.incompletos} erros=${resumo.erros} puladosCap=${resumo.puladosCap} (uso dia ${resumo.usoHoje + gravou}/${TETO_DIA()})`);
+  console.log(`[pipefy-clientes] ${origem}: sa1=${resumo.sa1} faltavam=${resumo.faltandoAntes} criados=${resumo.criados} adotados=${resumo.adotados} atualizados=${resumo.atualizados} incompletos=${resumo.incompletos} erros=${resumo.erros} puladosCap=${resumo.puladosCap} (uso dia ${resumo.usoHoje + gravou}/${TETO_DIA()})`);
   return resumo;
 }
 
@@ -428,5 +481,6 @@ async function ultimosLogs(Pg, limite = 15) {
 module.exports = {
   disponivel, sincronizar, seed, panorama, ultimosLogs, listarIncompletos,
   // expostos p/ teste/auditoria
-  normalizar, hashCli, montarCampos, faltantes, carregarSA1, TABLE_ID, ATUALIZAR
+  normalizar, hashCli, montarCampos, faltantes, carregarSA1, TABLE_ID, ATUALIZAR,
+  escolherExistente, codigoDoRegistro, atualizarRegistro, gravarEstado, gql, F
 };
