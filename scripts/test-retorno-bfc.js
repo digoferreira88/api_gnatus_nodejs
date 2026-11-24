@@ -145,8 +145,8 @@ const call = (body) => new Promise((ok) => {
   assert.ok(!('disparoBloqueado' in bk));
   assert.deepStrictEqual(bk.regrasCobranca, { protestoDiasUteis: 3, multaPct: 2, jurosDiaPct: 0.4 });
   const b044 = PC.dadosBoleto({ banco: '044' });
-  assert.strictEqual(b044.boletoPendente, undefined);   // Acreditar intacto
-  assert.strictEqual(b044.regrasCobranca, null); assert.strictEqual(b044.pdf, null);
+  assert.strictEqual(b044.boletoPendente, undefined);   // Acreditar: layout proprio desde 24/11 (ver test-retorno-acreditar.js)
+  assert.strictEqual(b044.regrasCobranca.estilo, 'acreditar'); assert.strictEqual(b044.pdf.numeroDocumento, 'num/parcela');
 
   // --- PDF do BFC = ficha do fundo (modelo docs/financeiro/boleto bfc.pdf, 1/091467/02)
   const BoletoPdf = R('services/boletoPdf.js'); const ProtheusBoleto = R('services/protheusBoleto.js');

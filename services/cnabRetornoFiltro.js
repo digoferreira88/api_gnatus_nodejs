@@ -131,14 +131,27 @@ function remontar(conteudo, manter) {
 // titulo e' o seu numero, no formato "92276-3" (numero sem o zero a esquerda,
 // hifen, parcela sem zero, sem prefixo). Quem resolve o titulo e' o
 // boleto-adotar-retorno, contra a SE1 do portador — ver `chaveDoSeuNumero`.
-const BR = { USO: [37, 62], NN: [70, 81], DV: 81, OCOR: [108, 110], DATA: [110, 116], SEU: [116, 126], VENC: [146, 152], VALOR: [152, 165] };
+//
+// ⚠️ Acreditar (portador 044) em PRODUCAO (retornos de 29/10 e 03/11/2026,
+// borderô 418826): tambem vem com o uso da empresa EM BRANCO — diferente do
+// arquivo de teste de agosto. O seu numero vem como "082830/17" (numero com 6
+// posicoes, BARRA, parcela com 2). Sem prefixo: "C/002043/05" chega "002043/05".
+// O vencimento (147-152) e' o REGISTRADO no banco = E1_VENCREA nos 113 titulos
+// (o E1_VENCTO difere em 45, que caem em fim de semana).
+//
+//   [318..328) Motivos da rejeicao (5 x 2) — so na ocorrencia 03. No retorno de
+//              29/10 vieram zerados nas 16 rejeicoes.
+const BR = { USO: [37, 62], NN: [70, 81], DV: 81, OCOR: [108, 110], DATA: [110, 116], SEU: [116, 126], VENC: [146, 152], VALOR: [152, 165], MOTIVOS: [318, 328] };
 
 /**
- * Seu numero no formato do BFC ("92276-3", "88281-10") -> { numero, parcela },
- * sem zeros a esquerda nos dois. null para qualquer outro formato.
+ * Seu numero sem prefixo -> { numero, parcela }, sem zeros a esquerda nos dois.
+ * Aceita os dois formatos que os fundos devolvem:
+ *   BFC (699)       "92276-3", "88281-10"  (hifen)
+ *   Acreditar (044) "082830/17", "002043/05" (barra)
+ * null para qualquer outro formato.
  */
 function chaveDoSeuNumero(seu) {
-  const m = String(seu || '').trim().match(/^(\d{1,9})-(\d{1,2})$/);
+  const m = String(seu || '').trim().match(/^(\d{1,9})[-/](\d{1,2})$/);
   if (!m) return null;
   return { numero: m[1].replace(/^0+(?=\d)/, ''), parcela: m[2].replace(/^0+(?=\d)/, '') };
 }
@@ -162,7 +175,8 @@ function parseDetalhesBradesco(conteudo) {
       dataOcorrencia: l.slice(BR.DATA[0], BR.DATA[1]),        // DDMMAA
       seuNumero: l.slice(BR.SEU[0], BR.SEU[1]).trim(),
       vencimento: l.slice(BR.VENC[0], BR.VENC[1]),            // DDMMAA
-      valor: Number(l.slice(BR.VALOR[0], BR.VALOR[1])) / 100
+      valor: Number(l.slice(BR.VALOR[0], BR.VALOR[1])) / 100,
+      motivos: l.slice(BR.MOTIVOS[0], BR.MOTIVOS[1]).trim()   // rejeicao (03); '' ou zeros nas demais
     });
   }
   return out;

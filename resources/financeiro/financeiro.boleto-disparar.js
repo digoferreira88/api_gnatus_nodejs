@@ -19,6 +19,7 @@ const Auditoria = require('../../services/auditoria');
 const ProtheusBoleto = require('../../services/protheusBoleto');
 const BoletoPdf = require('../../services/boletoPdf');
 const PortadorCessao = require('../../services/portadorCessao');
+const BoletoDocumento = require('../../services/boletoDocumento');
 const Email = require('../../services/emailService');
 const Suri = require('../../services/suri');
 
@@ -197,6 +198,7 @@ module.exports = (app) => ({
         SELECT r.id, r.id_lote, r.prefixo, r.numero, r.parcela,
                r.cliente_cod, r.cliente_loja, r.nosso_numero,
                r.status_banco, r.disparado_em, r.canais_disparo, r.data_ocorrencia,
+               r.vencimento_banco,
                COALESCE(r.disparado_em::text, '') AS disparado_em_txt,
                t.cliente_nome, t.valor, t.vencimento, t.tipo,
                l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta
@@ -264,7 +266,8 @@ module.exports = (app) => ({
             SELECT RTRIM(se1.E1_PREFIXO) prefixo, RTRIM(se1.E1_NUM) numero, RTRIM(se1.E1_PARCELA) parcela,
                    RTRIM(se1.E1_CLIENTE) cliente, RTRIM(se1.E1_LOJA) loja,
                    RTRIM(se1.E1_EMISSAO) emissao, RTRIM(se1.E1_VENCTO) vencto_original,
-                   se1.E1_VALJUR juros_dia, se1.E1_MULTA multa_pct
+                   se1.E1_VALJUR juros_dia, se1.E1_MULTA multa_pct,
+                   ${BoletoDocumento.SQL_DATA_BORDERO} data_bordero
               FROM SE1010 se1 WITH (NOLOCK)
              WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01' AND (${orsE})`, pE);
           se1.forEach(s => se1Map.set(
@@ -273,7 +276,8 @@ module.exports = (app) => ({
               emissao: trim(s.emissao),
               venctoOriginal: trim(s.vencto_original),
               jurosDia: N(s.juros_dia),
-              multaPct: N(s.multa_pct)
+              multaPct: N(s.multa_pct),
+              dataBordero: trim(s.data_bordero)
             }
           ));
         } catch (e) {
@@ -302,9 +306,11 @@ module.exports = (app) => ({
         //    linha digitavel nao bate com a do PDF fisico que o cliente
         //    recebeu do banco — caso detectado em 092647/02 Itau, prorrogado
         //    de 20/06 -> 22/06 apos bordero.
+        //    Cessao: vale antes o vencimento REGISTRADO, lido do .RET
+        //    (`vencimento_banco`) — o Acreditar registra pelo E1_VENCREA.
         const seKeyL = `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}|${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`;
         const se1L = se1Map.get(seKeyL) || {};
-        const venctoCalc = trim(se1L.venctoOriginal) || trim(r.vencimento);
+        const venctoCalc = BoletoDocumento.vencimentoDoBoleto(r, se1L);
         // Portador de CESSAO (FIDC) -> boleto sai no banco liquidante/conta do
         // fundo (o lote guarda a ag/conta zerada do Protheus). Ver portadorCessao.
         const bko = PortadorCessao.dadosBoleto({
@@ -384,7 +390,7 @@ module.exports = (app) => ({
           try {
             // O PDF tem que mostrar o MESMO vencimento usado pra calcular a
             // linha (senao a ficha visualmente diverge do codigo de barras).
-            // Usamos venctoCalc = E1_VENCTO original (ja calculado acima).
+            // Usamos venctoCalc (ja calculado acima).
             const se1 = se1L || { emissao: '', jurosDia: 0, multaPct: 0 };
             const pdfBuf = await BoletoPdf.gerarBoletoPdf(BoletoPdf.opcoesPdfBoleto({
               bko, r, se1, venctoCalc, lin, beneficiarioGnatus: BENEFICIARIO_GNATUS,

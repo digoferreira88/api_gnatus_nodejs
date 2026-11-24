@@ -24,6 +24,25 @@ const BENEFICIARIO_GNATUS = {
 
 const recusa = (status, body) => ({ ok: false, status, body });
 
+// Data do borderô do titulo (SEA010), YYYYMMDD. Subconsulta para o SELECT da
+// SE1 com alias `se1` — usada no PDF e no disparo.
+const SQL_DATA_BORDERO = `(SELECT MAX(RTRIM(sea.EA_DATABOR)) FROM SEA010 sea WITH (NOLOCK)
+   WHERE sea.D_E_L_E_T_ <> '*' AND sea.EA_FILIAL = se1.E1_FILIAL AND sea.EA_CART = 'R'
+     AND sea.EA_NUMBOR = se1.E1_NUMBOR AND sea.EA_PREFIXO = se1.E1_PREFIXO
+     AND sea.EA_NUM = se1.E1_NUM AND sea.EA_PARCELA = se1.E1_PARCELA AND sea.EA_TIPO = se1.E1_TIPO)`;
+
+/**
+ * Vencimento que entra na linha digitavel e no PDF (os dois precisam bater):
+ *   1. o REGISTRADO no banco, lido do .RET (`vencimento_banco`, cessao) — o
+ *      Acreditar registra pelo E1_VENCREA, o BFC pelo E1_VENCTO;
+ *   2. E1_VENCTO (Santander/Itau registram por ele; titulo prorrogado depois
+ *      do borderô continua com o boleto do vencimento original);
+ *   3. o vencimento do lote.
+ */
+function vencimentoDoBoleto(r, se1) {
+  return trim(r && r.vencimento_banco) || trim(se1 && se1.venctoOriginal) || trim(r && r.vencimento);
+}
+
 async function gerar(app, id) {
   const { Pg, Protheus } = app.services;
   const idNum = Number(id);
@@ -35,6 +54,7 @@ async function gerar(app, id) {
   const rows = await Pg.connectAndQuery(`
     SELECT r.id, r.id_lote, r.prefixo, r.numero, r.parcela,
            r.cliente_cod, r.cliente_loja, r.nosso_numero, r.status_banco, r.data_ocorrencia,
+           r.vencimento_banco,
            t.cliente_nome, t.valor, t.vencimento, t.tipo,
            l.banco_cod, l.banco_nome, l.banco_agencia, l.banco_conta
       FROM tab_boleto_envio_lote_retorno r
@@ -87,11 +107,14 @@ async function gerar(app, id) {
   // prorrogado (E1_VENCREA muda) mas a linha digitavel do boleto fisico
   // continua com a data original — entao usamos E1_VENCTO no calculo, nao
   // r.vencimento (que pode estar com VENCREA).
-  let se1 = { emissao: '', venctoOriginal: '', jurosDia: 0, multaPct: 0 };
+  // data_bordero (SEA010.EA_DATABOR) = "data do documento" na ficha do
+  // Acreditar (modelo C/002043/05: 28/10/2026, nao a emissao 14/08).
+  let se1 = { emissao: '', venctoOriginal: '', jurosDia: 0, multaPct: 0, dataBordero: '' };
   try {
     const r1 = await Protheus.connectAndQuery(`
       SELECT RTRIM(se1.E1_EMISSAO) emissao, RTRIM(se1.E1_VENCTO) vencto_original,
-             se1.E1_VALJUR juros_dia, se1.E1_MULTA multa_pct
+             se1.E1_VALJUR juros_dia, se1.E1_MULTA multa_pct,
+             ${SQL_DATA_BORDERO} data_bordero
         FROM SE1010 se1 WITH (NOLOCK)
        WHERE se1.D_E_L_E_T_ <> '*' AND se1.E1_FILIAL = '01'
          AND se1.E1_PREFIXO = @p AND se1.E1_NUM = @n AND se1.E1_PARCELA = @pa
@@ -103,7 +126,8 @@ async function gerar(app, id) {
         emissao: trim(r1[0].emissao),
         venctoOriginal: trim(r1[0].vencto_original),
         jurosDia: N(r1[0].juros_dia),
-        multaPct: N(r1[0].multa_pct)
+        multaPct: N(r1[0].multa_pct),
+        dataBordero: trim(r1[0].data_bordero)
       };
     }
   } catch (e) {
@@ -111,7 +135,7 @@ async function gerar(app, id) {
   }
 
   // Vencimento usado pra calcular linha + mostrar no PDF (precisam bater).
-  const venctoCalc = se1.venctoOriginal || trim(r.vencimento);
+  const venctoCalc = vencimentoDoBoleto(r, se1);
 
   // Dados bancarios EFETIVOS do boleto. Em portador de CESSAO (FIDC) o lote
   // guarda a ag/conta ZERADA do Protheus (serve pro borderô); o boleto sai no
@@ -167,4 +191,4 @@ async function gerar(app, id) {
   };
 }
 
-module.exports = { gerar, BENEFICIARIO_GNATUS };
+module.exports = { gerar, BENEFICIARIO_GNATUS, SQL_DATA_BORDERO, vencimentoDoBoleto };

@@ -223,10 +223,15 @@ function dvNossoNumeroBradesco(carteira, nn) {
   return String(11 - resto);
 }
 
-/** Nosso numero como o Bradesco imprime no boleto: "09/99111230029-4". */
-function nossoNumeroBradescoImpresso(carteira, nn) {
+/**
+ * Nosso numero como o Bradesco imprime no boleto: "09/99111230029-4" (BFC).
+ * semCarteira: "00000031912-3" (ficha do Acreditar) — o DV continua calculado
+ * com a carteira.
+ */
+function nossoNumeroBradescoImpresso(carteira, nn, { semCarteira = false } = {}) {
   const n = pad(nn, 11);
-  return `${pad(carteira, 2)}/${n}-${dvNossoNumeroBradesco(carteira, n)}`;
+  const dv = dvNossoNumeroBradesco(carteira, n);
+  return semCarteira ? `${n}-${dv}` : `${pad(carteira, 2)}/${n}-${dv}`;
 }
 
 module.exports = { calcular, fatorVencimento, mod10, mod11, formatarNossoNumero, dvNossoNumeroBradesco, nossoNumeroBradescoImpresso };

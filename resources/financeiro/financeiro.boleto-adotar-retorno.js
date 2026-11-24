@@ -16,10 +16,22 @@
 // unico caminho que grava o nosso numero desses portadores na intranet.
 //
 // Como a linha do .RET vira titulo:
-//   - uso da empresa (038-062) preenchido -> chave direto dele (Santander, Acreditar);
-//   - uso da empresa EM BRANCO (Grupo BFC) -> pelo SEU NUMERO "92276-3" contra a
-//     SE1 do portador. So aceita candidato UNICO com valor e vencimento iguais
-//     aos do arquivo; o resto volta em `nao_identificados`, sem adivinhar.
+//   - uso da empresa (038-062) preenchido -> chave direto dele (Santander e o
+//     arquivo de TESTE do Acreditar, agosto/2026);
+//   - uso da empresa EM BRANCO (Grupo BFC; Acreditar em producao, desde o
+//     borderô 418826) -> pelo SEU NUMERO ("92276-3" no BFC, "082830/17" no
+//     Acreditar) contra a SE1 do portador. So aceita candidato UNICO com valor e
+//     vencimento iguais aos do arquivo; o resto volta em `nao_identificados`,
+//     sem adivinhar.
+//
+// Cessao: o VENCIMENTO do arquivo e' o registrado no banco e vai para
+// `vencimento_banco` — a linha digitavel e o PDF usam ele. O Acreditar registra
+// pelo E1_VENCREA (45 dos 113 titulos de 418826 tem E1_VENCTO diferente, em fim
+// de semana); o BFC registrou pelo E1_VENCTO. So o .RET sabe qual vale.
+//
+// Entrada REJEITADA (ocorrencia 03, sem nosso numero) nao grava nada: volta em
+// `rejeitados_lista` para o financeiro ver o que o fundo recusou (29/10: 16
+// parcelas, que o financeiro depois tirou do 044).
 //
 // Destino de cada titulo identificado:
 //   1. ja tem linha de retorno num lote -> atualiza (REGISTRADO + nosso numero);
@@ -143,8 +155,19 @@ module.exports = (app) => ({
       // diferente por banco (8 Santander, 11 Bradesco) — testa "só zeros".
       const confirmados = detalhes.filter(d =>
         d.ocorrencia === '02' && d.nossoNumero && !/^0+$/.test(d.nossoNumero));
+      // Entrada rejeitada pelo banco/fundo: nada a gravar, mas o financeiro
+      // precisa saber quais parcelas ficaram sem registro.
+      const rejeitados = detalhes.filter(d => d.ocorrencia === '03').map(d => ({
+        seuNumero: trim(d.seuNumero) || [d.prefixo, d.numero, d.parcela].filter(Boolean).join('/'),
+        valor: d.valor,
+        vencimento: ddmmaaParaIso(d.vencimento),
+        motivos: /^0*$/.test(trim(d.motivos)) ? '' : trim(d.motivos)
+      }));
+      const infoRejeitados = { rejeitados: rejeitados.length, rejeitados_lista: rejeitados.slice(0, 50) };
       if (!confirmados.length) {
-        return res.json({ ok: true, atualizados: 0, candidatos: 0, mensagem: 'Nenhuma entrada confirmada (02) com nosso numero no arquivo.' });
+        return res.json({ ok: true, atualizados: 0, candidatos: 0, ...infoRejeitados,
+          mensagem: 'Nenhuma entrada confirmada (02) com nosso numero no arquivo.'
+            + (rejeitados.length ? ` ${rejeitados.length} entrada(s) rejeitada(s) (03).` : '') });
       }
 
       // ----- Chave de cada linha -----
@@ -172,6 +195,10 @@ module.exports = (app) => ({
       // a data do documento/processamento do boleto (igual a ficha do fundo).
       const dataPorChave = new Map();
       identificados.forEach(d => { const iso = ddmmaaParaIso(d.dataOcorrencia); if (iso) dataPorChave.set(chaveDe(d), iso); });
+      // Vencimento REGISTRADO no banco (cessao), YYYYMMDD. E' o que entra no
+      // codigo de barras — ver cabecalho.
+      const vencPorChave = new Map();
+      if (cessao) identificados.forEach(d => { const iso = ddmmaaParaIso(d.vencimento); if (iso) vencPorChave.set(chaveDe(d), iso); });
 
       // Guard (titulo ja baixado) + borderô (E1_NUMBOR) + dados do titulo, por
       // chave. O borderô vai pro tab_boleto_envio_lote_retorno.bordero_protheus
@@ -216,7 +243,7 @@ module.exports = (app) => ({
         const rows = await Pg.connectAndQuery(`
           SELECT r.id, r.id_lote, COALESCE(TRIM(r.prefixo),'') prefixo, TRIM(r.numero) numero, COALESCE(TRIM(r.parcela),'') parcela,
                  r.status_banco, COALESCE(TRIM(r.nosso_numero),'') nosso_numero, COALESCE(TRIM(r.bordero_protheus),'') bordero_protheus,
-                 COALESCE(TRIM(r.data_ocorrencia),'') data_ocorrencia
+                 COALESCE(TRIM(r.data_ocorrencia),'') data_ocorrencia, COALESCE(TRIM(r.vencimento_banco),'') vencimento_banco
             FROM tab_boleto_envio_lote_retorno r
             JOIN tab_boleto_envio_lote l ON l.id = r.id_lote
            WHERE TRIM(l.banco_cod) = @banco AND (${ors})`, p);
@@ -284,19 +311,24 @@ module.exports = (app) => ({
           // Cessão: completa a data da ocorrência das linhas registradas antes
           // dela existir (o PDF do BFC usa essa data).
           const dataPendente = (r) => cessao && !!dataPorChave.get(k) && !trim(r.data_ocorrencia);
+          // Cessao: o vencimento registrado no banco prevalece (linhas
+          // registradas antes da coluna existir, ou com outro valor gravado).
+          const venc = vencPorChave.get(k) || '';
+          const vencPendente = (r) => !!venc && trim(r.vencimento_banco) !== venc;
           const pend = rows.find(r =>
-            trim(r.status_banco) !== 'REGISTRADO' || nnPendente(r) || dataPendente(r) ||
+            trim(r.status_banco) !== 'REGISTRADO' || nnPendente(r) || dataPendente(r) || vencPendente(r) ||
             (numbor && !trim(r.bordero_protheus)));
-          if (pend) aAtualizar.push({ id: pend.id, id_lote: pend.id_lote, nosso, numbor, dataOc: dataPorChave.get(k) || '' });
+          if (pend) aAtualizar.push({ id: pend.id, id_lote: pend.id_lote, nosso, numbor, dataOc: dataPorChave.get(k) || '', venc });
           else jaOk++;
           continue;
         }
+        const venc = vencPorChave.get(k) || '';
         const lt = lotePorChave.get(k);
-        if (lt) { aInserir.push({ ...lt, nosso, numbor, dataOc: dataPorChave.get(k) || '' }); continue; }
+        if (lt) { aInserir.push({ ...lt, nosso, numbor, dataOc: dataPorChave.get(k) || '', venc }); continue; }
         // Fora de qualquer lote. Cessao: adota com o nosso numero do .RET, se a
         // SE1 tem UM titulo nessa chave (senao nao ha como saber cliente/loja).
         const se = se1PorChave.get(k);
-        if (cessao && se && se1Contagem.get(k) === 1) aAdotar.push({ ...se, numbco: nosso, bordero: numbor, data_ocorrencia: dataPorChave.get(k) || '' });
+        if (cessao && se && se1Contagem.get(k) === 1) aAdotar.push({ ...se, numbco: nosso, bordero: numbor, data_ocorrencia: dataPorChave.get(k) || '', vencimento_banco: venc });
         else orfaos.push(k);
       }
 
@@ -318,7 +350,8 @@ module.exports = (app) => ({
         orfaos: orfaos.length,
         nao_identificados: naoIdentificados.length,
         nao_identificados_por_motivo: porMotivo,
-        nao_identificados_lista: naoIdentificados.slice(0, 50)
+        nao_identificados_lista: naoIdentificados.slice(0, 50),
+        ...infoRejeitados
       };
       const total = aAtualizar.length + aInserir.length + aAdotar.length;
       const destino = 'Ficam disparáveis em "Disparar boletos".';
@@ -328,7 +361,8 @@ module.exports = (app) => ({
           mensagem: `${total} título(s) seriam registrados com o nosso número do .RET. ${destino}`
             + (naoIdentificados.length ? ` ${naoIdentificados.length} linha(s) não identificada(s).` : '')
             + (outroPortador.length ? ` ${outroPortador.length} título(s) ignorado(s): hoje estão em outro banco no Protheus.` : '')
-            + (orfaos.length ? ` ${orfaos.length} órfão(s) (não estão em lote).` : '') });
+            + (orfaos.length ? ` ${orfaos.length} órfão(s) (não estão em lote).` : '')
+            + (rejeitados.length ? ` ${rejeitados.length} entrada(s) rejeitada(s) pelo banco/fundo (03).` : '') });
       }
 
       if (!total) {
@@ -343,8 +377,9 @@ module.exports = (app) => ({
              SET nosso_numero = @nn, status_banco = 'REGISTRADO',
                  ocorrencia_cod = '02', ocorrencia_desc = 'Entrada confirmada (.RET lido pela intranet)',
                  bordero_protheus = COALESCE(NULLIF(@bord, ''), bordero_protheus),
-                 data_ocorrencia = COALESCE(NULLIF(@doc, ''), data_ocorrencia)
-           WHERE id = @id`, { id: u.id, nn: u.nosso, bord: u.numbor || '', doc: u.dataOc || '' });
+                 data_ocorrencia = COALESCE(NULLIF(@doc, ''), data_ocorrencia),
+                 vencimento_banco = COALESCE(NULLIF(@venc, ''), vencimento_banco)
+           WHERE id = @id`, { id: u.id, nn: u.nosso, bord: u.numbor || '', doc: u.dataOc || '', venc: u.venc || '' });
         lotesTocados.add(u.id_lote);
       }
       // (2) Titulo em lote, sem linha de retorno: cria a linha
@@ -353,13 +388,13 @@ module.exports = (app) => ({
           INSERT INTO tab_boleto_envio_lote_retorno
             (id_lote, prefixo, numero, parcela, cliente_cod, cliente_loja,
              status_banco, ocorrencia_cod, ocorrencia_desc, nosso_numero, bordero_protheus,
-             valor_liquidado, data_liquidacao, sincronizado_em, data_ocorrencia)
+             valor_liquidado, data_liquidacao, sincronizado_em, data_ocorrencia, vencimento_banco)
           VALUES (@id, @pre, @num, @par, @cli, @loja,
                   'REGISTRADO', '02', 'Entrada confirmada (.RET lido pela intranet)', @nn, @bord,
-                  0, NULL, NOW(), NULLIF(@doc, ''))
+                  0, NULL, NOW(), NULLIF(@doc, ''), NULLIF(@venc, ''))
           ON CONFLICT DO NOTHING`,
           { id: t.id_lote, pre: t.prefixo || null, num: t.numero, par: t.parcela || null,
-            cli: t.cliente_cod, loja: t.cliente_loja, nn: t.nosso, bord: t.numbor || null, doc: t.dataOc || '' });
+            cli: t.cliente_cod, loja: t.cliente_loja, nn: t.nosso, bord: t.numbor || null, doc: t.dataOc || '', venc: t.venc || '' });
         lotesTocados.add(t.id_lote);
       }
       // Lote fica RETORNADO so quando TODOS os titulos dele tem linha de

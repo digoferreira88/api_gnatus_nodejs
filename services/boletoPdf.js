@@ -324,10 +324,17 @@ const arred2 = (v) => Math.round(Number(v || 0) * 100) / 100;
 const fmtPct = (v) => String(Number(v)).replace('.', ',');
 
 // Instrucoes no texto do FUNDO (cessao). As regras vem da config do portador,
-// nao da SE1 — no BFC E1_MULTA/E1_VALJUR sao zero. Texto igual ao do boleto
-// modelo (docs/financeiro/boleto bfc.pdf).
-function montarInstrucoesFundo({ protestoDiasUteis, multaPct, jurosDiaPct, valor }) {
+// nao da SE1 — no BFC e no Acreditar E1_MULTA/E1_VALJUR sao zero. Texto igual
+// ao do boleto modelo de cada fundo:
+//   BFC       docs/financeiro/boleto bfc.pdf
+//   Acreditar docs/FIDIC/Acreditar/002043_05.pdf (estilo 'acreditar')
+function montarInstrucoesFundo({ protestoDiasUteis, multaPct, jurosDiaPct, valor, estilo }) {
   const out = [];
+  if (estilo === 'acreditar') {
+    if (multaPct) out.push(`COBRAR MULTA DE R$ ${fmtValor(arred2(N(valor) * multaPct / 100))} APÓS O VENCIMENTO`);
+    if (jurosDiaPct) out.push(`JUROS MORATÓRIOS DE R$ ${fmtValor(arred2(N(valor) * jurosDiaPct / 100))}`);
+    return out;
+  }
   if (protestoDiasUteis) out.push(`ENVIAR PARA CARTÓRIO APOS ${protestoDiasUteis} DIAS ÚTEIS`);
   if (multaPct) out.push(`PAGAMENTO APOS O VENCIMENTO SERA ACRESCIDO DE MULTA DE ${fmtPct(multaPct)}% (R$ ${fmtValor(arred2(N(valor) * multaPct / 100))})`);
   if (jurosDiaPct) out.push(`JUROS DE MORA R$ ${fmtValor(arred2(N(valor) * jurosDiaPct / 100))} AO DIA APÓS VENCIMENTO`);
@@ -361,16 +368,23 @@ function opcoesPdfBoleto({ bko, r, pagador, se1, venctoCalc, lin, beneficiarioGn
   const LinhaDigitavel = require('./linhaDigitavel');
   const pdf = bko.pdf || {};
   const s = se1 || {};
-  const instrucoes = bko.regrasCobranca
-    ? montarInstrucoesFundo({ ...bko.regrasCobranca, valor: r.valor })
-    : [
-      ...(bko.instrucoes || []),                       // cessao: avisos do fundo
-      ...montarInstrucoes({ jurosDia: s.jurosDia, multaPct: s.multaPct, valor: r.valor, vencimento: venctoCalc })
-    ];
-  // Datas do fundo = a da entrada confirmada no .RET (o "30/09" do modelo).
+  const instrucoes = [
+    ...(bko.instrucoes || []),                         // cessao: avisos do fundo (BFC: nenhum)
+    ...(bko.regrasCobranca
+      ? montarInstrucoesFundo({ ...bko.regrasCobranca, valor: r.valor })
+      : montarInstrucoes({ jurosDia: s.jurosDia, multaPct: s.multaPct, valor: r.valor, vencimento: venctoCalc }))
+  ];
+  // Datas do fundo = a da entrada confirmada no .RET (o "30/09" do modelo BFC).
   const dataOc = pdf.datasDaOcorrencia ? trim(r.data_ocorrencia) : '';
+  // Acreditar: "data do documento" = data do borderô (SEA010).
+  const dataBordero = pdf.dataDocumento === 'bordero' ? trim(s.dataBordero) : '';
   const nnCru = trim(r.nosso_numero) || trim(lin && lin.body && lin.body.nosso_numero);
   const carteiraLin = trim(lin && lin.body && lin.body.carteira);
+  const numeroDocumento = pdf.numeroDocumento === 'num7-parcela'
+    ? numeroDocumentoFundo(r.numero, r.parcela)
+    : pdf.numeroDocumento === 'num/parcela'
+      ? [trim(r.numero), trim(r.parcela)].filter(Boolean).join('/')
+      : trim(r.numero);
   return {
     banco: bko.banco,
     beneficiario: bko.cessao && bko.beneficiarioFinal
@@ -381,19 +395,20 @@ function opcoesPdfBoleto({ bko, r, pagador, se1, venctoCalc, lin, beneficiarioGn
     pagador,
     valor: N(r.valor),
     vencimento: venctoCalc,
-    numeroDocumento: pdf.numeroDocumento === 'num7-parcela' ? numeroDocumentoFundo(r.numero, r.parcela) : trim(r.numero),
-    dataDocumento: dataOc || s.emissao || venctoCalc,
+    numeroDocumento,
+    dataDocumento: dataOc || dataBordero || s.emissao || venctoCalc,
     dataProcessamento: dataOc || undefined,
     // Impresso no formato do banco (Santander: 13 posicoes; Bradesco do fundo:
-    // "09/99111230029-4"), nao cru — senao o mesmo numero parece outro.
+    // "09/99111230029-4" no BFC, "00000031912-3" no Acreditar), nao cru —
+    // senao o mesmo numero parece outro.
     nossoNumero: pdf.nossoNumeroBradesco
-      ? LinhaDigitavel.nossoNumeroBradescoImpresso(bko.carteira, nnCru)
+      ? LinhaDigitavel.nossoNumeroBradescoImpresso(bko.carteira, nnCru, { semCarteira: pdf.nossoNumeroBradesco === 'sem-carteira' })
       : LinhaDigitavel.formatarNossoNumero(bko.banco, nnCru),
-    agencia: bko.agencia,
+    agencia: trim(pdf.agenciaImpressa) || bko.agencia,
     conta: bko.conta,
     codigoBeneficiario: pdf.codigoBeneficiario,
-    carteira: CARTEIRA_LABEL[carteiraLin] || carteiraLin || (bko.banco === '033' ? 'PENH. ELETR' : '109'),
-    especieDoc: bko.especie || ESPECIE_POR_BANCO[bko.banco] || 'DM',
+    carteira: trim(pdf.carteiraImpressa) || CARTEIRA_LABEL[carteiraLin] || carteiraLin || (bko.banco === '033' ? 'PENH. ELETR' : '109'),
+    especieDoc: (pdf.especiePorPrefixo || {})[trim(r.prefixo)] || bko.especie || ESPECIE_POR_BANCO[bko.banco] || 'DM',
     especieMoeda: pdf.especieMoeda,
     localPagamento: pdf.localPagamento,
     linhaDigitavel: trim(lin && lin.body && lin.body.linha_digitavel),

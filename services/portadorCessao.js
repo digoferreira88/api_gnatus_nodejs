@@ -14,7 +14,9 @@
 // O boleto do Acreditar é um boleto Bradesco 237; o 044 nunca aparece no barcode.
 //
 // Validado contra o boleto oficial em docs/FIDIC/ (linha digitável reproduzida
-// dígito a dígito: 23792.37205 90000.001579 65003.994707 3 17120000015459).
+// dígito a dígito: 23792.37205 90000.001579 65003.994707 3 17120000015459) e,
+// em produção, contra o boleto do fundo docs/FIDIC/Acreditar/002043_05.pdf
+// (23792.37205 90000.003195 12003.994709 9 16880000097917).
 //
 // Override por .env (sem precisar de deploy):
 //   PORTADOR_044_AGENCIA / _CONTA / _CARTEIRA / _BANCO_BOLETO
@@ -40,7 +42,27 @@ const PORTADORES = {
       'ATENÇÃO: Título cedido à Acreditar FIDC.',
       'Quitação válida exclusivamente por este boleto.',
       'Não pague boletos emitidos por terceiros'
-    ]
+    ],
+    // Multa e mora REGISTRADAS no banco. Não vêm da SE1 (E1_MULTA/E1_VALJUR
+    // zerados nos 113 títulos do borderô 418826): é o que a remessa do Protheus
+    // manda ao Bradesco — multa 7% (posição 66-70 = '2'+'0700') e mora diária
+    // = 1/120 do valor (161-173). Conferido nas 6 linhas de docs/FIDIC/
+    // CB140803.REM (3970,44 -> 33,09; 2055,00 -> 17,13 ...) e no boleto do fundo
+    // docs/FIDIC/Acreditar/002043_05.pdf (979,17 -> multa 68,54, juros 8,16).
+    regrasCobranca: { multaPct: 7, jurosDiaPct: 25 / 30, estilo: 'acreditar' },
+    // Ficha igual à que o fundo emite (modelo C/002043/05, 18/11/2026).
+    pdf: {
+      localPagamento: 'Pagável preferencialmente na rede Bradesco ou no Bradesco Expresso',
+      agenciaImpressa: '02372-0',       // "02372-0/0039947-7"
+      codigoBeneficiario: '0039947-7',
+      beneficiarioSemEndereco: true,    // o fundo sai sem endereço; a Gnatus vai como beneficiário final
+      carteiraImpressa: '9',
+      nossoNumeroBradesco: 'sem-carteira', // "00000031912-3" (DV mod 11 base 7 com a carteira 09)
+      numeroDocumento: 'num/parcela',   // "002043/05" = o seu número da remessa
+      dataDocumento: 'bordero',         // 28/10/2026 = EA_DATABOR do 418826, não a emissão
+      // Série C = NFS-e (serviço) -> "DS" no modelo. Demais séries: DM.
+      especiePorPrefixo: { C: 'DS' }
+    }
   },
 
   // Grupo BFC (25/09/2026). O Protheus ja tem o cadastro no mesmo padrao do 044:
