@@ -7,11 +7,16 @@
 // títulos passem a aparecer em "Disparar boletos".
 //
 // Critério SE1 (título elegível):
-//   E1_OCORREN='02' (entrada confirmada pelo banco) · E1_NUMBCO<>'' (nosso número
-//   atribuído) · E1_STATUS='A' (aberto) · E1_VALOR>0
+//   E1_OCORREN '02' ou '21' (entrada confirmada pelo banco; o Itaú grava 21) ·
+//   E1_NUMBCO<>'' (nosso número atribuído) · E1_STATUS='A' (aberto) · E1_VALOR>0
 //
-// Idempotente: só adota títulos que ainda NÃO estão em lote algum. Pode rodar
-// várias vezes sem duplicar.
+// Idempotente: só adota títulos que nenhum lote VIVO da intranet cobre. Pode
+// rodar várias vezes sem duplicar. Não seguram o título: lote que nunca virou
+// borderô (ERRO_PROTHEUS, CANCELADO — nenhum dos dois pode ser reenviado) e
+// lote de onde o título saiu para outro banco (retorno TRANSFERIDO).
+// Caso que levou à regra: borderô 001522 (Itaú, 16/11/2026) — os lotes #63/#64
+// deram HTTP 504, o financeiro fez o borderô no Protheus, e os 52 títulos
+// registrados ficaram fora do disparo.
 //
 // Fonte ÚNICA usada por:
 //   - POST /financeiro/boleto-adotar-se1  (botão manual)
@@ -28,16 +33,47 @@ const BANCO_NOMES = {
   '310': 'Vortx'
 };
 
+const chaveTitulo = (r) =>
+  `${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}|${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`;
+
+// Ocorrências da SE1 que dizem "o banco registrou" (as mesmas que o
+// boletoSincronizar classifica como entrada confirmada).
+const OCORRENCIAS_REGISTRO = ['02', '21'];
+const STATUS_LOTE_SEM_BORDERO = ['ERRO_PROTHEUS', 'CANCELADO'];
+
 // Retorna { ok, adotados, lotes_criados, lotes, mensagem }.
 async function adotarSe1({ Pg, Protheus, user, filtroBanco }) {
+  const { seRows, novos } = await elegiveisParaAdotar({ Pg, Protheus, filtroBanco });
+
+  if (!seRows.length) {
+    return { ok: true, adotados: 0, lotes_criados: 0, lotes: [], mensagem: 'Nenhum título elegível na SE1.' };
+  }
+  if (!novos.length) {
+    return { ok: true, adotados: 0, lotes_criados: 0, lotes: [],
+      mensagem: `${seRows.length} título(s) REGISTRADO(s) na SE1 já estão em lotes da intranet.` };
+  }
+
+  return criarLotesRetroativos({
+    Pg, Protheus, user, titulos: novos,
+    rotulo: 'adotado SE1',
+    ocorrenciaDesc: 'Entrada confirmada (adotado da SE1)',
+    observacao: `Lote retroativo criado por "adotar-SE1" em ${new Date().toISOString()}. Remessa original feita fora da intranet (Protheus direto ou borderô externo).`
+  });
+}
+
+// Só leitura: os títulos registrados na SE1 (seRows) e, deles, os que nenhum
+// lote da intranet cobre (novos). Separado do adotarSe1 para dar para conferir
+// em produção o que seria adotado sem gravar nada.
+async function elegiveisParaAdotar({ Pg, Protheus, filtroBanco }) {
   filtroBanco = trim(filtroBanco);
 
   // 1) SE1 — todos os títulos elegíveis
   const params = {};
+  OCORRENCIAS_REGISTRO.forEach((c, i) => { params[`oc${i}`] = c; });
   const conds = [
     `se1.D_E_L_E_T_ <> '*'`,
     `se1.E1_FILIAL = '01'`,
-    `RTRIM(se1.E1_OCORREN) = '02'`,
+    `RTRIM(se1.E1_OCORREN) IN (${OCORRENCIAS_REGISTRO.map((_, i) => `@oc${i}`).join(', ')})`,
     `RTRIM(se1.E1_NUMBCO) <> ''`,
     `RTRIM(se1.E1_STATUS) = 'A'`,
     `se1.E1_VALOR > 0`
@@ -63,32 +99,26 @@ async function adotarSe1({ Pg, Protheus, user, filtroBanco }) {
       FROM SE1010 se1 WITH (NOLOCK)
      WHERE ${conds.join(' AND ')}`, params);
 
-  if (!seRows.length) {
-    return { ok: true, adotados: 0, lotes_criados: 0, lotes: [], mensagem: 'Nenhum título elegível na SE1.' };
-  }
+  if (!seRows.length) return { seRows, novos: [] };
 
-  // 2) Cruza com lote_titulo pra filtrar os que já existem
+  // 2) Cruza com os lotes da intranet: fica de fora o que um lote vivo já cobre
   const existentes = await Pg.connectAndQuery(`
-    SELECT COALESCE(prefixo, '') AS prefixo, numero,
-           COALESCE(parcela, '') AS parcela, cliente_cod, cliente_loja
-      FROM tab_boleto_envio_lote_titulo`);
-  const chavesExistentes = new Set(existentes.map(e =>
-    `${trim(e.prefixo)}|${trim(e.numero)}|${trim(e.parcela)}|${trim(e.cliente_cod)}|${trim(e.cliente_loja)}`));
+    SELECT COALESCE(t.prefixo, '') AS prefixo, t.numero,
+           COALESCE(t.parcela, '') AS parcela, t.cliente_cod, t.cliente_loja,
+           l.status AS lote_status, r.status_banco
+      FROM tab_boleto_envio_lote_titulo t
+      JOIN tab_boleto_envio_lote l ON l.id = t.id_lote
+      LEFT JOIN tab_boleto_envio_lote_retorno r
+        ON r.id_lote = t.id_lote
+       AND COALESCE(r.prefixo, '') = COALESCE(t.prefixo, '') AND r.numero = t.numero
+       AND COALESCE(r.parcela, '') = COALESCE(t.parcela, '')
+       AND r.cliente_cod = t.cliente_cod AND r.cliente_loja = t.cliente_loja`);
+  const cobertos = new Set(existentes
+    .filter(e => !STATUS_LOTE_SEM_BORDERO.includes(trim(e.lote_status)) && trim(e.status_banco) !== 'TRANSFERIDO')
+    .map(chaveTitulo));
 
-  const novos = seRows.filter(r =>
-    !chavesExistentes.has(`${trim(r.prefixo)}|${trim(r.numero)}|${trim(r.parcela)}|${trim(r.cliente_cod)}|${trim(r.cliente_loja)}`));
-
-  if (!novos.length) {
-    return { ok: true, adotados: 0, lotes_criados: 0, lotes: [],
-      mensagem: `${seRows.length} título(s) REGISTRADO(s) na SE1 já estão em lotes da intranet.` };
-  }
-
-  return criarLotesRetroativos({
-    Pg, Protheus, user, titulos: novos,
-    rotulo: 'adotado SE1',
-    ocorrenciaDesc: 'Entrada confirmada (adotado da SE1)',
-    observacao: `Lote retroativo criado por "adotar-SE1" em ${new Date().toISOString()}. Remessa original feita fora da intranet (Protheus direto ou borderô externo).`
-  });
+  const novos = seRows.filter(r => !cobertos.has(chaveTitulo(r)));
+  return { seRows, novos };
 }
 
 /**
@@ -200,4 +230,4 @@ async function criarLotesRetroativos({ Pg, Protheus, user, titulos: novos, rotul
   };
 }
 
-module.exports = { adotarSe1, criarLotesRetroativos, BANCO_NOMES };
+module.exports = { adotarSe1, elegiveisParaAdotar, criarLotesRetroativos, BANCO_NOMES };
