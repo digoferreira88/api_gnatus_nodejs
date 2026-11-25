@@ -21,6 +21,8 @@
 // Override por .env (sem precisar de deploy):
 //   PORTADOR_044_AGENCIA / _CONTA / _CARTEIRA / _BANCO_BOLETO
 
+const BoletoVortx = require('./boletoVortx');
+
 const trim = (v) => String(v == null ? '' : v).trim();
 const env = (k) => trim(process.env[k]);
 
@@ -144,6 +146,9 @@ function get(portador) {
  * @returns {{banco, agencia, conta, carteira?, especie?, beneficiarioFinal?, instrucoes?, cessao, portador?}}
  */
 function dadosBoleto({ banco, agencia, conta } = {}) {
+  // 310 Vortx nao e' cessao (beneficiario = Gnatus), mas tem layout proprio da
+  // ficha (agencia/conta com digito). Ver services/boletoVortx.js.
+  if (BoletoVortx.ehVortx(banco)) return BoletoVortx.dadosBoleto({ agencia, conta });
   const p = get(banco);
   if (!p) return { banco: trim(banco), agencia: trim(agencia), conta: trim(conta), cessao: false };
   // Portador de cessao sem as coordenadas do fundo: sinaliza pendente em vez de

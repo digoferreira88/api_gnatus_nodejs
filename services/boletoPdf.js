@@ -43,6 +43,10 @@ const BANCOS = {
   '033': { codigo: '033-7', nome: 'Santander', corFundo: '#EC0000', corTexto: '#FFFFFF', localPgto: 'PAGAVEL PREFERENCIALMENTE NO BANCO SANTANDER', aceite: 'NAO ACEITO' },
   '341': { codigo: '341-7', nome: 'Itau', corFundo: '#FF6900', corTexto: '#0033A0', localPgto: 'EM QUALQUER BANCO OU CORRESP. NAO BANCARIO', aceite: 'N' },
   '237': { codigo: '237-2', nome: 'Bradesco', corFundo: '#CC092F', corTexto: '#FFFFFF', localPgto: 'PAGAVEL EM QUALQUER BANCO', aceite: 'N' },
+  // Vortx DTVM (Grafeno). O manual pede o numero do banco com digito sem dize-lo;
+  // "310-7" sai do modulo 11 com pesos 4-3-2, a mesma regra que da 001-9, 237-2,
+  // 341-7 e 033-7. ⚠️ Confirmar com a Vortx (handoff do Diego, 24/11/2026).
+  '310': { codigo: '310-7', nome: 'Vortx', corFundo: '#1F2A44', corTexto: '#FFFFFF', localPgto: 'PAGAVEL EM QUALQUER BANCO', aceite: 'N' },
   '001': { codigo: '001-9', nome: 'Banco do Brasil', corFundo: '#FCEE21', corTexto: '#003DA5', localPgto: 'PAGAVEL EM QUALQUER BANCO', aceite: 'N' },
   '104': { codigo: '104-0', nome: 'Caixa', corFundo: '#0070AF', corTexto: '#FFFFFF', localPgto: 'PAGAVEL PREFERENCIALMENTE NAS CASAS LOTERICAS ATE O VALOR LIMITE', aceite: 'N' },
   '748': { codigo: '748-X', nome: 'Sicredi', corFundo: '#3FA535', corTexto: '#FFFFFF', localPgto: 'PAGAVEL EM QUALQUER BANCO', aceite: 'N' },

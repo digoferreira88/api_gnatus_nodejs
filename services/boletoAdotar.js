@@ -24,7 +24,8 @@ const N = (v) => Number(v || 0);
 
 const BANCO_NOMES = {
   '341': 'Itaú', '033': 'Santander', '237': 'Bradesco',
-  '001': 'Banco do Brasil', '104': 'Caixa', '748': 'Sicredi', '756': 'Sicoob'
+  '001': 'Banco do Brasil', '104': 'Caixa', '748': 'Sicredi', '756': 'Sicoob',
+  '310': 'Vortx'
 };
 
 // Retorna { ok, adotados, lotes_criados, lotes, mensagem }.

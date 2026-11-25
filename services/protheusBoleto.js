@@ -12,6 +12,7 @@
 // Veja docs/boleto-samples/ pros 2 PDFs validados.
 
 const LinhaDigitavel = require('./linhaDigitavel');
+const BoletoVortx = require('./boletoVortx');
 
 const trim = (v) => String(v || '').trim();
 const N = (v) => Number(v || 0);
@@ -21,8 +22,9 @@ const N = (v) => Number(v || 0);
 // 341 Itau: cedente vem da conta corrente (sem DV), carteira 109.
 // 237 Bradesco: cedente = agencia+conta (vao direto no campo livre), carteira 09
 // — usado na cessao ao Acreditar FIDC (ver services/portadorCessao.js).
+// 310 Vortx: agencia e conta COM digito no campo livre (services/boletoVortx.js).
 const CONVENIO_POR_BANCO = { '033': '3418790' };
-const CARTEIRA_POR_BANCO = { '033': '104', '341': '109', '237': '09' };
+const CARTEIRA_POR_BANCO = { '033': '104', '341': '109', '237': '09', '310': '021' };
 
 /**
  * Calcula a linha digitavel + codigo de barras de um titulo registrado.
@@ -68,11 +70,33 @@ async function linhaDigitavel(opts) {
 
   const carteira = trim(opts.carteira) || CARTEIRA_POR_BANCO[banco] || '';
 
+  // 310 Vortx: os digitos da agencia e da conta vao no campo livre e o lote so
+  // guarda a conta sem digito. Resolve pela conta cadastrada; conta diferente
+  // recusa — o digito seria chute e o boleto sairia impagavel.
+  let agenciaDv = trim(opts.agenciaDv);
+  let contaDv = trim(opts.contaDv);
+  if (banco === BoletoVortx.BANCO && (!agenciaDv || !contaDv)) {
+    const co = BoletoVortx.coordenadas({ agencia: opts.agencia, conta: opts.conta });
+    if (!co) {
+      return {
+        ok: false, httpStatus: 422,
+        body: {
+          ok: false, codigo_erro: 'CONTA_310_DESCONHECIDA', banco,
+          mensagem: `Banco 310: agência ${trim(opts.agencia)} / conta ${trim(opts.conta)} não é a conta Vortx cadastrada — sem os dígitos dela o código de barras sairia inválido.`
+        }
+      };
+    }
+    agenciaDv = agenciaDv || co.agenciaDv;
+    contaDv = contaDv || co.contaDv;
+  }
+
   try {
     const r = LinhaDigitavel.calcular({
       banco,
       agencia: trim(opts.agencia),
       conta: trim(opts.conta),
+      agenciaDv,
+      contaDv,
       cedente,
       nossoNumero: nn,
       carteira,

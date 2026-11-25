@@ -8,7 +8,8 @@
 // comparando contra PDFs oficiais do Santander e Itau).
 //
 // Bancos suportados: 033 Santander (carteira 104) + 341 Itau (carteira 109)
-// + 237 Bradesco (carteira 09 — usado na cessao ao Acreditar FIDC).
+// + 237 Bradesco (carteira 09 — usado na cessao ao Acreditar FIDC)
+// + 310 Vortx DTVM (carteira 021 — cobranca em garantia da DelMonte).
 // Outros bancos: lancar erro (`BANCO_NAO_SUPORTADO`) — operador continua
 // usando Diego ate adicionarmos a carteira aqui.
 //
@@ -120,6 +121,24 @@ function campoLivreBradesco({ agencia, conta, nossoNumero, carteira }) {
   return pad(agencia, 4) + pad(carteira || '09', 2) + pad(nossoNumero, 11) + pad(conta, 7) + '0';
 }
 
+// Campo livre Vortx DTVM 310 (Grafeno; cobranca em garantia da DelMonte) —
+// manual "Banco 310 - V1.1", p. 20-24:
+//   1-4    Agencia COM digito (agencia 0001-9 -> "0019")
+//   5-14   Conta COM digito (10, zeros a esquerda)
+//   15-25  Nosso Numero (11 digitos, SEM o DV)
+// ✅ Validado contra o exemplo do manual: 31090.01903 00000.026005 00000.572156 1
+//    39330000283743 (o mesmo que o COBR001 R44 do Diego reproduz).
+// Os digitos sao obrigatorios: o SA6 nao tem o da agencia (A6_DVAGE vazio) e,
+// sem eles, a linha sairia com outro campo livre sem dar erro.
+function campoLivreVortx({ agencia, agenciaDv, conta, contaDv, nossoNumero }) {
+  if (!onlyDigits(agenciaDv) || !onlyDigits(contaDv)) {
+    throw new Error('Banco 310: faltam o digito da agencia e/ou da conta (vao no campo livre).');
+  }
+  return pad(onlyDigits(agencia) + onlyDigits(agenciaDv), 4)
+    + pad(onlyDigits(conta) + onlyDigits(contaDv), 10)
+    + pad(nossoNumero, 11);
+}
+
 // Monta o codigo de barras (44) a partir do "sem DV" (43) e DV geral.
 // Pos 1-4 = ID+Moeda, pos 5 = DV, pos 6-19 = fator+valor, pos 20-44 = livre.
 function montarCodigoBarras({ banco, fator, valor, campoLivre }) {
@@ -173,6 +192,9 @@ function calcular(opts) {
     case '237':
       campoLivre = campoLivreBradesco(opts);
       break;
+    case '310':
+      campoLivre = campoLivreVortx(opts);
+      break;
     default:
       const err = new Error(`Banco ${banco} ainda nao suportado (BANCO_NAO_SUPORTADO).`);
       err.code = 'BANCO_NAO_SUPORTADO';
@@ -196,15 +218,32 @@ function calcular(opts) {
 // estranhou. O codigo de barras sempre esteve certo — ele ja padroniza por
 // dentro (campoLivreSantander faz pad 13).
 //
-// So o Santander tem formato definido aqui. Itau e Bradesco ficam como estao:
-// nao temos boleto oficial deles em mãos pra conferir o formato impresso, e
-// inventar um palpite bonito seria pior do que mostrar o valor cru.
+// Santander e Vortx (310) tem formato definido aqui. Itau e Bradesco ficam como
+// estao: nao temos boleto oficial deles em mãos pra conferir o formato impresso,
+// e inventar um palpite bonito seria pior do que mostrar o valor cru.
+// Vortx: "00010008878-9" (COBR001 R44, campo nosso_numero_formatado) — o DV nao
+// fica gravado no E1_NUMBCO, e' calculado aqui.
 function formatarNossoNumero(banco, nn) {
   const b = pad(banco, 3);
   const n = onlyDigits(nn);
   if (!n) return '';
   if (b === '033') return n.padStart(13, '0');
+  if (b === '310') return `${pad(n, 11)}-${dvNossoNumeroVortx(n)}`;
   return String(nn == null ? '' : nn).trim();
+}
+
+/**
+ * DV do nosso numero na Vortx (310): modulo 11 base 7 sobre "21" (carteira) +
+ * nosso numero(11), pesos 2..7 da direita para a esquerda. Resto 0 ou 1 -> '0'
+ * (diferente do Bradesco, aqui nao existe 'P'); senao 11 - resto. Regra do
+ * manual, implementada igual no COBR001 R44 (1/089853/05 -> 00010008878-9).
+ */
+function dvNossoNumeroVortx(nn) {
+  const s = ('21' + pad(nn, 11)).split('').reverse();
+  let soma = 0, peso = 2;
+  for (const d of s) { soma += Number(d) * peso; peso = peso === 7 ? 2 : peso + 1; }
+  const resto = soma % 11;
+  return resto < 2 ? '0' : String(11 - resto);
 }
 
 /**
@@ -234,4 +273,4 @@ function nossoNumeroBradescoImpresso(carteira, nn, { semCarteira = false } = {})
   return semCarteira ? `${n}-${dv}` : `${pad(carteira, 2)}/${n}-${dv}`;
 }
 
-module.exports = { calcular, fatorVencimento, mod10, mod11, formatarNossoNumero, dvNossoNumeroBradesco, nossoNumeroBradescoImpresso };
+module.exports = { calcular, fatorVencimento, mod10, mod11, formatarNossoNumero, dvNossoNumeroBradesco, nossoNumeroBradescoImpresso, dvNossoNumeroVortx };
